@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Packaging/build output
+build/
+dist/
+*.egg-info/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Framework runtime/private material
+**/.framework/backups/*
+!**/.framework/backups/.gitkeep
+**/.framework/events/*
+!**/.framework/events/.gitkeep
+**/.framework/.runtime/
+**/references/frozen/*
+!**/references/frozen/README.md
+
+# Local sidecar names, if copied into the repo by mistake
+metasystem_kit_private_materials/
+_private/

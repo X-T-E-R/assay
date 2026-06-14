@@ -1,0 +1,21 @@
+
+framework:
+  name: MetaSystem
+  core: metasystem-core
+  version: 0.2.0
+  layout_version: 2
+
+paths:
+  runtime: .framework
+  references: references
+  analyses: analyses
+  systems: systems
+  iterations: iterations
+  knowledge: knowledge
+  data: data
+  releases: releases
+
+update:
+  default_conflict_action: skip
+  backup_before_write: true
+  protect_user_data: true

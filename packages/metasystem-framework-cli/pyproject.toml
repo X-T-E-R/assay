@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metasystem-framework-cli"
+version = "0.2.0"
+description = "CLI for bootstrapping and updating an external-system-learning framework"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "MetaSystem Kit contributors" }]
+license = { text = "MIT" }
+
+[project.scripts]
+metasystem = "metasystem_framework.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
