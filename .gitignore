@@ -18,6 +18,10 @@ venv/
 # Packaging/build output
 build/
 dist/
+node_modules/
+coverage/
+*.tgz
+*.tar.gz
 *.egg-info/
 
 # OS/editor noise

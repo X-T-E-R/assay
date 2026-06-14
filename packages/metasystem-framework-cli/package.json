@@ -1,0 +1,24 @@
+{
+  "name": "metasystem-framework-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "metasystem": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@commander-js/extra-typings": "^12.1.0",
+    "commander": "^12.1.0",
+    "metasystem-framework-core": "workspace:*"
+  }
+}
