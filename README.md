@@ -2,7 +2,7 @@
 
 MetaSystem Kit is a local-first toolkit for learning from external systems and turning those lessons into a versioned framework of your own.
 
-It combines a Python CLI, a reusable framework template, architecture decision records, and an AI-facing Skill. The core workflow is:
+It combines a TypeScript framework core, a Commander-based CLI, a reusable framework template, architecture decision records, and an AI-facing Skill. The core workflow is:
 
 ```text
 references -> analyses -> systems -> iterations -> knowledge
@@ -13,7 +13,9 @@ Use it when you want to freeze external projects or documents, analyze their pat
 ## Repository Layout
 
 ```text
-packages/metasystem-framework-cli/   Python CLI package and tests
+packages/metasystem-framework-core/         TypeScript reusable framework operations
+packages/metasystem-framework-cli/          TypeScript Commander CLI adapter
+packages/metasystem-framework-cli-python/   Preserved Python CLI reference and tests
 skills/bootstrap-system-framework/   AI-facing Skill and agent metadata
 examples/framework-template/         Generated example framework workspace
 docs/decisions/                      ADRs and migration notes
@@ -36,25 +38,29 @@ data/         samples, evaluation data, experiment inputs and outputs
 releases/     release notes, packages, migration guides
 ```
 
-The CLI owns managed templates and update mechanics. User artifacts are protected by a manifest, hash checks, dry-run updates, and migration planning.
+The core package owns managed templates and update mechanics, while the CLI stays an adapter for terminal usage. User artifacts are protected by a manifest, hash checks, dry-run updates, and migration planning.
 
 ## Quick Start
 
-Run from the repository root without installing:
+Install dependencies, build the TypeScript packages, and run the CLI from the repository root:
 
 ```powershell
-$env:PYTHONPATH = "packages\metasystem-framework-cli\src"
-python packages\metasystem-framework-cli\scripts\bootstrap_framework.py init "..\metasystem-demo" --name MetaSystem
-python packages\metasystem-framework-cli\scripts\bootstrap_framework.py check --root "..\metasystem-demo"
-python packages\metasystem-framework-cli\scripts\bootstrap_framework.py status --root "..\metasystem-demo"
+pnpm install
+pnpm build
+node packages\metasystem-framework-cli\dist\cli.js init "..\metasystem-demo" --name MetaSystem
+node packages\metasystem-framework-cli\dist\cli.js check --root "..\metasystem-demo"
+node packages\metasystem-framework-cli\dist\cli.js status --root "..\metasystem-demo"
 ```
 
-Or install the CLI package in editable mode:
+During the transition, the Python package remains in `packages/metasystem-framework-cli-python/` as the behavior reference and rollback path. Do not remove it without a separate removal decision.
+
+For local development, the package scripts cover the TypeScript workspace:
 
 ```powershell
-cd packages\metasystem-framework-cli
-python -m pip install -e .
-metasystem --help
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm parity
 ```
 
 ## Common Commands
@@ -84,7 +90,18 @@ On a POSIX shell:
 ./scripts/check.sh
 ```
 
-The check runs unit tests, Python compilation, and a CLI smoke test against a temporary framework workspace.
+The repository check includes TypeScript build, typecheck, lint, tests, the Python/TypeScript parity harness, Python reference tests, Python compilation, and Python smoke checks. The parity harness compares generated workspace trees, key managed templates, manifest records, update safety behavior, user-deleted behavior, and update/migration dry-runs.
+
+## Package Split And GUI Reuse
+
+- `metasystem-framework-core` owns framework operations, schemas, templates, manifest handling, update planning, migration planning, and file-safety behavior.
+- `metasystem-framework-cli` is a thin Commander adapter around the core package. It parses argv, formats structured results, and maps known errors to process exit codes.
+- Future GUI code should import `metasystem-framework-core` directly instead of shelling out to the CLI.
+- `metasystem-framework-cli-python` remains available as the Python reference until an explicit removal gate is approved.
+
+## Parity Notes
+
+The TypeScript CLI is intended to match Python command behavior and generated artifacts, not byte-for-byte terminal wording. The current parity harness records no intentional functional differences for the covered init, update, user-deleted, dry-run, and migration scenarios.
 
 ## Public Repository Boundary
 

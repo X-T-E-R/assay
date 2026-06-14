@@ -1,50 +1,32 @@
-# MetaSystem Framework CLI
+# metasystem-framework-cli
 
-`metasystem` bootstraps and maintains versioned framework workspaces for external-system learning.
+Commander-based TypeScript CLI adapter for MetaSystem framework workspaces.
 
-The CLI is intentionally small and dependency-free. It can initialize a workspace, check structure, report status, freeze references, create analysis cards, start iterations, and plan safe updates or layout migrations.
+The CLI package owns process-facing behavior only:
 
-## Run From This Monorepo
+- command definitions and option parsing;
+- mapping CLI options to `metasystem-framework-core` operations;
+- formatting structured core results for terminal output;
+- mapping known user/runtime errors to exit codes.
 
-From the repository root:
+Business logic belongs in `metasystem-framework-core` so GUI and other adapters can reuse it without shelling out to `metasystem`.
 
-```powershell
-$env:PYTHONPATH = "packages\metasystem-framework-cli\src"
-python packages\metasystem-framework-cli\scripts\bootstrap_framework.py --help
-```
+## Local Usage
 
-## Install Locally
-
-```powershell
-cd packages\metasystem-framework-cli
-python -m pip install -e .
-```
-
-After installation:
+Build first, then run the compiled CLI:
 
 ```powershell
-metasystem --help
+pnpm --filter metasystem-framework-cli build
+node packages\metasystem-framework-cli\dist\cli.js --help
+node packages\metasystem-framework-cli\dist\cli.js init "..\metasystem-demo" --name MetaSystem
 ```
 
-## Main Commands
+## Development
 
 ```powershell
-metasystem init <target-dir> --name <project-name>
-metasystem check --root <target-dir>
-metasystem status --root <target-dir>
-metasystem update --root <target-dir> --dry-run
-metasystem migrate-layout --root <target-dir> --dry-run
-metasystem reference add <source-dir> <name> --root <target-dir>
-metasystem analysis new "Reference analysis" --root <target-dir>
-metasystem iteration start "CLI refactor" --root <target-dir>
+pnpm --filter metasystem-framework-cli build
+pnpm --filter metasystem-framework-cli typecheck
+pnpm --filter metasystem-framework-cli test
 ```
 
-## Package Design
-
-- `cli.py`: command routing
-- `scaffold.py`: init, check, status, reference, analysis, iteration
-- `templates.py`: desired framework tree
-- `manifest.py`: managed file manifest
-- `updater.py`: dry-run update and layout migration planning
-- `events.py`: JSONL event ledger
-- `paths.py`, `hashing.py`, `reporting.py`: shared utilities
+Command behavior is checked against the preserved Python reference by `pnpm parity`. Python removal is intentionally out of scope for this package.

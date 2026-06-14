@@ -20,14 +20,14 @@ Prefer the bundled CLI because it preserves user files, writes a manifest, and k
 Direct monorepo usage:
 
 ```bash
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py init <target-dir> --name <project-name>
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py check --root <target-dir>
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py status --root <target-dir>
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py update --root <target-dir> --dry-run
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py migrate-layout --root <target-dir> --dry-run
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py reference add <source-dir> <name> --root <target-dir>
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py analysis new "Reference analysis" --root <target-dir>
-PYTHONPATH=packages/metasystem-framework-cli/src python packages/metasystem-framework-cli/scripts/bootstrap_framework.py iteration start "CLI refactor" --root <target-dir>
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py init <target-dir> --name <project-name>
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py check --root <target-dir>
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py status --root <target-dir>
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py update --root <target-dir> --dry-run
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py migrate-layout --root <target-dir> --dry-run
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py reference add <source-dir> <name> --root <target-dir>
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py analysis new "Reference analysis" --root <target-dir>
+PYTHONPATH=packages/metasystem-framework-cli-python/src python packages/metasystem-framework-cli-python/scripts/bootstrap_framework.py iteration start "CLI refactor" --root <target-dir>
 ```
 
 Installable package usage:

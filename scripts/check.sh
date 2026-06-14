@@ -4,7 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-package_root="$repo_root/packages/metasystem-framework-cli"
+pnpm check
+
+package_root="$repo_root/packages/metasystem-framework-cli-python"
 export PYTHONPATH="$package_root/src"
 
 (
