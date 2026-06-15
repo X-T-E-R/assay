@@ -6,6 +6,7 @@ export * from "./events.js";
 export * from "./hashing.js";
 export * from "./manifest.js";
 export * from "./paths.js";
+export * from "./project-registry.js";
 export * from "./results.js";
 export * from "./schemas/index.js";
 export * from "./templates.js";

@@ -26,11 +26,20 @@ node packages/metasystem-framework-cli/dist/cli.js init <target-dir> --name <pro
 node packages/metasystem-framework-cli/dist/cli.js check --root <target-dir>
 node packages/metasystem-framework-cli/dist/cli.js status --root <target-dir>
 node packages/metasystem-framework-cli/dist/cli.js update --root <target-dir> --dry-run
+node packages/metasystem-framework-cli/dist/cli.js projects list
+node packages/metasystem-framework-cli/dist/cli.js projects scan <parent-dir>
 node packages/metasystem-framework-cli/dist/cli.js migrate-layout --root <target-dir> --dry-run
 node packages/metasystem-framework-cli/dist/cli.js reference add <source-dir> <name> --root <target-dir>
 node packages/metasystem-framework-cli/dist/cli.js analysis new "Reference analysis" --root <target-dir>
 node packages/metasystem-framework-cli/dist/cli.js iteration start "CLI refactor" --root <target-dir>
 ```
+
+The CLI tracks initialized framework workspaces in a user-local registry at
+`~/.metasystem/projects`. Use `projects list` to locate known scaffolded
+workspaces, `projects show <id-or-path>` to inspect one, `projects scan` to
+discover existing workspaces by `.framework/manifest.json`, and
+`projects prune --dry-run` before removing stale registry records. These
+commands remove only registry metadata, never project files.
 
 ## Required framework structure
 
@@ -80,12 +89,14 @@ Update policy:
 
 1. Inspect the target folder and any supplied external repository.
 2. Run `init` if the target is new, or `check`/`status` if it already exists.
-3. Freeze external projects with `reference add` or manually under `references/frozen/YYYYMM/`.
-4. Write an analysis card under `analyses/`.
-5. Convert promising findings into a candidate pattern.
-6. Start an iteration against our own `systems/<core>/`.
-7. Promote successful results into `knowledge/`, ADRs, CLI behavior, or system docs.
-8. Run `update --dry-run` before applying framework upgrades.
+3. Use `projects list` or `projects scan <parent-dir>` when you need to locate
+   existing MetaSystem scaffolded workspaces.
+4. Freeze external projects with `reference add` or manually under `references/frozen/YYYYMM/`.
+5. Write an analysis card under `analyses/`.
+6. Convert promising findings into a candidate pattern.
+7. Start an iteration against our own `systems/<core>/`.
+8. Promote successful results into `knowledge/`, ADRs, CLI behavior, or system docs.
+9. Run `update --dry-run` before applying framework upgrades.
 
 ## Anti-rules
 

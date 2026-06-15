@@ -1,14 +1,21 @@
 import { Command, Option } from "@commander-js/extra-typings";
 import {
+  type MetaSystemProjectRegistryStatus,
   addReference,
   applyUpdate,
   captureEvent,
   checkFramework,
   createAnalysis,
   discoverFrameworkRoot,
+  findProjectRecord,
+  forgetProject,
   getFrameworkStatus,
   initFramework,
+  listProjectRecords,
   migrateLayout,
+  pruneProjects,
+  recordProjectLifecycleBestEffort,
+  scanForProjects,
   startIteration,
 } from "metasystem-framework-core";
 
@@ -17,6 +24,8 @@ import {
   formatCheckResult,
   formatInitResult,
   formatMigrationResult,
+  formatProjectList,
+  formatProjectRecord,
   formatStatusResult,
   formatUpdateResult,
 } from "./format.js";
@@ -30,6 +39,26 @@ export interface CliOutput {
 export interface CreateProgramOptions {
   readonly output?: Partial<CliOutput>;
 }
+
+interface ProjectListOptions {
+  readonly all?: boolean;
+  readonly json?: boolean;
+  readonly status?: string;
+}
+
+interface ProjectJsonOptions {
+  readonly json?: boolean;
+}
+
+interface ProjectPruneOptions extends ProjectJsonOptions {
+  readonly dryRun?: boolean;
+}
+
+const PROJECT_STATUSES: readonly MetaSystemProjectRegistryStatus[] = [
+  "active",
+  "missing",
+  "uninstalled",
+];
 
 function defaultOutput(): CliOutput {
   return {
@@ -62,6 +91,20 @@ async function discoveredRoot(root: string): Promise<string> {
   return discoverFrameworkRoot(root);
 }
 
+function writeJson(output: { readonly stdout: CliOutput["stdout"] }, value: unknown): void {
+  output.stdout(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function parseStatusFilter(status?: string): MetaSystemProjectRegistryStatus | undefined {
+  if (status === undefined) {
+    return undefined;
+  }
+  if (PROJECT_STATUSES.includes(status as MetaSystemProjectRegistryStatus)) {
+    return status as MetaSystemProjectRegistryStatus;
+  }
+  throw new Error(`--status must be one of: ${PROJECT_STATUSES.join(", ")}`);
+}
+
 export function createProgram(options: CreateProgramOptions = {}): Command {
   const output = createOutput(options);
   const program = new Command()
@@ -91,6 +134,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         force: commandOptions.force ?? false,
         createNew: commandOptions.createNew ?? false,
       });
+      await recordProjectLifecycleBestEffort(result.root, "init");
       writeLine(output, "stdout", formatInitResult(result));
     });
 
@@ -148,7 +192,113 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         dryRun: commandOptions.dryRun ?? false,
         action,
       });
+      await recordProjectLifecycleBestEffort(root, "update");
       writeLine(output, "stdout", formatUpdateResult(result));
+    });
+
+  const projects = program
+    .command("projects")
+    .description("List and manage MetaSystem scaffolded projects")
+    .action(async () => {
+      const records = (await listProjectRecords()).filter(
+        (record) => record.status !== "uninstalled",
+      );
+      writeLine(output, "stdout", formatProjectList("tracked MetaSystem projects", records));
+    });
+
+  projects
+    .command("list")
+    .description("List tracked MetaSystem projects")
+    .option("--json", "emit JSON")
+    .option("--all", "include uninstalled projects")
+    .addOption(
+      new Option("--status <status>", "filter: active | missing | uninstalled").choices([
+        ...PROJECT_STATUSES,
+      ]),
+    )
+    .action(async (commandOptions: ProjectListOptions) => {
+      const status = parseStatusFilter(commandOptions.status);
+      const records = (await listProjectRecords()).filter((record) => {
+        if (status) {
+          return record.status === status;
+        }
+        if (commandOptions.all) {
+          return true;
+        }
+        return record.status !== "uninstalled";
+      });
+
+      if (commandOptions.json) {
+        writeJson(output, records);
+        return;
+      }
+      writeLine(output, "stdout", formatProjectList("tracked MetaSystem projects", records));
+    });
+
+  projects
+    .command("show")
+    .description("Show one tracked project by id, id prefix, or path")
+    .argument("<selector>", "project id, id prefix, or filesystem path")
+    .option("--json", "emit JSON")
+    .action(async (selector: string, commandOptions: ProjectJsonOptions) => {
+      const record = await findProjectRecord(selector);
+      if (commandOptions.json) {
+        writeJson(output, record);
+        return;
+      }
+      writeLine(output, "stdout", formatProjectRecord(record));
+    });
+
+  projects
+    .command("scan")
+    .description("Scan directories for .framework/manifest.json projects and register them")
+    .argument("<roots...>", "directories to scan")
+    .option("--json", "emit JSON")
+    .action(async (roots: string[], commandOptions: ProjectJsonOptions) => {
+      const records = await scanForProjects(roots);
+      if (commandOptions.json) {
+        writeJson(output, records);
+        return;
+      }
+      writeLine(
+        output,
+        "stdout",
+        records.length === 0
+          ? "No MetaSystem projects found."
+          : formatProjectList(`registered ${records.length} MetaSystem project(s)`, records),
+      );
+    });
+
+  projects
+    .command("forget")
+    .description("Remove a project from the registry without touching files")
+    .argument("<selector>", "project id, id prefix, or filesystem path")
+    .action(async (selector: string) => {
+      const record = await forgetProject(selector);
+      writeLine(output, "stdout", `Forgot ${record.id}\n  ${record.path}`);
+    });
+
+  projects
+    .command("prune")
+    .description("Remove missing/uninstalled projects from the registry")
+    .option("--dry-run", "show what would be removed")
+    .option("--json", "emit JSON")
+    .action(async (commandOptions: ProjectPruneOptions) => {
+      const records = await pruneProjects({ dryRun: commandOptions.dryRun ?? false });
+      if (commandOptions.json) {
+        writeJson(output, records);
+        return;
+      }
+      if (records.length === 0) {
+        writeLine(output, "stdout", "No missing or uninstalled projects to prune.");
+        return;
+      }
+      const verb = commandOptions.dryRun ? "Would prune" : "Pruned";
+      writeLine(
+        output,
+        "stdout",
+        formatProjectList(`${verb} ${records.length} project(s)`, records),
+      );
     });
 
   program

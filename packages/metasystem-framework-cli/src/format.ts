@@ -3,6 +3,7 @@ import type {
   CheckFrameworkResult,
   FrameworkStatusResult,
   InitFrameworkResult,
+  MetaSystemProjectRecord,
   MigrateLayoutResult,
   OperationReport,
   UpdateAnalysis,
@@ -138,4 +139,49 @@ export function formatMigrationResult(result: MigrateLayoutResult): string {
     ...(result.backup ? [`Backup: ${result.backup.relativePath}`] : []),
     ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
   ].join("\n");
+}
+
+export function formatProjectList(
+  title: string,
+  records: readonly MetaSystemProjectRecord[],
+): string {
+  if (records.length === 0) {
+    return `${title}\n(none)`;
+  }
+
+  return [
+    title,
+    ...records.map(
+      (record) =>
+        `${record.status.padEnd(11)} ${formatProjectDate(record.lastSeenAt)}  ${record.id}  ${projectLabel(record).padEnd(28)} ${record.path}`,
+    ),
+    "",
+    `${records.length} project(s)`,
+  ].join("\n");
+}
+
+export function formatProjectRecord(record: MetaSystemProjectRecord): string {
+  return [
+    `${record.name} (${record.id})`,
+    `  status:            ${record.status}`,
+    `  path:              ${record.path}`,
+    `  realpath:          ${record.realpath}`,
+    `  project:           ${record.name}`,
+    `  core:              ${record.core}`,
+    `  created:           ${record.createdAt}`,
+    `  last seen:         ${record.lastSeenAt}`,
+    `  created by:        ${record.createdBy}`,
+    `  last command:      ${record.lastCommand}`,
+    `  framework version: ${record.frameworkVersion ?? "unknown"}`,
+    `  layout version:    ${record.layoutVersion ?? "unknown"}`,
+    `  managed files:     ${record.managedFiles}`,
+  ].join("\n");
+}
+
+function formatProjectDate(iso: string): string {
+  return iso.slice(0, 16).replace("T", " ");
+}
+
+function projectLabel(record: MetaSystemProjectRecord): string {
+  return `${record.name}/${record.core}`;
 }

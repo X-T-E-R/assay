@@ -43,11 +43,24 @@ function main() {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "metasystem-kit-smoke-"));
   try {
     const demo = path.join(tempRoot, "demo");
-    run("CLI init", ["init", demo, "--name", "MetaSystem Smoke"]);
-    run("CLI check", ["check", "--root", demo]);
-    run("CLI status", ["status", "--root", demo]);
-    run("CLI update dry-run", ["update", "--root", demo, "--dry-run"]);
-    run("CLI migrate-layout dry-run", ["migrate-layout", "--root", demo, "--dry-run"]);
+    const smokeEnv = {
+      ...process.env,
+      METASYSTEM_PROJECT_REGISTRY_ROOT: path.join(tempRoot, "registry"),
+    };
+    const smokeOptions = { env: smokeEnv };
+    run("CLI init", ["init", demo, "--name", "MetaSystem Smoke"], smokeOptions);
+    run("CLI check", ["check", "--root", demo], smokeOptions);
+    run("CLI status", ["status", "--root", demo], smokeOptions);
+    run("CLI update dry-run", ["update", "--root", demo, "--dry-run"], smokeOptions);
+    const projects = run("CLI projects list", ["projects", "list", "--json"], smokeOptions);
+    if (!projects.includes("MetaSystem Smoke")) {
+      fail("CLI projects list did not include the initialized project.");
+    }
+    run(
+      "CLI migrate-layout dry-run",
+      ["migrate-layout", "--root", demo, "--dry-run"],
+      smokeOptions,
+    );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

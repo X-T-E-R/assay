@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createProgram } from "../src/index.js";
 
@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const packageRoot = process.cwd();
 const cliPath = path.join(packageRoot, "dist", "cli.js");
 const tempRoots: string[] = [];
+let registryRoot = "";
 
 interface CliResult {
   readonly exitCode: number;
@@ -44,6 +45,10 @@ async function runCliIn(cwd: string, args: readonly string[]): Promise<CliResult
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
       cwd,
+      env: {
+        ...process.env,
+        METASYSTEM_PROJECT_REGISTRY_ROOT: registryRoot,
+      },
     });
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
@@ -62,6 +67,10 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+beforeEach(async () => {
+  registryRoot = path.join(await tempDir(), "registry");
+});
+
 describe("metasystem Commander registration", () => {
   it("registers compatibility commands in root help", () => {
     const help = createProgram().helpInformation();
@@ -72,6 +81,7 @@ describe("metasystem Commander registration", () => {
       "check",
       "status",
       "update",
+      "projects",
       "migrate-layout",
       "reference",
       "analysis",
@@ -132,6 +142,15 @@ describe("metasystem CLI subprocess behavior", () => {
     expect(update.stdout).toContain("Framework update: dry-run");
     expect(update.stdout).toContain("dry-run: no changes applied");
     expect(update.stderr).toBe("");
+
+    const projects = await runCli(["projects", "show", root, "--json"]);
+    expect(projects.exitCode).toBe(0);
+    expect(JSON.parse(projects.stdout)).toMatchObject({
+      path: path.resolve(root),
+      name: "MetaSystem Smoke",
+      lastCommand: "update",
+      status: "active",
+    });
   });
 
   it("defaults root-scoped commands to the current working directory", async () => {
@@ -275,5 +294,74 @@ describe("metasystem CLI subprocess behavior", () => {
     expect(migration.exitCode).toBe(0);
     expect(migration.stdout).toContain("Layout migration: dry-run");
     expect(migration.stdout).toContain("Plan:");
+  });
+
+  it("lists, shows, scans, forgets, and prunes project registry records", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const siblingRoot = path.join(await tempDir(), "sibling");
+    await runCli(["init", root, "--name", "Registry CLI"]);
+    await runCli(["init", siblingRoot, "--name", "Registry Sibling"]);
+
+    const bareList = await runCli(["projects"]);
+    expect(bareList.exitCode).toBe(0);
+    expect(bareList.stdout).toContain("tracked MetaSystem projects");
+    expect(bareList.stdout).toContain("Registry CLI");
+
+    const list = await runCli(["projects", "list", "--json"]);
+    expect(list.exitCode).toBe(0);
+    const records = JSON.parse(list.stdout);
+    expect(records).toHaveLength(2);
+    const record = records.find(
+      (candidate: { path?: string }) => candidate.path === path.resolve(root),
+    );
+    expect(record).toMatchObject({
+      name: "Registry CLI",
+      core: "registry-cli-core",
+      status: "active",
+      lastCommand: "init",
+    });
+
+    const byId = await runCli(["projects", "show", record.id, "--json"]);
+    expect(byId.exitCode).toBe(0);
+    expect(JSON.parse(byId.stdout)).toMatchObject({ id: record.id });
+
+    const byPrefix = await runCli(["projects", "show", record.id.slice(0, 10), "--json"]);
+    expect(byPrefix.exitCode).toBe(0);
+    expect(JSON.parse(byPrefix.stdout)).toMatchObject({ id: record.id });
+
+    const byPath = await runCli(["projects", "show", path.join(root, "."), "--json"]);
+    expect(byPath.exitCode).toBe(0);
+    expect(JSON.parse(byPath.stdout)).toMatchObject({ id: record.id });
+
+    const forget = await runCli(["projects", "forget", record.id]);
+    expect(forget.exitCode).toBe(0);
+    expect(forget.stdout).toContain(`Forgot ${record.id}`);
+    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+
+    const scan = await runCli(["projects", "scan", path.dirname(root), "--json"]);
+    expect(scan.exitCode).toBe(0);
+    const scanned = JSON.parse(scan.stdout);
+    expect(
+      scanned.some((candidate: { path?: string }) => candidate.path === path.resolve(root)),
+    ).toBe(true);
+
+    await rm(path.join(root, ".framework"), { recursive: true, force: true });
+    const dryRunPrune = await runCli(["projects", "prune", "--dry-run", "--json"]);
+    expect(dryRunPrune.exitCode).toBe(0);
+    expect(JSON.parse(dryRunPrune.stdout)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
+    );
+
+    const stillListed = await runCli(["projects", "list", "--status", "missing", "--json"]);
+    expect(JSON.parse(stillListed.stdout)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
+    );
+
+    const prune = await runCli(["projects", "prune", "--json"]);
+    expect(prune.exitCode).toBe(0);
+    expect(JSON.parse(prune.stdout)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
+    );
+    expect(await exists(path.join(root, "README.md"))).toBe(true);
   });
 });

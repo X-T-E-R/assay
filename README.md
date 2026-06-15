@@ -67,11 +67,21 @@ metasystem init <target-dir> --name <project-name>
 metasystem check --root <target-dir>
 metasystem status --root <target-dir>
 metasystem update --root <target-dir> --dry-run
+metasystem projects list
+metasystem projects scan <parent-dir>
 metasystem migrate-layout --root <target-dir> --dry-run
 metasystem reference add <source-dir> <name> --root <target-dir>
 metasystem analysis new "Reference analysis" --root <target-dir>
 metasystem iteration start "CLI refactor" --root <target-dir>
 ```
+
+`metasystem init` and successful `metasystem update` runs register the scaffolded
+workspace in a user-local project registry under `~/.metasystem/projects`.
+Use `metasystem projects list` to find known framework workspaces,
+`metasystem projects show <id-or-path>` to inspect one record, and
+`metasystem projects prune --dry-run` to preview cleanup of missing registry
+entries. These commands manage registry metadata only; they do not delete
+project files.
 
 ## Validation
 
@@ -87,7 +97,7 @@ On a POSIX shell:
 ./scripts/check.sh
 ```
 
-The repository check includes TypeScript build, typecheck, lint, tests, and a TypeScript CLI smoke flow that covers help, init, check, status, update dry-run, and migration dry-run.
+The repository check includes TypeScript build, typecheck, lint, tests, and a TypeScript CLI smoke flow that covers help, init, check, status, update dry-run, project registry listing, and migration dry-run.
 
 ## Package Split And GUI Reuse
 
