@@ -25,4 +25,18 @@ mkdir -p "$demo"
   node "$cli" migrate-layout --dry-run >/dev/null
 )
 
+adopted="$tmp/adopted"
+mkdir -p "$adopted/src"
+printf '# Existing Project\n' >"$adopted/README.md"
+printf 'export const legacy = true;\n' >"$adopted/src/index.ts"
+(
+  cd "$adopted"
+  node "$cli" adopt --name "Adopted Smoke" >/dev/null
+  node "$cli" adopt --apply --name "Adopted Smoke"
+  node "$cli" check
+  archive_count="$(find .old -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+  test "$archive_count" = "1"
+  test -f .old/*/src/index.ts
+)
+
 echo "MetaSystem Kit checks passed."

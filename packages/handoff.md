@@ -22,6 +22,8 @@ The previous reference package removal gate has been approved. The reference pac
 node packages/metasystem-framework-cli/dist/cli.js --help
 cd <target-dir>
 node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js init --name <project-name>
+node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js adopt --dry-run
+node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js adopt --apply --name <project-name>
 node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js check
 node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js status
 node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js update --dry-run

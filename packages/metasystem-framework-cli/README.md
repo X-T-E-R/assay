@@ -24,6 +24,14 @@ node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js init --name
 node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js check
 ```
 
+To convert an existing project into a clean MetaSystem workspace, run from that
+project root:
+
+```powershell
+node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js adopt --dry-run
+node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js adopt --apply --name MetaSystem
+```
+
 ## Development
 
 ```powershell

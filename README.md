@@ -80,6 +80,8 @@ pnpm smoke
 
 ```powershell
 metasystem init --name <project-name>
+metasystem adopt --dry-run
+metasystem adopt --apply --name <project-name>
 metasystem check
 metasystem status
 metasystem update --dry-run
@@ -94,6 +96,23 @@ metasystem iteration start "CLI refactor"
 Run these commands from the framework workspace by default. Use
 `metasystem init <target-dir>` or `--root <target-dir>` only when operating on a
 workspace from another directory.
+
+## Adopting Existing Projects
+
+Use `adopt` when the current directory already contains an ordinary project and
+you want a clean MetaSystem root:
+
+```powershell
+cd C:\path\to\existing-project
+metasystem adopt --dry-run
+metasystem adopt --apply --name ExistingProject
+```
+
+The apply step archives current root contents under a timestamped `.old/`
+directory, keeps `.git/` at the root, creates a new MetaSystem scaffold, and
+writes an adoption manifest into the archive. After that, inspect `.old/<stamp>/`
+and move archived content into the appropriate new project locations only after
+the target direction is clear.
 
 `metasystem init` and successful `metasystem update` runs register the scaffolded
 workspace in a user-local project registry under `~/.metasystem/projects`.
@@ -117,7 +136,7 @@ On a POSIX shell:
 ./scripts/check.sh
 ```
 
-The repository check includes TypeScript build, typecheck, lint, tests, and a TypeScript CLI smoke flow that covers help, init, check, status, update dry-run, project registry listing, and migration dry-run.
+The repository check includes TypeScript build, typecheck, lint, tests, and a TypeScript CLI smoke flow that covers help, init, adopt dry-run/apply, check, status, update dry-run, project registry listing, and migration dry-run.
 
 ## Package Split And GUI Reuse
 

@@ -9,7 +9,7 @@ import { FrameworkError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 
-export type MetaSystemProjectRegistryCommand = "init" | "update" | "scan" | "uninstall";
+export type MetaSystemProjectRegistryCommand = "init" | "adopt" | "update" | "scan" | "uninstall";
 export type MetaSystemProjectRegistryStatus = "active" | "missing" | "uninstalled";
 
 export interface ProjectRegistryOptions {
@@ -420,7 +420,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isRegistryCommand(value: unknown): value is MetaSystemProjectRegistryCommand {
-  return value === "init" || value === "update" || value === "scan" || value === "uninstall";
+  return (
+    value === "init" ||
+    value === "adopt" ||
+    value === "update" ||
+    value === "scan" ||
+    value === "uninstall"
+  );
 }
 
 function isRegistryStatus(value: unknown): value is MetaSystemProjectRegistryStatus {

@@ -24,6 +24,8 @@ want to manage, then run `init` or other commands without passing a path.
 mkdir -p <target-dir>
 cd <target-dir>
 metasystem init --name <project-name>
+metasystem adopt --dry-run
+metasystem adopt --apply --name <project-name>
 metasystem check
 metasystem status
 metasystem update --dry-run
@@ -46,6 +48,38 @@ workspaces, `projects show <id-or-path>` to inspect one, `projects scan` to
 discover existing workspaces by `.framework/manifest.json`, and
 `projects prune --dry-run` before removing stale registry records. These
 commands remove only registry metadata, never project files.
+
+## Adopt an existing project
+
+Use `adopt` when the current directory already contains a non-MetaSystem project
+and the user wants to rebuild it as a clean MetaSystem workspace.
+
+```bash
+cd <existing-project>
+metasystem adopt --dry-run
+metasystem adopt --apply --name <project-name>
+metasystem check
+metasystem status
+```
+
+Adoption archives existing root contents under `.old/<timestamp>/`, preserves
+`.git/` at the project root, then creates the standard MetaSystem scaffold. The
+archive is a staging source, not the final organization.
+
+After adoption:
+
+1. Inspect `.old/<timestamp>/` and its adoption manifest.
+2. Write or update an adoption analysis describing what each meaningful old
+   artifact is and where it should live now.
+3. Confirm the target direction when the mapping changes project structure,
+   build behavior, public docs, or user-facing semantics.
+4. Move old artifacts into the appropriate new locations after the direction is
+   clear. Do not default to copying, and do not assume every artifact belongs in
+   one fixed directory.
+5. Run `metasystem check` and any project-specific validation after moves.
+
+Do not delete `.old/<timestamp>/` until the user explicitly accepts the migrated
+structure or a separate cleanup task is created.
 
 ## Required framework structure
 
@@ -94,7 +128,9 @@ Update policy:
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.
-2. Run `init` if the target is new, or `check`/`status` if it already exists.
+2. Run `init` if the target is empty/new, `adopt --dry-run` then
+   `adopt --apply` if the target already has ordinary project content, or
+   `check`/`status` if it already has a MetaSystem manifest.
 3. Use `projects list` or `projects scan <parent-dir>` when you need to locate
    existing MetaSystem scaffolded workspaces.
 4. Freeze external projects with `reference add` or manually under `references/frozen/YYYYMM/`.
@@ -107,9 +143,13 @@ Update policy:
 ## Anti-rules
 
 - Do not overwrite existing user files by default.
+- Do not adopt an already initialized MetaSystem workspace; use update or
+  migration commands instead.
 - Do not put external project source under `systems/`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress.
 - Do not silently rename/delete legacy folders.
+- Do not move archived `.old/` content into new locations before the direction
+  is understood and confirmed when necessary.
 - Do not copy AGPL or incompatible upstream source into our skill; extract patterns and document decisions instead.
 - Do not leave an external reference without an analysis exit: adopt, reject, experiment, or ADR.
 

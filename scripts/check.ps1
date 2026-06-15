@@ -39,6 +39,29 @@ try {
   finally {
     Pop-Location
   }
+
+  $adopted = Join-Path $tmp.FullName "adopted"
+  New-Item -ItemType Directory -Path (Join-Path $adopted "src") | Out-Null
+  Set-Content -Path (Join-Path $adopted "README.md") -Value "# Existing Project"
+  Set-Content -Path (Join-Path $adopted "src\index.ts") -Value "export const legacy = true;"
+  Push-Location $adopted
+  try {
+    Invoke-Checked "node" @($cli, "adopt", "--name", "Adopted Smoke")
+    Invoke-Checked "node" @($cli, "adopt", "--apply", "--name", "Adopted Smoke")
+    Invoke-Checked "node" @($cli, "check")
+    $archiveRoot = Join-Path $adopted ".old"
+    $archives = @(Get-ChildItem -LiteralPath $archiveRoot -Directory)
+    if ($archives.Count -ne 1) {
+      throw "Expected one adoption archive, found $($archives.Count)."
+    }
+    $legacySource = Join-Path $archives[0].FullName "src\index.ts"
+    if (-not (Test-Path -LiteralPath $legacySource)) {
+      throw "Adoption archive did not contain the legacy source file."
+    }
+  }
+  finally {
+    Pop-Location
+  }
 }
 finally {
   if ($null -eq $previousRegistryRoot) {

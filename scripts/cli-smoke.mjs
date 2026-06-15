@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +66,23 @@ function main() {
       fail("CLI projects list did not include the initialized project.");
     }
     run("CLI migrate-layout dry-run", ["migrate-layout", "--dry-run"], smokeOptions);
+
+    const adopted = path.join(tempRoot, "adopted");
+    mkdirSync(path.join(adopted, "src"), { recursive: true });
+    writeFileSync(path.join(adopted, "README.md"), "# Existing Project\n", "utf8");
+    writeFileSync(path.join(adopted, "src", "index.ts"), "export const legacy = true;\n", "utf8");
+    const adoptOptions = { env: smokeEnv, cwd: adopted };
+    run("CLI adopt dry-run", ["adopt", "--name", "Adopted Smoke"], adoptOptions);
+    run("CLI adopt apply", ["adopt", "--apply", "--name", "Adopted Smoke"], adoptOptions);
+    run("CLI adopted check", ["check"], adoptOptions);
+    const archiveRoot = path.join(adopted, ".old");
+    const archives = readdirSync(archiveRoot);
+    if (archives.length !== 1) {
+      fail(`Expected one adoption archive, found ${archives.length}.`);
+    }
+    if (!existsSync(path.join(archiveRoot, archives[0], "src", "index.ts"))) {
+      fail("Adoption archive did not contain the legacy source file.");
+    }
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

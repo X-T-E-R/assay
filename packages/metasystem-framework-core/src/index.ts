@@ -1,5 +1,6 @@
 export const CORE_PACKAGE_NAME = "metasystem-framework-core";
 
+export * from "./adoption.js";
 export * from "./constants.js";
 export * from "./errors.js";
 export * from "./events.js";

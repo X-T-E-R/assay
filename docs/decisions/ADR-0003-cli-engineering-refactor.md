@@ -25,6 +25,7 @@ packages/
 
 ```bash
 metasystem init [target] --name <project> [--git]
+metasystem adopt --root <root> --name <project> [--dry-run|--apply]
 metasystem check --root <root>
 metasystem status --root <root>
 metasystem update --root <root> [--dry-run|--force|--skip-all|--create-new]
@@ -43,11 +44,12 @@ default to the current framework root; `--root` is for out-of-tree operations.
 最小测试覆盖：
 
 1. init 创建新结构和 manifest；
-2. 用户修改 managed 文件后 update 默认不覆盖；
-3. 用户删除 managed 文件后 update 默认不恢复；
-4. reference add 会复制并写事件；
-5. migrate-layout 默认 dry-run 不改文件；
-6. CLI help、init/check/status/update dry-run/migration dry-run 可通过构建后的 Node 入口运行。
+2. adopt 默认 dry-run，不移动文件；apply 会把已有内容移动到 `.old/<timestamp>/`，保留 `.git/` 并生成新 scaffold；
+3. 用户修改 managed 文件后 update 默认不覆盖；
+4. 用户删除 managed 文件后 update 默认不恢复；
+5. reference add 会复制并写事件；
+6. migrate-layout 默认 dry-run 不改文件；
+7. CLI help、init/adopt/check/status/update dry-run/migration dry-run 可通过构建后的 Node 入口运行。
 
 ## 兼容策略
 

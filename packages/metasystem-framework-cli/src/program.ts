@@ -2,6 +2,7 @@ import { Command, Option } from "@commander-js/extra-typings";
 import {
   type MetaSystemProjectRegistryStatus,
   addReference,
+  adoptExistingProject,
   applyUpdate,
   captureEvent,
   checkFramework,
@@ -21,6 +22,7 @@ import {
 
 import { mapCliError } from "./errors.js";
 import {
+  formatAdoptionResult,
   formatCheckResult,
   formatInitResult,
   formatMigrationResult,
@@ -136,6 +138,32 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       await recordProjectLifecycleBestEffort(result.root, "init");
       writeLine(output, "stdout", formatInitResult(result));
+    });
+
+  program
+    .command("adopt")
+    .description("Archive an existing project into .old and initialize a clean MetaSystem scaffold")
+    .option("--root <target-dir>", "existing project root to adopt", process.cwd())
+    .option("--name <project-name>", "project name")
+    .option("--core <core-name>", "core system directory name")
+    .addOption(new Option("--dry-run", "plan adoption without applying writes").conflicts("apply"))
+    .addOption(
+      new Option("--apply", "move existing root entries and initialize the scaffold").conflicts(
+        "dryRun",
+      ),
+    )
+    .action(async (commandOptions) => {
+      const result = await adoptExistingProject({
+        root: commandOptions.root,
+        ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
+        ...(commandOptions.core === undefined ? {} : { core: commandOptions.core }),
+        dryRun: commandOptions.dryRun ?? false,
+        apply: commandOptions.apply ?? false,
+      });
+      writeLine(output, "stdout", formatAdoptionResult(result));
+      if (!result.dryRun && result.failures.length > 0) {
+        output.setExitCode(1);
+      }
     });
 
   program

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -78,6 +78,7 @@ describe("metasystem Commander registration", () => {
     expect(help).toContain("Usage: metasystem [options] [command]");
     for (const command of [
       "init",
+      "adopt",
       "check",
       "status",
       "update",
@@ -110,6 +111,7 @@ describe("metasystem CLI subprocess behavior", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Bootstrap and update an external-system-learning framework.");
+    expect(result.stdout).toContain("adopt");
     expect(result.stdout).toContain("migrate-layout");
     expect(result.stderr).toBe("");
   });
@@ -151,6 +153,86 @@ describe("metasystem CLI subprocess behavior", () => {
       lastCommand: "update",
       status: "active",
     });
+  });
+
+  it("prints adopt help with dry-run and apply options", async () => {
+    const result = await runCli(["adopt", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: metasystem adopt [options]");
+    expect(result.stdout).toContain("--root <target-dir>");
+    expect(result.stdout).toContain("--dry-run");
+    expect(result.stdout).toContain("--apply");
+    expect(result.stderr).toBe("");
+  });
+
+  it("runs adopt as a dry-run by default without moving existing files", async () => {
+    const root = path.join(await tempDir(), "existing");
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "index.ts"), "export {};\n", "utf8");
+    await writeFile(path.join(root, "README.md"), "# Existing\n", "utf8");
+
+    const result = await runCli(["adopt", "--root", root, "--name", "Adopt CLI"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Existing project adoption: dry-run");
+    expect(result.stdout).toContain("README.md -> .old/");
+    expect(result.stdout).toContain("Adoption manifest: .old/");
+    expect(result.stderr).toBe("");
+    expect(await exists(path.join(root, ".old"))).toBe(false);
+    expect(await readFile(path.join(root, "README.md"), "utf8")).toBe("# Existing\n");
+    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(false);
+  });
+
+  it("applies adopt, preserves .git, archives old files, and registers the new scaffold", async () => {
+    const root = path.join(await tempDir(), "existing");
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, ".git"), { recursive: true });
+    await writeFile(path.join(root, "src", "index.ts"), "export {};\n", "utf8");
+    await writeFile(path.join(root, "README.md"), "# Existing\n", "utf8");
+
+    const result = await runCli([
+      "adopt",
+      "--root",
+      root,
+      "--name",
+      "Adopt CLI Apply",
+      "--core",
+      "cli-core",
+      "--apply",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Existing project adoption: applied");
+    expect(result.stdout).toContain("Archive: .old/");
+    expect(result.stdout).toContain("Scaffold:");
+    expect(result.stdout).toContain("core: cli-core");
+    expect(result.stdout).toContain("Adoption manifest: .old/");
+    expect(result.stderr).toBe("");
+    expect(await exists(path.join(root, ".git"))).toBe(true);
+    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await readFile(path.join(root, "README.md"), "utf8")).toContain("# Adopt CLI Apply");
+
+    const projects = await runCli(["projects", "show", root, "--json"]);
+    expect(projects.exitCode).toBe(0);
+    expect(JSON.parse(projects.stdout)).toMatchObject({
+      path: path.resolve(root),
+      name: "Adopt CLI Apply",
+      core: "cli-core",
+      lastCommand: "adopt",
+      status: "active",
+    });
+  });
+
+  it("refuses adopt when a framework manifest already exists", async () => {
+    const root = path.join(await tempDir(), "managed");
+    await runCli(["init", root, "--name", "Already Managed"]);
+
+    const result = await runCli(["adopt", "--root", root, "--apply"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("MetaSystem framework manifest already exists");
   });
 
   it("defaults root-scoped commands to the current working directory", async () => {

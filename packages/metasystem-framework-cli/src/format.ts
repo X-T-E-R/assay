@@ -1,4 +1,5 @@
 import type {
+  AdoptExistingProjectResult,
   ApplyUpdateResult,
   CheckFrameworkResult,
   FrameworkStatusResult,
@@ -137,6 +138,41 @@ export function formatMigrationResult(result: MigrateLayoutResult): string {
     "Plan:",
     ...steps,
     ...(result.backup ? [`Backup: ${result.backup.relativePath}`] : []),
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+  ].join("\n");
+}
+
+export function formatAdoptionResult(result: AdoptExistingProjectResult): string {
+  const moves =
+    result.moves.length === 0
+      ? ["  - no root entries planned for archive"]
+      : result.moves.map((move) => `  - [${move.status}] ${move.source} -> ${move.destination}`);
+  const skipped = result.skipped.map((entry) => `  - ${entry.path} (${entry.reason})`);
+  const failures = result.failures.map((failure) => {
+    const destination = failure.destination ? ` -> ${failure.destination}` : "";
+    return `  - ${failure.source}${destination}: ${failure.message}`;
+  });
+  const scaffold = result.scaffold
+    ? [
+        "Scaffold:",
+        `  - project: ${result.scaffold.project}`,
+        `  - core: ${result.scaffold.core}`,
+        `  - created directories: ${result.scaffold.createdDirectories}`,
+        `  - created files: ${result.scaffold.createdFiles}`,
+        `  - skipped files: ${result.scaffold.skippedFiles}`,
+      ]
+    : [];
+
+  return [
+    `Existing project adoption: ${result.dryRun ? "dry-run" : result.failures.length > 0 ? "failed" : "applied"}`,
+    `Root: ${result.root}`,
+    `Archive: ${result.archiveDir}`,
+    "Moves:",
+    ...moves,
+    ...(skipped.length ? ["Skipped:", ...skipped] : []),
+    ...(failures.length ? ["Failures:", ...failures] : []),
+    ...scaffold,
+    ...(result.manifestPath ? [`Adoption manifest: ${result.manifestPath}`] : []),
     ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
   ].join("\n");
 }
