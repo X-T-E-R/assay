@@ -18,25 +18,16 @@ function Invoke-Checked {
 
 Invoke-Checked "pnpm" @("check")
 
-$packageRoot = "packages\metasystem-framework-cli-python"
-$env:PYTHONPATH = Join-Path $packageRoot "src"
-
-Push-Location $packageRoot
-try {
-  Invoke-Checked "python" @("-m", "unittest", "discover", "-s", "tests", "-v")
-  Invoke-Checked "python" @("-m", "compileall", "-q", "src", "scripts", "tests")
-}
-finally {
-  Pop-Location
-}
-
 $tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "metasystem-kit-smoke-" + [System.Guid]::NewGuid().ToString("N")))
 try {
   $demo = Join-Path $tmp.FullName "demo"
-  Invoke-Checked "python" @("$packageRoot\scripts\bootstrap_framework.py", "init", $demo, "--name", "MetaSystem Smoke")
-  Invoke-Checked "python" @("$packageRoot\scripts\bootstrap_framework.py", "check", "--root", $demo)
-  Invoke-Checked "python" @("$packageRoot\scripts\bootstrap_framework.py", "status", "--root", $demo)
-  Invoke-Checked "python" @("$packageRoot\scripts\bootstrap_framework.py", "update", "--root", $demo, "--dry-run")
+  $cli = "packages\metasystem-framework-cli\dist\cli.js"
+  Invoke-Checked "node" @($cli, "--help")
+  Invoke-Checked "node" @($cli, "init", $demo, "--name", "MetaSystem Smoke")
+  Invoke-Checked "node" @($cli, "check", "--root", $demo)
+  Invoke-Checked "node" @($cli, "status", "--root", $demo)
+  Invoke-Checked "node" @($cli, "update", "--root", $demo, "--dry-run")
+  Invoke-Checked "node" @($cli, "migrate-layout", "--root", $demo, "--dry-run")
 }
 finally {
   if (Test-Path -LiteralPath $tmp.FullName) {

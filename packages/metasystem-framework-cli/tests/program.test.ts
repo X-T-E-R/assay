@@ -134,7 +134,7 @@ describe("metasystem CLI subprocess behavior", () => {
     expect(update.stderr).toBe("");
   });
 
-  it("preserves the Python-compatible default cwd for root-scoped commands", async () => {
+  it("defaults root-scoped commands to the current working directory", async () => {
     const workspace = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await mkdir(source, { recursive: true });

@@ -8,7 +8,7 @@ Do not commit:
 
 - real external-system snapshots, private references, customer/project data, generated releases, or runtime logs;
 - `.env` files, API keys, tokens, credentials, or local absolute paths;
-- one-off delivery reports, temporary validation output, caches, or Python bytecode;
+- one-off delivery reports, temporary validation output, caches, or compiled artifacts;
 - runtime contents under `.framework/backups/`, `.framework/events/`, or `.framework/.runtime/`.
 
 Use sanitized examples when a workflow needs demonstration data.
@@ -27,7 +27,7 @@ On a POSIX shell:
 ./scripts/check.sh
 ```
 
-The check covers unit tests, Python compilation, and CLI smoke tests.
+The check covers TypeScript build, typecheck, lint, unit tests, and CLI smoke tests.
 
 ## Documentation Style
 

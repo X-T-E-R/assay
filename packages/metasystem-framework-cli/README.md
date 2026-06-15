@@ -29,4 +29,4 @@ pnpm --filter metasystem-framework-cli typecheck
 pnpm --filter metasystem-framework-cli test
 ```
 
-Command behavior is checked against the preserved Python reference by `pnpm parity`. Python removal is intentionally out of scope for this package.
+Command behavior is checked by package tests and the repository-level `pnpm smoke` TypeScript CLI flow.

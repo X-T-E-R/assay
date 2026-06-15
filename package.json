@@ -6,10 +6,10 @@
   "packageManager": "pnpm@11.3.0",
   "scripts": {
     "build": "pnpm -r build",
-    "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm test && pnpm parity",
+    "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm test && pnpm smoke",
     "format": "biome format --write .",
     "lint": "biome check .",
-    "parity": "node scripts/parity-harness.mjs",
+    "smoke": "node scripts/cli-smoke.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   },

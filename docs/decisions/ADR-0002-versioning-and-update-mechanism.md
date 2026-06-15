@@ -15,7 +15,7 @@ Trellis 的经验表明，安全更新的关键不是“覆盖”，而是“识
 
 | 层 | 位置 | 含义 |
 | --- | --- | --- |
-| Package/CLI version | package constant / `pyproject.toml` | 当前工具版本 |
+| Package/CLI version | `package.json` / package constant | 当前工具版本 |
 | Installed framework version | `.framework/VERSION` | 目标仓库安装的 framework 模板版本 |
 | Manifest/schema/layout version | `.framework/manifest.json` | manifest 格式与目录结构版本 |
 

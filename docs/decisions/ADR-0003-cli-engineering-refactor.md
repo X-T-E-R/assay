@@ -1,37 +1,27 @@
-# ADR-0003：CLI 从单文件脚本重构为可安装 Python package
+# ADR-0003：CLI 拆分为 TypeScript core 与 Commander adapter
 
 - 状态：Accepted
-- 日期：2026-06-13
+- 日期：2026-06-14
 
 ## 背景
 
-现有 `scripts/bootstrap_framework.py` 是单文件。它已经承载 init、scaffold、check、capture、trellis bridge、queue、event、migration 等大量职责。继续在单文件里加入 version/update 会让风险变高。
+MetaSystem Kit 的 CLI 会创建、检查、更新并迁移用户工作区。把这些行为直接写在命令处理器里，会让未来 GUI、测试和更新预览都被迫依赖终端进程。
 
 ## 决策
 
-新版 CLI 使用零运行时依赖的 Python package 结构：
+CLI 使用两个 TypeScript workspace package：
 
 ```text
-bootstrap_framework/
-├── SKILL.md
-├── pyproject.toml
-├── scripts/bootstrap_framework.py      # 兼容 skill 直跑的 wrapper
-├── src/metasystem_framework/
-│   ├── cli.py                          # argparse 命令路由
-│   ├── constants.py                    # 当前版本、目录常量
-│   ├── paths.py                        # root discovery、slug、相对路径
-│   ├── hashing.py                      # LF-normalized SHA256
-│   ├── manifest.py                     # load/save/update manifest
-│   ├── templates.py                    # desired template tree
-│   ├── scaffold.py                     # init/check/status/reference/analysis/iteration
-│   ├── updater.py                      # update/migrate-layout pipeline
-│   └── events.py                       # jsonl event ledger
-└── tests/
+packages/
+├── metasystem-framework-core/
+│   └── src/        # framework 行为、模板、manifest、事件、update/migration
+└── metasystem-framework-cli/
+    └── src/        # Commander 命令、参数映射、格式化、退出码
 ```
 
-## CLI 命令面
+`metasystem-framework-core` 暴露可复用 API；`metasystem-framework-cli` 只负责把 argv 转成 core options，再把结构化结果格式化到 stdout/stderr。
 
-第一版保留核心命令：
+## CLI 命令面
 
 ```bash
 metasystem init <target> --name <project> [--git]
@@ -45,10 +35,6 @@ metasystem iteration start <title> --root <root>
 metasystem event capture --kind observation --text "..." --root <root>
 ```
 
-## 为什么不用 Click/Typer
-
-它们适合更丰富的交互 CLI，但 skill 交付的第一要求是“拿到目录就能跑”。因此第一版使用标准库 `argparse`，同时在 `pyproject.toml` 保留 console script，未来可无痛替换前端库。
-
 ## 测试要求
 
 最小测试覆盖：
@@ -57,23 +43,29 @@ metasystem event capture --kind observation --text "..." --root <root>
 2. 用户修改 managed 文件后 update 默认不覆盖；
 3. 用户删除 managed 文件后 update 默认不恢复；
 4. reference add 会复制并写事件；
-5. migrate-layout 默认 dry-run 不改文件。
+5. migrate-layout 默认 dry-run 不改文件；
+6. CLI help、init/check/status/update dry-run/migration dry-run 可通过构建后的 Node 入口运行。
 
 ## 兼容策略
 
-`scripts/bootstrap_framework.py` 作为 wrapper 保留，避免 skill 使用者必须先 install package。wrapper 会把 `src/` 加入 `sys.path` 后调用 `metasystem_framework.cli.main()`。
+Skill 和仓库检查脚本直接调用构建后的 TypeScript CLI：
+
+```bash
+node packages/metasystem-framework-cli/dist/cli.js --help
+```
+
+GUI 或其他自动化应导入 `metasystem-framework-core`，不要 shell out 到 `metasystem`。
 
 ## 后果
 
 正面：
 
-- 可测试；
-- 可安装；
-- update 机制可以独立演化；
-- skill 文档和 CLI 逻辑边界清晰。
+- core 行为可测试、可复用；
+- CLI adapter 边界清晰；
+- update/migration 结果可被 GUI 预览；
+- repository smoke 不依赖旧运行时。
 
 代价：
 
-- 文件数量增加；
-- 初次阅读比单脚本略复杂；
-- 模板维护需要 discipline。
+- 需要先 `pnpm install` 和 `pnpm build`；
+- package 边界需要持续维护，避免把业务逻辑写回 CLI adapter。

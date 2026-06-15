@@ -5,11 +5,10 @@ MetaSystem Kit uses a small set of public references to guide CLI design, versio
 ## CLI Behavior
 
 - [Command Line Interface Guidelines](https://clig.dev/) — guidance for human-friendly command behavior, composability, help output, stdout/stderr separation, exit codes, dry-run modes, and confirmations.
-- [Python `argparse`](https://docs.python.org/3/library/argparse.html) — standard-library support for options, arguments, subcommands, help text, and usage errors.
-- [Click](https://click.palletsprojects.com/) — a richer Python CLI framework that may be useful later if the command surface becomes more interactive.
-- [PyPA `pyproject.toml` entry points](https://packaging.python.org/en/latest/specifications/pyproject-toml/#entry-points) — the mechanism used to expose installed console commands such as `metasystem`.
+- [Commander](https://github.com/tj/commander.js) — command definitions, options, subcommands, help text, and usage errors for the TypeScript CLI adapter.
+- [npm `bin` field](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bin) — the package metadata mechanism used to expose installed console commands such as `metasystem`.
 
-MetaSystem Kit currently uses `argparse` because the CLI should run in minimal Python environments without extra dependencies. The package still exposes a normal `[project.scripts]` entry point so users can install it as a command.
+MetaSystem Kit uses a TypeScript core package plus a Commander CLI adapter. Framework behavior belongs in `metasystem-framework-core`; command parsing and terminal formatting belong in `metasystem-framework-cli`.
 
 ## Versioning And Updates
 
@@ -20,7 +19,7 @@ MetaSystem Kit distinguishes three version layers:
 
 | Layer | Location | Meaning |
 | --- | --- | --- |
-| CLI/package version | `pyproject.toml` and package constants | Capability version of the tool |
+| CLI/package version | `package.json` and package constants | Capability version of the tool |
 | Installed framework version | `.framework/VERSION` | Template version installed in a workspace |
 | Layout/schema version | `.framework/manifest.json` | Manifest and directory-layout compatibility |
 

@@ -58,20 +58,14 @@ That keeps the framework useful even when the active assistant, editor, or autom
 
 ## CLI Logic Should Be Testable
 
-Repository-mutating commands are risky if they live in one large script. MetaSystem Kit keeps a small compatibility wrapper, but the actual implementation is split into package modules:
+Repository-mutating commands are risky if they live in one large script or a process-only adapter. MetaSystem Kit splits reusable framework behavior from terminal concerns:
 
 ```text
-metasystem_framework/
-├── cli.py
-├── constants.py
-├── events.py
-├── hashing.py
-├── manifest.py
-├── paths.py
-├── reporting.py
-├── scaffold.py
-├── templates.py
-└── updater.py
+packages/
+├── metasystem-framework-core/
+│   └── src/        # templates, manifests, events, workspace operations, updates
+└── metasystem-framework-cli/
+    └── src/        # Commander command definitions, formatting, exit-code mapping
 ```
 
 This makes init, check, reference intake, update analysis, and migration planning testable as separate behaviors.

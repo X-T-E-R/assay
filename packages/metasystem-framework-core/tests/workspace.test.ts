@@ -42,7 +42,7 @@ afterEach(async () => {
 });
 
 describe("desiredTemplates", () => {
-  it("returns deterministic template paths and ids from the Python registry", () => {
+  it("returns deterministic template paths and ids from the registry", () => {
     const first = desiredTemplates("Demo", "demo-core");
     const second = desiredTemplates("Demo", "demo-core");
 

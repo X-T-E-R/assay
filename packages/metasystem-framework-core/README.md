@@ -19,5 +19,3 @@ pnpm --filter metasystem-framework-core build
 pnpm --filter metasystem-framework-core typecheck
 pnpm --filter metasystem-framework-core test
 ```
-
-The Python reference package remains in `../metasystem-framework-cli-python/` until an explicit removal gate is approved.

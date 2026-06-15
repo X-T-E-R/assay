@@ -35,7 +35,7 @@ afterEach(async () => {
 });
 
 describe("slugify", () => {
-  it("matches the Python CJK-preserving behavior", () => {
+  it("preserves CJK text while normalizing separators", () => {
     expect(slugify("  Hello, MetaSystem!  ")).toBe("hello-metasystem");
     expect(slugify("多 Agent / 测试 2026")).toBe("多-agent-测试-2026");
     expect(slugify("___")).toBe("untitled");

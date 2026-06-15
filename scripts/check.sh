@@ -6,22 +6,16 @@ cd "$repo_root"
 
 pnpm check
 
-package_root="$repo_root/packages/metasystem-framework-cli-python"
-export PYTHONPATH="$package_root/src"
-
-(
-  cd "$package_root"
-  python -m unittest discover -s tests -v
-  python -m compileall -q src scripts tests
-)
-
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 demo="$tmp/demo"
+cli="$repo_root/packages/metasystem-framework-cli/dist/cli.js"
 
-python "$package_root/scripts/bootstrap_framework.py" init "$demo" --name "MetaSystem Smoke"
-python "$package_root/scripts/bootstrap_framework.py" check --root "$demo"
-python "$package_root/scripts/bootstrap_framework.py" status --root "$demo" >/dev/null
-python "$package_root/scripts/bootstrap_framework.py" update --root "$demo" --dry-run >/dev/null
+node "$cli" --help >/dev/null
+node "$cli" init "$demo" --name "MetaSystem Smoke"
+node "$cli" check --root "$demo"
+node "$cli" status --root "$demo" >/dev/null
+node "$cli" update --root "$demo" --dry-run >/dev/null
+node "$cli" migrate-layout --root "$demo" --dry-run >/dev/null
 
 echo "MetaSystem Kit checks passed."
