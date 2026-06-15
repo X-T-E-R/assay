@@ -18,7 +18,10 @@ Build first, then run the compiled CLI:
 ```powershell
 pnpm --filter metasystem-framework-cli build
 node packages\metasystem-framework-cli\dist\cli.js --help
-node packages\metasystem-framework-cli\dist\cli.js init "..\metasystem-demo" --name MetaSystem
+mkdir ..\metasystem-demo
+cd ..\metasystem-demo
+node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js init --name MetaSystem
+node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js check
 ```
 
 ## Development

@@ -41,14 +41,30 @@ The core package owns managed templates and update mechanics, while the CLI stay
 
 ## Quick Start
 
-Install dependencies, build the TypeScript packages, and run the CLI from the repository root:
+Install dependencies and build the TypeScript packages from this repository:
 
 ```powershell
 pnpm install
 pnpm build
-node packages\metasystem-framework-cli\dist\cli.js init "..\metasystem-demo" --name MetaSystem
-node packages\metasystem-framework-cli\dist\cli.js check --root "..\metasystem-demo"
-node packages\metasystem-framework-cli\dist\cli.js status --root "..\metasystem-demo"
+```
+
+Then use the CLI from the framework workspace you want to create or manage:
+
+```powershell
+mkdir ..\metasystem-demo
+cd ..\metasystem-demo
+metasystem init --name MetaSystem
+metasystem check
+metasystem status
+```
+
+For repository-local development without a global `metasystem` command, run the
+built CLI from the target workspace:
+
+```powershell
+mkdir ..\metasystem-demo
+cd ..\metasystem-demo
+node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js init --name MetaSystem
 ```
 
 For local development, the package scripts cover the TypeScript workspace:
@@ -63,17 +79,21 @@ pnpm smoke
 ## Common Commands
 
 ```powershell
-metasystem init <target-dir> --name <project-name>
-metasystem check --root <target-dir>
-metasystem status --root <target-dir>
-metasystem update --root <target-dir> --dry-run
+metasystem init --name <project-name>
+metasystem check
+metasystem status
+metasystem update --dry-run
 metasystem projects list
 metasystem projects scan <parent-dir>
-metasystem migrate-layout --root <target-dir> --dry-run
-metasystem reference add <source-dir> <name> --root <target-dir>
-metasystem analysis new "Reference analysis" --root <target-dir>
-metasystem iteration start "CLI refactor" --root <target-dir>
+metasystem migrate-layout --dry-run
+metasystem reference add <source-dir> <name>
+metasystem analysis new "Reference analysis"
+metasystem iteration start "CLI refactor"
 ```
+
+Run these commands from the framework workspace by default. Use
+`metasystem init <target-dir>` or `--root <target-dir>` only when operating on a
+workspace from another directory.
 
 `metasystem init` and successful `metasystem update` runs register the scaffolded
 workspace in a user-local project registry under `~/.metasystem/projects`.

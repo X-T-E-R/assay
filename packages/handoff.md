@@ -20,11 +20,12 @@ The previous reference package removal gate has been approved. The reference pac
 
 ```bash
 node packages/metasystem-framework-cli/dist/cli.js --help
-node packages/metasystem-framework-cli/dist/cli.js init <target-dir> --name <project-name>
-node packages/metasystem-framework-cli/dist/cli.js check --root <target-dir>
-node packages/metasystem-framework-cli/dist/cli.js status --root <target-dir>
-node packages/metasystem-framework-cli/dist/cli.js update --root <target-dir> --dry-run
-node packages/metasystem-framework-cli/dist/cli.js migrate-layout --root <target-dir> --dry-run
+cd <target-dir>
+node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js init --name <project-name>
+node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js check
+node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js status
+node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js update --dry-run
+node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js migrate-layout --dry-run
 ```
 
 ## Development checks

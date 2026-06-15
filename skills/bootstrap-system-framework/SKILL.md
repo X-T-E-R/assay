@@ -17,22 +17,28 @@ references → analyses → systems → iterations → knowledge
 
 Prefer the bundled CLI because it preserves user files, writes a manifest, and keeps update behavior auditable.
 
-Direct monorepo usage:
+Default terminal usage follows normal project habits: enter the directory you
+want to manage, then run `init` or other commands without passing a path.
 
 ```bash
-pnpm install
-pnpm build
-node packages/metasystem-framework-cli/dist/cli.js init <target-dir> --name <project-name>
-node packages/metasystem-framework-cli/dist/cli.js check --root <target-dir>
-node packages/metasystem-framework-cli/dist/cli.js status --root <target-dir>
-node packages/metasystem-framework-cli/dist/cli.js update --root <target-dir> --dry-run
-node packages/metasystem-framework-cli/dist/cli.js projects list
-node packages/metasystem-framework-cli/dist/cli.js projects scan <parent-dir>
-node packages/metasystem-framework-cli/dist/cli.js migrate-layout --root <target-dir> --dry-run
-node packages/metasystem-framework-cli/dist/cli.js reference add <source-dir> <name> --root <target-dir>
-node packages/metasystem-framework-cli/dist/cli.js analysis new "Reference analysis" --root <target-dir>
-node packages/metasystem-framework-cli/dist/cli.js iteration start "CLI refactor" --root <target-dir>
+mkdir -p <target-dir>
+cd <target-dir>
+metasystem init --name <project-name>
+metasystem check
+metasystem status
+metasystem update --dry-run
+metasystem migrate-layout --dry-run
+metasystem reference add <source-dir> <name>
+metasystem analysis new "Reference analysis"
+metasystem iteration start "CLI refactor"
+metasystem projects list
+metasystem projects scan <parent-dir>
 ```
+
+Use `metasystem init <target-dir>` or `--root <target-dir>` only when operating
+on a workspace from another directory. For repository-local development before a
+global command is installed, build the package and invoke the compiled CLI by
+absolute or relative path from the target workspace.
 
 The CLI tracks initialized framework workspaces in a user-local registry at
 `~/.metasystem/projects`. Use `projects list` to locate known scaffolded

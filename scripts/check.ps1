@@ -23,15 +23,22 @@ $previousRegistryRoot = $env:METASYSTEM_PROJECT_REGISTRY_ROOT
 try {
   $demo = Join-Path $tmp.FullName "demo"
   $registry = Join-Path $tmp.FullName "registry"
-  $cli = "packages\metasystem-framework-cli\dist\cli.js"
+  $cli = Join-Path $repoRoot "packages\metasystem-framework-cli\dist\cli.js"
   $env:METASYSTEM_PROJECT_REGISTRY_ROOT = $registry
   Invoke-Checked "node" @($cli, "--help")
-  Invoke-Checked "node" @($cli, "init", $demo, "--name", "MetaSystem Smoke")
-  Invoke-Checked "node" @($cli, "check", "--root", $demo)
-  Invoke-Checked "node" @($cli, "status", "--root", $demo)
-  Invoke-Checked "node" @($cli, "update", "--root", $demo, "--dry-run")
-  Invoke-Checked "node" @($cli, "projects", "list", "--json")
-  Invoke-Checked "node" @($cli, "migrate-layout", "--root", $demo, "--dry-run")
+  New-Item -ItemType Directory -Path $demo | Out-Null
+  Push-Location $demo
+  try {
+    Invoke-Checked "node" @($cli, "init", "--name", "MetaSystem Smoke")
+    Invoke-Checked "node" @($cli, "check")
+    Invoke-Checked "node" @($cli, "status")
+    Invoke-Checked "node" @($cli, "update", "--dry-run")
+    Invoke-Checked "node" @($cli, "projects", "list", "--json")
+    Invoke-Checked "node" @($cli, "migrate-layout", "--dry-run")
+  }
+  finally {
+    Pop-Location
+  }
 }
 finally {
   if ($null -eq $previousRegistryRoot) {

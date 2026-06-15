@@ -24,7 +24,7 @@ packages/
 ## CLI 命令面
 
 ```bash
-metasystem init <target> --name <project> [--git]
+metasystem init [target] --name <project> [--git]
 metasystem check --root <root>
 metasystem status --root <root>
 metasystem update --root <root> [--dry-run|--force|--skip-all|--create-new]
@@ -34,6 +34,9 @@ metasystem analysis new <title> --root <root>
 metasystem iteration start <title> --root <root>
 metasystem event capture --kind observation --text "..." --root <root>
 ```
+
+`init` defaults to the current working directory. Other workspace commands also
+default to the current framework root; `--root` is for out-of-tree operations.
 
 ## 测试要求
 
