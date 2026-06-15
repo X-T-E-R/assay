@@ -15,7 +15,7 @@ Use it when you want to freeze external projects or documents, analyze their pat
 ```text
 packages/metasystem-framework-core/         TypeScript reusable framework operations
 packages/metasystem-framework-cli/          TypeScript Commander CLI adapter
-skills/bootstrap-system-framework/   AI-facing Skill and agent metadata
+skills/metasystem-builder/           AI-facing Skill and agent metadata
 examples/framework-template/         Generated example framework workspace
 docs/decisions/                      ADRs and migration notes
 docs/background/                     Design background and public references

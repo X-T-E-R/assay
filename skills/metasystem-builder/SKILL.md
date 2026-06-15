@@ -1,11 +1,11 @@
 ---
-name: bootstrap-system-framework
-description: "Bootstrap, update, analyze, and iterate an external-system-learning framework. Use when the user wants to learn from external projects, freeze references, analyze them, build a local framework, iterate the local framework, introduce version/update mechanics, safely migrate old folders, or run the bundled engineering-grade CLI."
+name: metasystem-builder
+description: "Build, adopt, update, analyze, and iterate MetaSystem framework workspaces. Use when the user wants to initialize a MetaSystem project, adopt an existing project into MetaSystem, learn from external projects, freeze references, create analyses, evolve local systems, manage framework updates, safely migrate old folders, or run the bundled engineering-grade CLI."
 ---
 
-# Bootstrap System Framework
+# MetaSystem Builder
 
-This skill builds an external-system-learning framework. The framework is not a generic notes folder: it is a versioned project layer that stores external systems, analyzes them, converts validated patterns into our own framework, and iterates that framework over time.
+This skill builds and maintains a MetaSystem external-system-learning framework. The framework is not a generic notes folder: it is a versioned project layer that stores external systems, analyzes them, converts validated patterns into our own framework, and iterates that framework over time.
 
 Core loop:
 

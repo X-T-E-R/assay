@@ -1,4 +1,0 @@
-interface:
-  display_name: "Bootstrap System Framework"
-  short_description: "Bootstrap and update external-system-learning frameworks"
-  default_prompt: "Use $bootstrap-system-framework to initialize or update a versioned external-system-learning framework in this folder."
