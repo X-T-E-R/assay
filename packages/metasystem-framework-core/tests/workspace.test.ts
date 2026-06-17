@@ -14,6 +14,9 @@ import {
   getFrameworkStatus,
   initFramework,
   loadManifest,
+  loadSystemsRegistry,
+  registerSystem,
+  saveSystemsRegistry,
   startIteration,
 } from "../src/index.js";
 
@@ -157,6 +160,166 @@ describe("checkFramework and getFrameworkStatus", () => {
       managedFiles: desiredTemplates("Demo", "demo-core").length,
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);
+  });
+});
+
+describe("checkFramework semantic validation", () => {
+  it("reports error when a managed file is missing from disk", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    // Delete a managed file
+    await rm(path.join(root, "systems", "demo-core", "README.md"), { force: true });
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === "systems/demo-core/README.md" &&
+          row.status === "error" &&
+          row.message?.includes("managed file missing"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports warning when a managed file is modified by user", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    // Modify a managed file
+    await writeFile(path.join(root, "README.md"), "# Modified by user\n", "utf8");
+
+    const result = await checkFramework({ root });
+
+    // warning does not fail the check
+    expect(result.ok).toBe(true);
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === "README.md" &&
+          row.status === "warning" &&
+          row.message?.includes("modified by user"),
+      ),
+    ).toBe(true);
+  });
+
+  it("includes systems summary when a systems registry exists", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
+    await registerSystem(root, {
+      path: "systems/demo-core",
+      name: "demo-core",
+      primary: true,
+      vcs: "embedded",
+    });
+
+    const result = await checkFramework({ root });
+
+    expect(result.systems).toBeDefined();
+    expect(result.systems?.primary).toBe("demo-core");
+    expect(result.systems?.total).toBe(1);
+  });
+
+  it("reports error for duplicate primary systems in registry", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(path.join(root, "systems", "alpha"), { recursive: true });
+    await mkdir(path.join(root, "systems", "beta"), { recursive: true });
+    await registerSystem(root, { path: "systems/alpha", name: "alpha", primary: true });
+    await registerSystem(root, { path: "systems/beta", name: "beta" });
+
+    // Manually corrupt: set both to primary
+    const registry = await loadSystemsRegistry(root);
+    if (registry) {
+      registry.systems.beta = { ...registry.systems.beta, status: "primary" };
+      await saveSystemsRegistry(root, registry);
+    }
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === ".framework/systems-registry.json" &&
+          row.status === "error" &&
+          row.message?.includes("exactly one primary"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports warning for open iterations", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    await startIteration({ root, title: "Open Iteration" });
+
+    const result = await checkFramework({ root });
+
+    // warning doesn't fail check
+    expect(result.ok).toBe(true);
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === "iterations/" &&
+          row.status === "warning" &&
+          row.message?.includes("not closed"),
+      ),
+    ).toBe(true);
+    expect(result.systems?.openIterations).toBe(1);
+  });
+
+  it("reports error when a registered active system is missing on disk", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    await registerSystem(root, { path: "systems/ghost", name: "ghost", primary: true });
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.rows.some((row) => row.status === "error" && row.message?.includes("missing on disk")),
+    ).toBe(true);
+  });
+});
+
+describe("getFrameworkStatus systems section", () => {
+  it("includes systems, openIterations, and knowledgeEntries", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
+    await registerSystem(root, {
+      path: "systems/demo-core",
+      name: "demo-core",
+      primary: true,
+      vcs: "independent-git",
+      version: "0.2.0",
+    });
+    await startIteration({ root, title: "Open Work" });
+
+    const status = await getFrameworkStatus({ root });
+
+    expect(status.systems).toBeDefined();
+    expect(status.systems).toHaveLength(1);
+    expect(status.systems?.[0]).toMatchObject({
+      name: "demo-core",
+      status: "primary",
+      vcs: "independent-git",
+      version: "0.2.0",
+    });
+    expect(status.openIterations).toBe(1);
+    expect(status.knowledgeEntries).toBe(0);
+  });
+
+  it("omits systems section when no registry exists", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    const status = await getFrameworkStatus({ root });
+
+    expect(status.systems).toBeUndefined();
   });
 });
 

@@ -82,7 +82,28 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     : ["Manifest: missing", "Managed files: 0"];
   const zones = ["Zones", ...result.zones.map((zone) => `  - ${zone.path}: ${zone.files} files`)];
 
-  return [...header, ...manifest, ...zones].join("\n");
+  const systems =
+    result.systems && result.systems.length > 0
+      ? [
+          "Systems",
+          ...result.systems.map((sys) => {
+            const marker = sys.status === "primary" ? "*" : " ";
+            const supersedes =
+              sys.supersedes.length > 0 ? ` supersedes ${sys.supersedes.join(",")}` : "";
+            return `  ${marker} ${sys.status.padEnd(11)} ${sys.name.padEnd(28)} ${sys.vcs} v${sys.version}${supersedes}`;
+          }),
+        ]
+      : [];
+
+  const summary: string[] = [];
+  if (result.openIterations !== undefined) {
+    summary.push(`Open iterations: ${result.openIterations}`);
+  }
+  if (result.knowledgeEntries !== undefined) {
+    summary.push(`Knowledge entries: ${result.knowledgeEntries}`);
+  }
+
+  return [...header, ...manifest, ...zones, ...systems, ...summary].join("\n");
 }
 
 function updateCounts(analysis: UpdateAnalysis): string[] {

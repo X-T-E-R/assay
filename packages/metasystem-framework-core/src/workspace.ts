@@ -1,15 +1,17 @@
-import { chmod, cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 
 import { MANIFEST_FILE, PRIMARY_DIRS } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { fileHash } from "./hashing.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { toPosixPath } from "./serialization.js";
+import { loadSystemsRegistry } from "./systems-registry.js";
 import { desiredTemplates } from "./templates.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
@@ -50,11 +52,24 @@ export interface CheckFrameworkResult {
     readonly frameworkVersion: string;
     readonly managedFiles: number;
   };
+  readonly systems?: {
+    readonly primary: string | null;
+    readonly total: number;
+    readonly openIterations: number;
+  };
 }
 
 export interface FrameworkZoneCount {
   readonly path: string;
   readonly files: number;
+}
+
+export interface FrameworkStatusSystem {
+  readonly name: string;
+  readonly status: string;
+  readonly vcs: string;
+  readonly version: string;
+  readonly supersedes: readonly string[];
 }
 
 export interface FrameworkStatusResult {
@@ -66,6 +81,9 @@ export interface FrameworkStatusResult {
   readonly core?: string;
   readonly managedFiles: number;
   readonly zones: FrameworkZoneCount[];
+  readonly systems?: readonly FrameworkStatusSystem[];
+  readonly openIterations?: number;
+  readonly knowledgeEntries?: number;
 }
 
 export interface AddReferenceOptions {
@@ -177,6 +195,32 @@ async function countFiles(root: string): Promise<number> {
       count += await countFiles(child);
     } else if (entry.isFile()) {
       count += 1;
+    }
+  }
+  return count;
+}
+
+const OPEN_STATUS_PATTERN = /(?<![a-z])Status:\s*open\b/i;
+
+async function countOpenIterations(root: string): Promise<number> {
+  const iterationsDir = path.join(root, "iterations");
+  if (!(await exists(iterationsDir))) {
+    return 0;
+  }
+
+  let count = 0;
+  const entries = await readdir(iterationsDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const planPath = path.join(iterationsDir, entry.name, "plan.md");
+    if (!(await exists(planPath))) continue;
+    try {
+      const content = await readFile(planPath, "utf8");
+      if (OPEN_STATUS_PATTERN.test(content)) {
+        count += 1;
+      }
+    } catch {
+      // skip unreadable plans
     }
   }
   return count;
@@ -299,8 +343,117 @@ export async function checkFramework(
 
   if (manifest) {
     rows.push({ path: MANIFEST_FILE, status: "ok", message: "manifest schema readable" });
+
+    // Semantic check 1: managed file existence + hash consistency
+    for (const [filePath, record] of Object.entries(manifest.managed_files)) {
+      const absolutePath = path.join(root, filePath);
+      if (!(await exists(absolutePath))) {
+        rows.push({
+          path: filePath,
+          status: "error",
+          message: `managed file missing (template: ${record.template_id})`,
+        });
+        continue;
+      }
+      try {
+        const currentHash = await fileHash(absolutePath);
+        if (currentHash !== record.hash) {
+          rows.push({
+            path: filePath,
+            status: "warning",
+            message: "modified by user (hash differs from manifest)",
+          });
+        }
+      } catch {
+        rows.push({
+          path: filePath,
+          status: "warning",
+          message: "could not read file for hash check",
+        });
+      }
+    }
   } else if (!rows.some((row) => row.path === MANIFEST_FILE && row.status === "error")) {
     rows.push({ path: MANIFEST_FILE, status: "missing", message: "readable manifest" });
+  }
+
+  // Semantic check 2: systems registry consistency
+  let primaryName: string | null = null;
+  let systemCount = 0;
+  let openIterations = 0;
+  try {
+    const registry = await loadSystemsRegistry(root);
+    if (registry) {
+      primaryName = registry.primary;
+      systemCount = Object.keys(registry.systems).length;
+
+      // Check primary uniqueness
+      const primaries = Object.values(registry.systems).filter((s) => s.status === "primary");
+      if (primaries.length === 0 && registry.primary !== null) {
+        rows.push({
+          path: ".framework/systems-registry.json",
+          status: "error",
+          message: `registry primary is '${registry.primary}' but no system has status: primary`,
+        });
+      } else if (primaries.length > 1) {
+        rows.push({
+          path: ".framework/systems-registry.json",
+          status: "error",
+          message: `expected exactly one primary system, found ${primaries.length}: ${primaries.map((s) => s.name).join(", ")}`,
+        });
+      }
+
+      // Check each active/primary system exists on disk
+      for (const system of Object.values(registry.systems)) {
+        if (system.status === "archived") continue;
+        const systemPath = path.join(root, system.path);
+        if (!(await exists(systemPath))) {
+          rows.push({
+            path: system.path,
+            status: "error",
+            message: `registered system '${system.name}' missing on disk`,
+          });
+        }
+        if (system.contract_file) {
+          const contractPath = path.join(root, system.contract_file);
+          if (!(await exists(contractPath))) {
+            rows.push({
+              path: system.contract_file,
+              status: "warning",
+              message: `contract file missing for system '${system.name}'`,
+            });
+          }
+        }
+        if (system.vcs === "independent-git") {
+          if (!(await exists(path.join(systemPath, ".git")))) {
+            rows.push({
+              path: system.path,
+              status: "warning",
+              message: `system '${system.name}' declared independent-git but no .git found`,
+            });
+          }
+        }
+      }
+    }
+  } catch (error) {
+    rows.push({
+      path: ".framework/systems-registry.json",
+      status: "error",
+      message: error instanceof Error ? error.message : "systems registry error",
+    });
+  }
+
+  // Semantic check 3: open iterations
+  try {
+    openIterations = await countOpenIterations(root);
+    if (openIterations > 0) {
+      rows.push({
+        path: "iterations/",
+        status: "warning",
+        message: `${openIterations} iteration(s) not closed (Status: open)`,
+      });
+    }
+  } catch {
+    // iterations directory may not exist; skip
   }
 
   return {
@@ -315,6 +468,9 @@ export async function checkFramework(
             managedFiles: Object.keys(manifest.managed_files).length,
           },
         }
+      : {}),
+    ...(systemCount > 0 || primaryName !== null || openIterations > 0
+      ? { systems: { primary: primaryName, total: systemCount, openIterations } }
       : {}),
   };
 }
@@ -334,8 +490,54 @@ export async function getFrameworkStatus(
     ].map(async (zone) => ({ path: zone, files: await countFiles(path.join(root, zone)) })),
   );
 
+  // Systems section from registry
+  let systems: readonly FrameworkStatusSystem[] | undefined;
+  let openIterations: number | undefined;
+  try {
+    const registry = await loadSystemsRegistry(root);
+    if (registry) {
+      systems = Object.values(registry.systems)
+        .sort((a, b) => {
+          const order: Record<string, number> = {
+            primary: 0,
+            active: 1,
+            superseded: 2,
+            archived: 3,
+          };
+          return (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.name.localeCompare(b.name);
+        })
+        .map((s) => ({
+          name: s.name,
+          status: s.status,
+          vcs: s.vcs,
+          version: s.version,
+          supersedes: s.supersedes,
+        }));
+    }
+  } catch {
+    // registry missing or invalid; status omits systems section
+  }
+
+  try {
+    openIterations = await countOpenIterations(root);
+  } catch {
+    // iterations dir may not exist
+  }
+
+  const knowledgeEntries = await countFiles(path.join(root, "knowledge"));
+  // subtract README stubs (4 subdirs + 1 root = 5 stubs)
+  const knowledgeCount = Math.max(0, knowledgeEntries - 5);
+
   if (!manifest) {
-    return { root, hasManifest: false, managedFiles: 0, zones };
+    return {
+      root,
+      hasManifest: false,
+      managedFiles: 0,
+      zones,
+      ...(systems ? { systems } : {}),
+      ...(openIterations !== undefined ? { openIterations } : {}),
+      knowledgeEntries: knowledgeCount,
+    };
   }
 
   return {
@@ -347,6 +549,9 @@ export async function getFrameworkStatus(
     core: manifest.project.core,
     managedFiles: Object.keys(manifest.managed_files).length,
     zones,
+    ...(systems ? { systems } : {}),
+    ...(openIterations !== undefined ? { openIterations } : {}),
+    knowledgeEntries: knowledgeCount,
   };
 }
 
