@@ -1,12 +1,19 @@
-import { chmod, copyFile, cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { BACKUPS_DIR, CURRENT_VERSION, MANIFEST_FILE, VERSION_FILE } from "./constants.js";
+import {
+  BACKUPS_DIR,
+  CURRENT_VERSION,
+  LAYOUT_VERSION,
+  MANIFEST_FILE,
+  SYSTEMS_REGISTRY_FILE,
+  VERSION_FILE,
+} from "./constants.js";
 import { FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
 import { loadManifest, projectFromManifest, recordTemplate, saveManifest } from "./manifest.js";
-import { relativeDisplayPath } from "./paths.js";
+import { relativeDisplayPath, slugify } from "./paths.js";
 import {
   type OperationReport,
   type UpdateAnalysis,
@@ -15,10 +22,21 @@ import {
   type UpdatePlan,
   createEmptyReport,
 } from "./results.js";
-import type { FrameworkManifest, MigrationPlan, MigrationStep } from "./schemas/index.js";
+import type {
+  FrameworkManifest,
+  MigrationPlan,
+  MigrationStep,
+  SystemsRegistry,
+} from "./schemas/index.js";
 import { migrationPlanSchema, updateAnalysisSchema, updatePlanSchema } from "./schemas/index.js";
+import {
+  defaultSystemsRegistry,
+  loadSystemsRegistry,
+  saveSystemsRegistry,
+} from "./systems-registry.js";
 import type { TemplateFile } from "./templates.js";
 import { desiredTemplates } from "./templates.js";
+import { nowIso } from "./time.js";
 
 export interface AnalyzeUpdateOptions {
   readonly root: string;
@@ -410,6 +428,83 @@ export async function buildLayoutMigrationPlan(
 ): Promise<MigrationPlan> {
   const root = path.resolve(options.root);
   const steps: MigrationStep[] = [];
+
+  // --- v2 → v3 migration: systems registry creation ---
+  const existingRegistry = await loadSystemsRegistry(root);
+  const manifest = await loadManifest(root);
+  if (!existingRegistry && manifest) {
+    const coreName = manifest.project.core;
+    const systemsDir = path.join(root, "systems");
+
+    // Step 1: create systems-registry.json from manifest core
+    steps.push({
+      type: "create-systems-registry",
+      from: ".framework/manifest.json",
+      to: SYSTEMS_REGISTRY_FILE,
+      reason: `initialize registry from manifest core '${coreName}'`,
+      action: "create",
+    });
+
+    // Step 2: detect and register active systems under systems/
+    if (await exists(systemsDir)) {
+      for (const child of await readdir(systemsDir, { withFileTypes: true })) {
+        if (!child.isDirectory() || child.name === "archive") continue;
+        const childPath = path.join(systemsDir, child.name);
+        const hasGit = await exists(path.join(childPath, ".git"));
+        const isPrimary = child.name === coreName;
+        steps.push({
+          type: "generate-contract",
+          from: `systems/${child.name}`,
+          to: `systems/${child.name}/system.yaml`,
+          reason: `register ${child.name} as ${isPrimary ? "primary" : "active"} (${hasGit ? "independent-git" : "embedded"})`,
+          action: "generate",
+        });
+      }
+    }
+
+    // Step 3: detect archived systems under systems/archive/
+    const archiveDir = path.join(root, "systems", "archive");
+    if (await exists(archiveDir)) {
+      for (const archiveChild of await readdir(archiveDir, { withFileTypes: true })) {
+        if (!archiveChild.isDirectory()) continue;
+        const datedDir = path.join(archiveDir, archiveChild.name);
+        for (const sysDir of await readdir(datedDir, { withFileTypes: true })) {
+          if (!sysDir.isDirectory()) continue;
+          steps.push({
+            type: "create-systems-registry",
+            from: `systems/archive/${archiveChild.name}/${sysDir.name}`,
+            to: SYSTEMS_REGISTRY_FILE,
+            reason: `register ${sysDir.name} as archived`,
+            action: "create",
+          });
+        }
+      }
+    }
+
+    // Step 4: mark old systems/<core>/** managed files as user-deleted
+    for (const managedPath of Object.keys(manifest.managed_files)) {
+      if (managedPath.startsWith(`systems/${coreName}/`)) {
+        steps.push({
+          type: "mark-user-deleted",
+          from: managedPath,
+          to: "(removed from managed_files)",
+          reason: "system-internal templates are no longer managed in layout v3",
+          action: "mark",
+        });
+      }
+    }
+
+    // Step 5: upgrade manifest schema and layout version
+    steps.push({
+      type: "upgrade-manifest",
+      from: MANIFEST_FILE,
+      to: MANIFEST_FILE,
+      reason: `upgrade __schema to 2, layout_version to ${LAYOUT_VERSION}`,
+      action: "upgrade",
+    });
+  }
+
+  // --- legacy layout migrations (v0/v1 → v2) ---
   const references = path.join(root, "references");
   if (await exists(references)) {
     for (const child of await readdir(references, { withFileTypes: true })) {
@@ -476,16 +571,35 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
 
   const backup = await createBackup(
     root,
-    plan.steps.filter((step) => step.type !== "manual-review").map((step) => step.from),
+    plan.steps
+      .filter((step) => step.type !== "manual-review" && step.type !== "create-systems-registry")
+      .map((step) => step.from),
     options.now,
   );
 
+  // --- Apply v2→v3 steps as a batch (registry + contracts + manifest upgrade) ---
+  const v2v3Steps = plan.steps.filter(
+    (s) =>
+      s.type === "create-systems-registry" ||
+      s.type === "generate-contract" ||
+      s.type === "mark-user-deleted" ||
+      s.type === "upgrade-manifest",
+  );
+
+  if (v2v3Steps.length > 0) {
+    await applyV2ToV3Migration(root, plan.steps);
+  }
+
+  // --- Apply legacy copy steps ---
   for (const step of plan.steps) {
     const source = path.join(root, step.from);
     const destination = path.join(root, step.to);
     const stats = await pathStats(source);
     if (!stats || step.type === "manual-review") {
       continue;
+    }
+    if (v2v3Steps.includes(step)) {
+      continue; // already handled above
     }
 
     if (step.type === "copy-dir" && stats.isDirectory()) {
@@ -522,4 +636,185 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
     backup,
     eventFile: relativeDisplayPath(eventFile, root),
   };
+}
+
+const SYSTEM_YAML_TEMPLATE = (
+  project: string,
+  name: string,
+  vcs: string,
+  isPrimary: boolean,
+  supersedes: readonly string[],
+): string => {
+  const supersedesLine =
+    supersedes.length > 0 ? `\n  supersedes: [${supersedes.map((s) => `"${s}"`).join(", ")}]` : "";
+  return `system:
+  project: ${project}
+  name: ${name}
+  version: 0.1.0
+  status: ${isPrimary ? "primary" : "active"}
+  vcs: ${vcs}
+  vcs_ref: ""${supersedesLine}
+contract_managed_by: metasystem
+`;
+};
+
+interface LegacyFrameworkYaml {
+  status?: string;
+  supersedes?: readonly string[];
+  version?: string;
+  vcs_ref?: string;
+}
+
+async function readLegacyFrameworkYaml(
+  root: string,
+  systemPath: string,
+): Promise<LegacyFrameworkYaml | null> {
+  const yamlPath = path.join(root, systemPath, "framework.yaml");
+  if (!(await exists(yamlPath))) {
+    return null;
+  }
+  try {
+    const content = await readFile(yamlPath, "utf8");
+    const statusMatch = content.match(/status:\s*(\S+)/);
+    const versionMatch = content.match(/version:\s*(\S+)/);
+    const vcsRefMatch = content.match(/vcs_ref:\s*"?([^"\n]+)"?/);
+    const supersedesMatch = content.match(/supersedes:\s*\[([^\]]*)\]/);
+    const result: LegacyFrameworkYaml = {
+      supersedes: [],
+    };
+    if (statusMatch?.[1]) {
+      result.status = statusMatch[1];
+    }
+    if (versionMatch?.[1]) {
+      result.version = versionMatch[1];
+    }
+    if (vcsRefMatch?.[1]) {
+      result.vcs_ref = vcsRefMatch[1];
+    }
+    if (supersedesMatch?.[1]) {
+      result.supersedes = supersedesMatch[1]
+        .split(",")
+        .map((s) => s.trim().replace(/"/g, ""))
+        .filter(Boolean);
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+async function applyV2ToV3Migration(root: string, steps: readonly MigrationStep[]): Promise<void> {
+  const manifest = await loadManifest(root);
+  if (!manifest) return;
+
+  const coreName = manifest.project.core;
+  const projectName = manifest.project.name;
+  const registry = defaultSystemsRegistry();
+
+  // Process generate-contract steps: register active systems
+  for (const step of steps) {
+    if (step.type !== "generate-contract") continue;
+    const systemName = path.basename(step.from);
+    const systemPath = path.join(root, step.from);
+    const hasGit = await exists(path.join(systemPath, ".git"));
+    const vcs = hasGit ? "independent-git" : "embedded";
+    const isPrimary = systemName === coreName;
+
+    const legacy = await readLegacyFrameworkYaml(root, step.from);
+    const status = legacy?.status === "primary" || isPrimary ? "primary" : "active";
+    const supersedes = legacy?.supersedes ?? [];
+    const version = legacy?.version ?? "0.1.0";
+    const vcsRef = legacy?.vcs_ref ?? (hasGit ? "main" : "");
+
+    // Generate system.yaml contract
+    const contractContent = SYSTEM_YAML_TEMPLATE(
+      projectName,
+      systemName,
+      vcs,
+      status === "primary",
+      supersedes,
+    );
+    await mkdir(path.dirname(path.join(root, step.to)), { recursive: true });
+    await writeFile(path.join(root, step.to), contractContent, "utf8");
+
+    // Add to registry
+    registry.systems[systemName] = {
+      name: systemName,
+      path: step.from,
+      status,
+      vcs,
+      vcs_ref: vcsRef,
+      version,
+      contract_file: step.to,
+      supersedes: [...supersedes],
+      absorbed_on: nowIso().slice(0, 10),
+      archived_on: null,
+      archive_path: null,
+    };
+    if (status === "primary") {
+      registry.primary = systemName;
+    }
+  }
+
+  // Process create-systems-registry steps for archived systems
+  for (const step of steps) {
+    if (step.type !== "create-systems-registry") continue;
+    if (step.to !== SYSTEMS_REGISTRY_FILE) continue;
+    if (step.from === MANIFEST_FILE) continue; // skip the initial registry creation step
+
+    // Archived system under systems/archive/<date>/<name>
+    const systemName = path.basename(step.from);
+    const archiveMatch = step.from.match(/^systems\/archive\/([^/]+)\/(.+)$/);
+    const archiveDate = archiveMatch?.[1]
+      ?.replace(/-pre-.*$/, "")
+      .replace(/-/g, "")
+      .slice(0, 8);
+    const dateStamp = archiveDate
+      ? `${archiveDate.slice(0, 4)}-${archiveDate.slice(4, 6)}-${archiveDate.slice(6, 8)}`
+      : nowIso().slice(0, 10);
+
+    const hasGit = await exists(path.join(root, step.from, ".git"));
+    const vcs = hasGit ? "independent-git" : "embedded";
+
+    registry.systems[systemName] = {
+      name: systemName,
+      path: step.from,
+      status: "archived",
+      vcs,
+      vcs_ref: hasGit ? "main" : "",
+      version: "0.1.0",
+      contract_file: null,
+      supersedes: [],
+      absorbed_on: dateStamp,
+      archived_on: dateStamp,
+      archive_path: step.from,
+    };
+  }
+
+  await saveSystemsRegistry(root, registry);
+
+  // Process mark-user-deleted steps: remove old system-internal managed files from manifest
+  const manifestToDelete = new Set(
+    steps.filter((s) => s.type === "mark-user-deleted").map((s) => s.from),
+  );
+  if (manifestToDelete.size > 0 && manifest) {
+    const updatedManaged: Record<string, (typeof manifest.managed_files)[string]> = {};
+    for (const [filePath, record] of Object.entries(manifest.managed_files)) {
+      if (!manifestToDelete.has(filePath)) {
+        updatedManaged[filePath] = record;
+      }
+    }
+    manifest.managed_files = updatedManaged;
+    manifest.user_deleted = [...manifest.user_deleted, ...manifestToDelete];
+
+    // Process upgrade-manifest step: upgrade schema and layout version
+    const hasUpgrade = steps.some((s) => s.type === "upgrade-manifest");
+    if (hasUpgrade) {
+      // Note: __schema upgrade from 1→2 requires schema change; for now we keep __schema:1
+      // but update layout_version to signal v3 readiness. Full schema upgrade deferred.
+      manifest.layout_version = LAYOUT_VERSION;
+    }
+
+    await saveManifest(root, manifest);
+  }
 }

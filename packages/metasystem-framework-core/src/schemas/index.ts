@@ -162,7 +162,15 @@ export const updatePlanSchema = z
   })
   .strict();
 
-export const migrationStepTypeSchema = z.enum(["copy-dir", "copy", "manual-review"]);
+export const migrationStepTypeSchema = z.enum([
+  "copy-dir",
+  "copy",
+  "manual-review",
+  "create-systems-registry",
+  "generate-contract",
+  "mark-user-deleted",
+  "upgrade-manifest",
+]);
 
 export const migrationStepSchema = z
   .object({
@@ -170,7 +178,9 @@ export const migrationStepSchema = z
     from: z.string().min(1),
     to: z.string().min(1),
     reason: z.string().optional(),
-    action: z.enum(["copy", "manual-review", "skip"]).optional(),
+    action: z
+      .enum(["copy", "manual-review", "skip", "create", "generate", "mark", "upgrade"])
+      .optional(),
   })
   .strict();
 

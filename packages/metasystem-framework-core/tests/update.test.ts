@@ -242,3 +242,110 @@ describe("layout migration", () => {
     );
   });
 });
+
+describe("v2 to v3 layout migration", () => {
+  it("plans systems-registry creation from manifest core", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    // Create a system directory with .git (independent-git)
+    await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
+    await writeFile(
+      path.join(root, "systems", "demo-core", "framework.yaml"),
+      "system:\n  name: demo-core\n  status: primary\n  version: 0.2.0\n",
+      "utf8",
+    );
+
+    const plan = await buildLayoutMigrationPlan({ root });
+
+    expect(plan.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "create-systems-registry",
+          action: "create",
+        }),
+        expect.objectContaining({
+          type: "generate-contract",
+          from: "systems/demo-core",
+          to: "systems/demo-core/system.yaml",
+        }),
+        expect.objectContaining({
+          type: "mark-user-deleted",
+          from: "systems/demo-core/README.md",
+        }),
+        expect.objectContaining({
+          type: "upgrade-manifest",
+          action: "upgrade",
+        }),
+      ]),
+    );
+  });
+
+  it("does not plan v2-to-v3 steps when registry already exists", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    // Create registry file to simulate v3 already applied
+    await writeFile(
+      path.join(root, ".framework", "systems-registry.json"),
+      JSON.stringify({
+        __schema: 1,
+        primary: "demo-core",
+        systems: {},
+        updated_at: "2026-06-17T00:00:00+08:00",
+      }),
+      "utf8",
+    );
+
+    const plan = await buildLayoutMigrationPlan({ root });
+
+    expect(plan.steps.some((s) => s.type === "create-systems-registry")).toBe(false);
+    expect(plan.steps.some((s) => s.type === "upgrade-manifest")).toBe(false);
+  });
+
+  it("applies migration: creates registry, contracts, removes stale managed files", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    // Create system directory with .git and legacy framework.yaml
+    await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
+    await mkdir(path.join(root, "systems", "demo-core", ".git"), { recursive: true });
+    await writeFile(
+      path.join(root, "systems", "demo-core", "framework.yaml"),
+      "system:\n  name: demo-core\n  status: primary\n  version: 0.2.0\n  supersedes: [old-system]\n",
+      "utf8",
+    );
+    // Create an archived system
+    await mkdir(path.join(root, "systems", "archive", "2026-06-16-pre-old", "old-system"), {
+      recursive: true,
+    });
+
+    const result = await migrateLayout({
+      root,
+      apply: true,
+      now: new Date("2026-06-17T10:00:00"),
+    });
+
+    expect(result.dryRun).toBe(false);
+
+    // Registry created
+    const registryContent = await readFile(
+      path.join(root, ".framework", "systems-registry.json"),
+      "utf8",
+    );
+    const registry = JSON.parse(registryContent);
+    expect(registry.primary).toBe("demo-core");
+    expect(registry.systems["demo-core"]).toMatchObject({
+      status: "primary",
+      vcs: "independent-git",
+      version: "0.2.0",
+    });
+    expect(registry.systems["demo-core"].supersedes).toEqual(["old-system"]);
+    expect(registry.systems["old-system"]).toMatchObject({ status: "archived" });
+
+    // Contract file generated
+    expect(await exists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
+
+    // Stale managed files removed from manifest
+    const manifest = await loadManifest(root);
+    expect(Object.keys(manifest?.managed_files ?? {})).not.toContain("systems/demo-core/README.md");
+    expect(manifest?.user_deleted).toContain("systems/demo-core/README.md");
+  });
+});
