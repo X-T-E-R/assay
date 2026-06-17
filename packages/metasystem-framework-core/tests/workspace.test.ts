@@ -6,19 +6,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MANIFEST_FILE,
   PRIMARY_DIRS,
+  acceptAdr,
   addKnowledge,
   addReference,
   captureEvent,
   checkFramework,
   closeAnalysis,
   closeIteration,
+  createAdr,
   createAnalysis,
   desiredTemplates,
   getFrameworkStatus,
   initFramework,
+  loadAdrIndex,
   loadManifest,
   loadSystemsRegistry,
   registerSystem,
+  saveAdrIndex,
   saveSystemsRegistry,
   startIteration,
 } from "../src/index.js";
@@ -58,9 +62,20 @@ describe("desiredTemplates", () => {
       "framework.version",
     ]);
     expect(first.map((template) => [template.path, template.template_id])).toContainEqual([
-      "systems/demo-core/docs/update-mechanism.md",
-      "system.core.update_mechanism",
+      "systems/demo-core/system.yaml",
+      "system.core.contract",
     ]);
+    expect(first.map((template) => [template.path, template.template_id])).toContainEqual([
+      "knowledge/decisions/ADR-TEMPLATE.md",
+      "knowledge.decisions.adr_template",
+    ]);
+    expect(first.map((template) => template.path)).not.toContain("systems/demo-core/README.md");
+    expect(first.map((template) => template.path)).not.toContain(
+      "systems/demo-core/framework.yaml",
+    );
+    expect(first.map((template) => template.path)).not.toContain(
+      "systems/demo-core/docs/update-mechanism.md",
+    );
     expect(first.every((template) => template.executable === false)).toBe(true);
     expect(first.every((template) => template.protected === false)).toBe(true);
   });
@@ -78,7 +93,9 @@ describe("initFramework", () => {
     for (const directory of PRIMARY_DIRS) {
       expect(await exists(path.join(root, directory))).toBe(true);
     }
-    expect(await exists(path.join(root, "systems", "demo-core", "docs"))).toBe(true);
+    expect(await exists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
+    expect(await exists(path.join(root, "systems", "demo-core", "docs"))).toBe(false);
+    expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
 
     const manifest = await loadManifest(root);
     expect(manifest).not.toBeNull();
@@ -172,7 +189,7 @@ describe("checkFramework semantic validation", () => {
     await initFramework({ target: root, name: "Demo" });
 
     // Delete a managed file
-    await rm(path.join(root, "systems", "demo-core", "README.md"), { force: true });
+    await rm(path.join(root, "systems", "demo-core", "system.yaml"), { force: true });
 
     const result = await checkFramework({ root });
 
@@ -180,7 +197,7 @@ describe("checkFramework semantic validation", () => {
     expect(
       result.rows.some(
         (row) =>
-          row.path === "systems/demo-core/README.md" &&
+          row.path === "systems/demo-core/system.yaml" &&
           row.status === "error" &&
           row.message?.includes("managed file missing"),
       ),
@@ -236,10 +253,12 @@ describe("checkFramework semantic validation", () => {
 
     // Manually corrupt: set both to primary
     const registry = await loadSystemsRegistry(root);
-    if (registry) {
-      registry.systems.beta = { ...registry.systems.beta, status: "primary" };
-      await saveSystemsRegistry(root, registry);
+    const beta = registry?.systems.beta;
+    if (!registry || !beta) {
+      throw new Error("beta system missing from registry");
     }
+    registry.systems.beta = { ...beta, status: "primary" };
+    await saveSystemsRegistry(root, registry);
 
     const result = await checkFramework({ root });
 
@@ -284,6 +303,125 @@ describe("checkFramework semantic validation", () => {
     expect(result.ok).toBe(false);
     expect(
       result.rows.some((row) => row.status === "error" && row.message?.includes("missing on disk")),
+    ).toBe(true);
+  });
+
+  it("reports warning when an indexed ADR is missing required frontmatter fields", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const created = await createAdr(root, { title: "Needs Frontmatter" });
+    await writeFile(path.join(root, created.adr.path), "# No frontmatter\n", "utf8");
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(true);
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === created.adr.path &&
+          row.status === "warning" &&
+          row.message?.includes("ADR frontmatter missing"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports error for dangling ADR superseded_by references", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const created = await createAdr(root, { title: "Dangling ADR" });
+    await acceptAdr(root, created.adr.id);
+    const index = await loadAdrIndex(root);
+    if (!index) {
+      throw new Error("ADR index missing");
+    }
+    const record = index.adrs[created.adr.id];
+    if (!record) {
+      throw new Error("ADR record missing");
+    }
+    index.adrs[created.adr.id] = { ...record, superseded_by: "ADR-9999-missing" };
+    await saveAdrIndex(root, index);
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.rows.some(
+        (row) => row.status === "error" && row.message?.includes("missing superseded_by"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports error for non-bidirectional ADR supersede links", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const oldAdr = await createAdr(root, { title: "Old ADR" });
+    const newAdr = await createAdr(root, { title: "New ADR" });
+    await acceptAdr(root, oldAdr.adr.id);
+    await acceptAdr(root, newAdr.adr.id);
+    const index = await loadAdrIndex(root);
+    if (!index) {
+      throw new Error("ADR index missing");
+    }
+    const oldRecord = index.adrs[oldAdr.adr.id];
+    if (!oldRecord) {
+      throw new Error("old ADR record missing");
+    }
+    index.adrs[oldAdr.adr.id] = {
+      ...oldRecord,
+      status: "superseded",
+      superseded_by: newAdr.adr.id,
+    };
+    await saveAdrIndex(root, index);
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.rows.some(
+        (row) =>
+          row.status === "error" &&
+          row.message?.includes("superseded_by link is not bidirectional"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports error for ADR supersede cycles", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const first = await createAdr(root, { title: "First ADR" });
+    const second = await createAdr(root, { title: "Second ADR" });
+    await acceptAdr(root, first.adr.id);
+    await acceptAdr(root, second.adr.id);
+    const index = await loadAdrIndex(root);
+    if (!index) {
+      throw new Error("ADR index missing");
+    }
+    const firstRecord = index.adrs[first.adr.id];
+    const secondRecord = index.adrs[second.adr.id];
+    if (!firstRecord || !secondRecord) {
+      throw new Error("ADR records missing");
+    }
+    index.adrs[first.adr.id] = {
+      ...firstRecord,
+      status: "superseded",
+      supersedes: [second.adr.id],
+      superseded_by: second.adr.id,
+    };
+    index.adrs[second.adr.id] = {
+      ...secondRecord,
+      status: "superseded",
+      supersedes: [first.adr.id],
+      superseded_by: first.adr.id,
+    };
+    await saveAdrIndex(root, index);
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.rows.some(
+        (row) => row.status === "error" && row.message?.includes("supersede chain has a cycle"),
+      ),
     ).toBe(true);
   });
 });

@@ -9,4 +9,4 @@ Framework runtime metadata. Do not store external research or long-lived user kn
 - `migrations/`: migration notes and plans.
 - `backups/`: timestamped backups before update/migration.
 
-Current template version: 0.2.0; layout version: 2.
+Current template version: 0.2.0; layout version: 3.

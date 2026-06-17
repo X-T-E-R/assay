@@ -62,7 +62,7 @@ What `close` does:
 4. Appends an optional `> Closed on <date>: <note>` line.
 5. Writes an `analysis.closed` event with `path`, `exit`, and `note`.
 
-The `adopt` exit signals "we are adopting the analyzed pattern as-is". The `adr` exit signals "this decision deserves a separate ADR entry under `knowledge/decisions/`" — follow up with `knowledge add decision`.
+The `adopt` exit signals "we are adopting the analyzed pattern as-is". The `adr` exit signals "this decision deserves a separate ADR entry under `knowledge/decisions/`" — follow up with `metasystem adr new --from-analysis <path>`.
 
 ## Knowledge
 
@@ -94,6 +94,10 @@ The structured events emitted by these commands:
 | `iteration.closed` | `iteration close` | `path`, `result`, `note` |
 | `analysis.created` | `analysis new` | `path`, `title` |
 | `analysis.closed` | `analysis close` | `path`, `exit`, `note` |
+| `adr.created` | `adr new` | `id`, `path`, `status`, `title` |
+| `adr.accepted` | `adr accept` | `id`, `path` |
+| `adr.superseded` | `adr supersede` | `old_id`, `new_id` |
+| `adr.deprecated` | `adr deprecate` | `id`, `path` |
 | `knowledge.added` | `knowledge add` | `path`, `type`, `title`, `from_analysis`, `from_iteration` |
 
 These events flow into `.framework/events/<YYYY-MM>.jsonl` and are intended to be machine-readable for future audits, dashboards, or migrations.
@@ -102,5 +106,6 @@ These events flow into `.framework/events/<YYYY-MM>.jsonl` and are intended to b
 
 - Do not hand-edit `Status: open` to `Status: closed` in `plan.md`. Use `iteration close` so the event ledger stays consistent.
 - Do not check decision-exit checkboxes by hand. Use `analysis close --exit ...`.
+- Do not hand-edit `.framework/adrs.json`. Use `adr new`, `adr accept`, `adr supersede`, and `adr deprecate` so the index, markdown frontmatter, and event ledger stay consistent.
 - Do not create `knowledge/<type>/<file>.md` by hand. Use `knowledge add` so the back-references and event are recorded.
 - Do not leave iterations open across long pauses. If you need to pause, close with `--result retest` and create a follow-up iteration when work resumes.

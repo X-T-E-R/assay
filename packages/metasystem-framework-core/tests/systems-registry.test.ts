@@ -156,10 +156,12 @@ describe("promoteSystem", () => {
 
     // Manually mark as archived to test the guard without file moves.
     const registry = await loadSystemsRegistry(root);
-    if (registry) {
-      registry.systems.old = { ...registry.systems.old, status: "archived" };
-      await saveSystemsRegistry(root, registry);
+    const old = registry?.systems.old;
+    if (!registry || !old) {
+      throw new Error("old system missing from registry");
     }
+    registry.systems.old = { ...old, status: "archived" };
+    await saveSystemsRegistry(root, registry);
 
     await expect(promoteSystem(root, "old")).rejects.toBeInstanceOf(FrameworkError);
   });
@@ -213,6 +215,9 @@ describe("archiveSystem", () => {
     // Source removed
     expect(await exists(systemPath)).toBe(false);
     // Destination has the marker
+    if (!result.movedTo) {
+      throw new Error("archive destination missing");
+    }
     const movedMarker = path.join(root, result.movedTo, "marker.txt");
     expect(await exists(movedMarker)).toBe(true);
   });
@@ -231,7 +236,9 @@ describe("findSystem", () => {
     await registerSystem(root, { path: "systems/alpha-core", name: "alpha-core", primary: true });
 
     const registry = await loadSystemsRegistry(root);
-    expect(registry).not.toBeNull();
+    if (!registry) {
+      throw new Error("registry missing");
+    }
 
     const exact = await findSystem(registry, "alpha-core");
     expect(exact.name).toBe("alpha-core");
@@ -246,6 +253,9 @@ describe("findSystem", () => {
     await registerSystem(root, { path: "systems/alpha-two", name: "alpha-two" });
 
     const registry = await loadSystemsRegistry(root);
+    if (!registry) {
+      throw new Error("registry missing");
+    }
     await expect(findSystem(registry, "alpha")).rejects.toBeInstanceOf(FrameworkNotFoundError);
   });
 });

@@ -2,14 +2,15 @@ import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/pr
 import path from "node:path";
 import { execa } from "execa";
 
-import { MANIFEST_FILE, PRIMARY_DIRS } from "./constants.js";
+import { loadAdrIndex } from "./adrs.js";
+import { ADRS_FILE, MANIFEST_FILE, PRIMARY_DIRS } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
-import type { FrameworkManifest } from "./schemas/index.js";
+import type { AdrIndex, AdrRecord, FrameworkManifest } from "./schemas/index.js";
 import { toPosixPath } from "./serialization.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
 import { desiredTemplates } from "./templates.js";
@@ -275,6 +276,111 @@ async function countOpenIterations(root: string): Promise<number> {
   return count;
 }
 
+const REQUIRED_ADR_FRONTMATTER_FIELDS = [
+  "adr",
+  "title",
+  "status",
+  "date",
+  "supersedes",
+  "superseded_by",
+  "related_analysis",
+  "related_iteration",
+] as const;
+
+function missingAdrFrontmatterFields(content: string): string[] {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match?.[1]) {
+    return [...REQUIRED_ADR_FRONTMATTER_FIELDS];
+  }
+  const frontmatter = match[1];
+  return REQUIRED_ADR_FRONTMATTER_FIELDS.filter((field) => {
+    const pattern = new RegExp(`^${field}:`, "m");
+    return !pattern.test(frontmatter);
+  });
+}
+
+function recordAdrChainErrors(rows: CheckRow[], index: AdrIndex): void {
+  for (const adr of Object.values(index.adrs)) {
+    for (const oldId of adr.supersedes) {
+      const oldAdr = index.adrs[oldId];
+      if (!oldAdr) {
+        rows.push({
+          path: ADRS_FILE,
+          status: "error",
+          message: `ADR '${adr.id}' supersedes missing ADR '${oldId}'`,
+        });
+        continue;
+      }
+      if (oldAdr.superseded_by !== adr.id) {
+        rows.push({
+          path: ADRS_FILE,
+          status: "error",
+          message: `ADR supersedes link is not bidirectional: '${adr.id}' -> '${oldId}'`,
+        });
+      }
+      if (oldAdr.status !== "superseded") {
+        rows.push({
+          path: ADRS_FILE,
+          status: "error",
+          message: `ADR '${oldId}' is superseded by '${adr.id}' but status is '${oldAdr.status}'`,
+        });
+      }
+    }
+
+    if (!adr.superseded_by) {
+      continue;
+    }
+    const replacement = index.adrs[adr.superseded_by];
+    if (!replacement) {
+      rows.push({
+        path: ADRS_FILE,
+        status: "error",
+        message: `ADR '${adr.id}' points to missing superseded_by '${adr.superseded_by}'`,
+      });
+      continue;
+    }
+    if (!replacement.supersedes.includes(adr.id)) {
+      rows.push({
+        path: ADRS_FILE,
+        status: "error",
+        message: `ADR superseded_by link is not bidirectional: '${adr.id}' -> '${replacement.id}'`,
+      });
+    }
+  }
+}
+
+function recordAdrCycleErrors(rows: CheckRow[], index: AdrIndex): void {
+  const reported = new Set<string>();
+  for (const start of Object.keys(index.adrs)) {
+    const seen = new Set<string>();
+    const order: string[] = [];
+    let current: string | null = start;
+
+    while (current) {
+      if (seen.has(current)) {
+        const cycleStart = order.indexOf(current);
+        const cycle = [...order.slice(cycleStart), current].join(" -> ");
+        if (!reported.has(cycle)) {
+          reported.add(cycle);
+          rows.push({
+            path: ADRS_FILE,
+            status: "error",
+            message: `ADR supersede chain has a cycle: ${cycle}`,
+          });
+        }
+        break;
+      }
+      seen.add(current);
+      order.push(current);
+      const record: AdrRecord | undefined = index.adrs[current];
+      if (!record?.superseded_by || !index.adrs[record.superseded_by]) {
+        break;
+      }
+      current = record.superseded_by;
+    }
+  }
+}
+
 async function writeTemplateFile(
   root: string,
   templatePath: string,
@@ -318,7 +424,6 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   for (const directory of PRIMARY_DIRS) {
     await ensureDir(path.join(root, directory), root, report);
   }
-  await ensureDir(path.join(root, "systems", core, "docs"), root, report);
 
   let manifest = (await loadManifest(root)) ?? defaultManifest(project, core);
   for (const template of desiredTemplates(project, core)) {
@@ -505,6 +610,49 @@ export async function checkFramework(
     // iterations directory may not exist; skip
   }
 
+  // Semantic check 4: ADR index and supersede chain consistency
+  try {
+    const adrIndex = await loadAdrIndex(root);
+    if (adrIndex) {
+      for (const adr of Object.values(adrIndex.adrs)) {
+        const adrPath = path.join(root, adr.path);
+        if (!(await exists(adrPath))) {
+          rows.push({
+            path: adr.path,
+            status: "error",
+            message: `indexed ADR '${adr.id}' missing on disk`,
+          });
+          continue;
+        }
+        try {
+          const content = await readFile(adrPath, "utf8");
+          const missingFields = missingAdrFrontmatterFields(content);
+          if (missingFields.length > 0) {
+            rows.push({
+              path: adr.path,
+              status: "warning",
+              message: `ADR frontmatter missing: ${missingFields.join(", ")}`,
+            });
+          }
+        } catch {
+          rows.push({
+            path: adr.path,
+            status: "warning",
+            message: `could not read ADR '${adr.id}' for frontmatter check`,
+          });
+        }
+      }
+      recordAdrChainErrors(rows, adrIndex);
+      recordAdrCycleErrors(rows, adrIndex);
+    }
+  } catch (error) {
+    rows.push({
+      path: ADRS_FILE,
+      status: "error",
+      message: error instanceof Error ? error.message : "ADR index error",
+    });
+  }
+
   return {
     root,
     ok: rows.every((row) => row.status === "ok" || row.status === "warning"),
@@ -574,8 +722,8 @@ export async function getFrameworkStatus(
   }
 
   const knowledgeEntries = await countFiles(path.join(root, "knowledge"));
-  // subtract README stubs (4 subdirs + 1 root = 5 stubs)
-  const knowledgeCount = Math.max(0, knowledgeEntries - 5);
+  // subtract README stubs (4 subdirs + 1 root) and the ADR authoring template
+  const knowledgeCount = Math.max(0, knowledgeEntries - 6);
 
   if (!manifest) {
     return {

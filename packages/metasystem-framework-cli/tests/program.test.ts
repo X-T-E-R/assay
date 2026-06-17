@@ -88,6 +88,7 @@ describe("metasystem Commander registration", () => {
       "analysis",
       "iteration",
       "event",
+      "adr",
     ]) {
       expect(help).toContain(command);
     }

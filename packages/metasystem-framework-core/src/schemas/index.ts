@@ -49,6 +49,35 @@ export const systemsRegistrySchema = z
   })
   .strict();
 
+// --- ADR index (layout v3) ---------------------------------------------------
+
+export const adrStatusSchema = z.enum(["proposed", "accepted", "superseded", "deprecated"]);
+
+export const adrRecordSchema = z
+  .object({
+    id: z.string().regex(/^ADR-\d{4}-.+/),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    slug: z.string().min(1),
+    status: adrStatusSchema,
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    path: z.string().min(1),
+    supersedes: z.array(z.string().min(1)),
+    superseded_by: z.string().min(1).nullable(),
+    related_analysis: z.string().min(1).nullable(),
+    related_iteration: z.string().min(1).nullable(),
+  })
+  .strict();
+
+export const adrIndexSchema = z
+  .object({
+    __schema: z.literal(1),
+    next_number: z.number().int().positive(),
+    adrs: z.record(adrRecordSchema),
+    updated_at: z.string().min(1),
+  })
+  .strict();
+
 export const frameworkManifestSchema = z
   .object({
     __schema: z.literal(1),
@@ -202,6 +231,9 @@ export type SystemVcs = z.infer<typeof systemVcsSchema>;
 export type SystemStatus = z.infer<typeof systemStatusSchema>;
 export type SystemRecord = z.infer<typeof systemRecordSchema>;
 export type SystemsRegistry = z.infer<typeof systemsRegistrySchema>;
+export type AdrStatus = z.infer<typeof adrStatusSchema>;
+export type AdrRecord = z.infer<typeof adrRecordSchema>;
+export type AdrIndex = z.infer<typeof adrIndexSchema>;
 export type EventEntry = z.input<typeof eventEntrySchema>;
 export type PersistedEventEntry = z.infer<typeof persistedEventEntrySchema>;
 export type MigrationStep = z.infer<typeof migrationStepSchema>;

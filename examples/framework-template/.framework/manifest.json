@@ -7,11 +7,11 @@
   "managed_files": {
     ".framework/README.md": {
       "executable": false,
-      "hash": "4b5513e701260f9cab50f2ec239793278a96e1238c79b3676654a2823f5c5a41",
+      "hash": "b02dbcc9386595d08259d00a3dcc8166cd27be82d6de84a2822f8d8ff1a15091",
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "framework.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     ".framework/VERSION": {
       "executable": false,
@@ -19,7 +19,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "framework.version",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     ".framework/backups/.gitkeep": {
       "executable": false,
@@ -27,15 +27,15 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "framework.backups.gitkeep",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     ".framework/config.yaml": {
       "executable": false,
-      "hash": "410ce98d4ca107234607e4fb6a44bcff19cf86772c9d5ead76c8d3e4ed0df606",
+      "hash": "e636bc48d8001868e8a3c93ba4eb1ab8bdd897c142465b1b5d42e5671ae41fc5",
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "framework.config",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     ".framework/events/.gitkeep": {
       "executable": false,
@@ -43,7 +43,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "framework.events.gitkeep",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     ".framework/migrations/README.md": {
       "executable": false,
@@ -51,7 +51,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "framework.migrations.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     ".gitignore": {
       "executable": false,
@@ -59,7 +59,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "root.gitignore",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     "README.md": {
       "executable": false,
@@ -67,7 +67,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "root.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     "analyses/README.md": {
       "executable": false,
@@ -75,7 +75,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "analyses.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     "analyses/gaps/.gitkeep": {
       "executable": false,
@@ -83,7 +83,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "analyses.gaps.gitkeep",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "analyses/patterns/.gitkeep": {
       "executable": false,
@@ -91,7 +91,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "analyses.patterns.gitkeep",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "analyses/references/.gitkeep": {
       "executable": false,
@@ -99,7 +99,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "analyses.references.gitkeep",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "analyses/templates/gap-analysis.md": {
       "executable": false,
@@ -107,7 +107,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "analysis.template.gap",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "analyses/templates/pattern-card.md": {
       "executable": false,
@@ -115,7 +115,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "analysis.template.pattern",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "analyses/templates/reference-analysis-card.md": {
       "executable": false,
@@ -123,7 +123,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "analysis.template.reference",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "data/README.md": {
       "executable": false,
@@ -131,7 +131,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "data.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "iterations/README.md": {
       "executable": false,
@@ -139,7 +139,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "iterations.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "iterations/templates/iteration-plan.md": {
       "executable": false,
@@ -147,7 +147,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "iterations.template.plan",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "knowledge/README.md": {
       "executable": false,
@@ -155,7 +155,15 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "knowledge.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
+    },
+    "knowledge/decisions/ADR-TEMPLATE.md": {
+      "executable": false,
+      "hash": "33b66dc9f7fc08d614a01550474f7f6fa4f9f25a2d1432f442194bbeff967257",
+      "installed_version": "0.2.0",
+      "protected": false,
+      "template_id": "knowledge.decisions.adr_template",
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "knowledge/decisions/README.md": {
       "executable": false,
@@ -163,7 +171,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "knowledge.decisions.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "knowledge/guides/README.md": {
       "executable": false,
@@ -171,7 +179,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "knowledge.guides.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "knowledge/patterns/README.md": {
       "executable": false,
@@ -179,7 +187,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "knowledge.patterns.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "knowledge/troubleshooting/README.md": {
       "executable": false,
@@ -187,7 +195,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "knowledge.troubleshooting.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "references/README.md": {
       "executable": false,
@@ -195,7 +203,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "references.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     "references/frozen/README.md": {
       "executable": false,
@@ -203,7 +211,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "references.frozen.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     "references/intake/README.md": {
       "executable": false,
@@ -211,7 +219,7 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "references.intake.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:13+08:00"
     },
     "releases/README.md": {
       "executable": false,
@@ -219,15 +227,15 @@
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "releases.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "systems/README.md": {
       "executable": false,
-      "hash": "4d0704008ef9a717f8a18b8b791583b3156e21d605cef6647378d1ee0a9847c0",
+      "hash": "a7ad36ceb9fabc033d3bd0663f4373a86a51da405fbe19fde2edef35f29c255e",
       "installed_version": "0.2.0",
       "protected": false,
       "template_id": "systems.readme",
-      "updated_at": "2026-06-13T14:33:20+00:00"
+      "updated_at": "2026-06-17T15:29:14+08:00"
     },
     "systems/metasystem-core/CHANGELOG.md": {
       "executable": false,
@@ -292,12 +300,20 @@
       "protected": false,
       "template_id": "system.core.framework_yaml",
       "updated_at": "2026-06-13T14:33:20+00:00"
+    },
+    "systems/metasystem-core/system.yaml": {
+      "executable": false,
+      "hash": "8912f7329b676b7def07568daa34c247cf15fa3e0900e0a1a763916739b27328",
+      "installed_version": "0.2.0",
+      "protected": false,
+      "template_id": "system.core.contract",
+      "updated_at": "2026-06-17T15:29:14+08:00"
     }
   },
   "project": {
     "core": "metasystem-core",
     "name": "MetaSystem"
   },
-  "updated_at": "2026-06-13T14:33:20+00:00",
+  "updated_at": "2026-06-17T15:29:14+08:00",
   "user_deleted": []
 }

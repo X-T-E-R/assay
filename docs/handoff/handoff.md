@@ -2,7 +2,7 @@
 
 handoff_type: project
 created_at: 2026-06-17
-status: ready
+status: completed
 receiver: 后续接手 metasystem-kit 改造的开发者
 confidence: high
 
@@ -168,7 +168,7 @@ pnpm build && pnpm -r test              # 应该全过
 
 ## 9. Validation State
 
-**Checks run** (在本会话已验证)：
+**Checks run before this handoff was picked up**:
 
 - Command: `pnpm build`
   Result: pass
@@ -190,49 +190,79 @@ pnpm build && pnpm -r test              # 应该全过
   Result: pass
   Notes: 注册表生成、4 系统记录、check 从 8 error 降到 0 error。
 
+**Final checks run after completing P1-c / P2-templates / P3-final**:
+
+- Command: `pnpm build`
+  Result: pass
+  Notes: core + CLI package builds succeeded.
+
+- Command: `pnpm typecheck`
+  Result: pass
+  Notes: core + CLI package type checks succeeded, including test sources.
+
+- Command: `pnpm lint`
+  Result: pass
+  Notes: Biome check passed with 0 errors.
+
+- Command: `pnpm test`
+  Result: pass — core 90 / CLI 41
+  Notes: Added ADR core tests, ADR CLI subprocess tests, template cleanup tests, ADR chain validation tests, and layout-version migration regression coverage.
+
+- Command: `pnpm smoke`
+  Result: pass
+  Notes: TypeScript CLI smoke flow passed.
+
+- Command: skill-creator audit via dynamic import
+  Result: pass
+  Notes: `skills/metasystem-builder` audit reported 0 errors and 0 warnings.
+
+- Command: Tarot `migrate-layout --dry-run`, then `migrate-layout --apply`
+  Result: pass
+  Notes: Dry-run contained only `.framework/manifest.json -> .framework/manifest.json` to keep `__schema: 1` and upgrade `layout_version` to 3. Apply created backup `.framework/backups/20260617-153230` and event `.framework/events/2026-06.jsonl`.
+
+- Command: Tarot `check`
+  Result: pass
+  Notes: `Framework check: ok`; remaining 5 warnings are user-modified managed files: `.gitignore`, `README.md`, `data/README.md`, `references/frozen/README.md`, `systems/README.md`.
+
+- Command: Tarot `status`
+  Result: pass
+  Notes: layout version is 3; Systems section has 4 records, with `tarot-arcana-core-game` as primary, `card-eval-system` active, and `tarot-rework-game` / `tarot-roguelike-game` archived. Open iterations: 0; knowledge entries: 0.
+
 **Known validation gaps**:
 - 没有针对 ADR 链环检测的"性能"测试（深度上千的链）；不是必须，但若要做 enterprise-grade 可补。
 - 没有针对 systems-registry primary 唯一性的 race 测试（多进程并发 register）；同上。
 - skill-creator audit 的 "necessity.passive_reference" 启发式对路径字符串误判；本次绕过的方法是改写描述（"the workspace's frozen-references area" 而非裸 `references/frozen/`），后续若再 audit 注意这点。
 
-## 10. Continuation Prompt
+## 10. Post-Completion Review Prompt
 
 ```text
-你将继续 metasystem-kit 项目（layout v3 改造）的剩余工作。
+你将 review metasystem-kit layout v3 改造的完成结果。
 
 工作目录: C:\Programs\Meta\MetaSystem\systems\metasystem-kit
-分支: feat/systems-registry-v3（已存在，5 个提交未合并）
+分支: feat/systems-registry-v3
 
 完整背景与设计依据见: docs/handoff/handoff.md（本文件）。
 原始审计报告见: C:\Programs\Games\CardGames\Tarot\.framework\AUDIT-metasystem-structure-20260617.md
 
-第一步: 切到分支，跑基线测试确认绿：
+第一步: 切到分支，复核最终验证：
   cd C:\Programs\Meta\MetaSystem\systems\metasystem-kit
   git checkout feat/systems-registry-v3
-  pnpm install && pnpm build
-  cd packages/metasystem-framework-core && pnpm test    # 应 79/79 pass
-  cd ..\metasystem-framework-cli && pnpm test           # 应 36/36 pass
+  pnpm build
+  pnpm typecheck
+  pnpm lint
+  pnpm test
+  pnpm smoke
 
 不要做的事:
 - 不要从 main 重新分支；feat/systems-registry-v3 已有需要保留的工作。
-- 不要在 ZCode/任何 Edit 工具的两次 Edit 之间运行 `pnpm biome format --write`，
-  否则会和文件状态跟踪冲突；统一在所有 Edit 完成后跑一次。
 - 不要试图修复 skill-creator CLI 在 Windows 上的静默退出问题；用 handoff §9
   里的动态 import 调 core 即可。
 - 不要碰 data/ 双写问题、references/intake 流程；这些已在审计 §8 列为暂不做。
 
-接下来按 handoff §8 列的 10 个 Next Actions 顺序推进:
-1. 基线确认
-2. P1-c schema
-3. P1-c core module (adrs.ts)
-4. P1-c CLI (adr 命令组)
-5. P1-c check 校验 + ADR 链测试
-6. P2-templates 移除 8 个内部模板 + 改 initFramework
-7. P2-templates 新增 system.yaml 与 ADR 模板
-8. SKILL.md / references 更新（含 adr-workflow.md）+ skill-creator audit
-9. P3-final 在 Tarot 项目上验证
-10. 整理 commit + 写 PR 描述
-
-每完成一步跑相应的测试与 lint，全绿才进下一步。
-完工后回到这个 handoff 文档更新 §9 Validation State 段，记录最终命令与结果。
+Review checklist:
+1. ADR core module, CLI commands, check validation, and tests are present.
+2. Layout v3 templates manage only system.yaml for systems and include ADR-TEMPLATE.md.
+3. metasystem-builder SKILL.md and references include ADR workflow guidance.
+4. Tarot validation in §9 shows check ok, status layout version 3, and 4 systems.
+5. Commit history is ready for human review / PR preparation.
 ```

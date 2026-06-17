@@ -4,7 +4,7 @@ Every MetaSystem workspace converges to this layout (layout v3):
 
 ```text
 <project-root>/
-├── .framework/       # version, manifest, systems-registry, events, migrations, backups
+├── .framework/       # version, manifest, registries, events, migrations, backups
 ├── references/       # external systems; intake + frozen snapshots
 ├── analyses/         # reference analysis, gap analysis, candidate patterns
 ├── systems/          # our active framework/system implementations
@@ -39,11 +39,12 @@ The CLI writes and maintains these files automatically:
 - `.framework/VERSION` — installed framework template version.
 - `.framework/manifest.json` — managed file manifest with template IDs and SHA-256 hashes.
 - `.framework/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain (layout v3+).
+- `.framework/adrs.json` — ADR index: number allocator, status, supersedes chain, and file paths.
 - `.framework/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
 - `.framework/backups/` — pre-update and pre-migration backups.
 - `.framework/migrations/` — migration records.
 
-Do not edit these files manually; use the CLI for all manifest, registry, and event operations.
+Do not edit these files manually; use the CLI for all manifest, registry, ADR, and event operations.
 
 ## `systems/` and version control
 

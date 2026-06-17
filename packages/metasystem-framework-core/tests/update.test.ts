@@ -10,6 +10,7 @@ import {
   desiredTemplates,
   initFramework,
   loadManifest,
+  loadSystemsRegistry,
   migrateLayout,
   saveManifest,
 } from "../src/index.js";
@@ -48,6 +49,37 @@ async function initUpdateFixture(): Promise<string> {
   const root = path.join(await tempDir(), "demo");
   await initFramework({ target: root, name: "Demo" });
   return root;
+}
+
+async function addLegacySystemManagedFiles(root: string): Promise<void> {
+  const manifest = await loadManifest(root);
+  if (!manifest) {
+    throw new Error("manifest missing");
+  }
+  const legacyFiles: Record<string, string> = {
+    "systems/demo-core/README.md": "# Legacy system README\n",
+    "systems/demo-core/framework.yaml":
+      "system:\n  name: demo-core\n  status: primary\n  version: 0.2.0\n",
+  };
+  for (const [relativePath, content] of Object.entries(legacyFiles)) {
+    const absolutePath = path.join(root, relativePath);
+    const finalContent = (await exists(absolutePath))
+      ? await readFile(absolutePath, "utf8")
+      : content;
+    if (!(await exists(absolutePath))) {
+      await writeFile(absolutePath, finalContent, "utf8");
+    }
+    manifest.managed_files[relativePath] = {
+      template_id: `legacy.${relativePath}`,
+      hash: computeHash(finalContent),
+      installed_version: "0.2.0",
+      protected: false,
+      executable: false,
+      updated_at: "2026-06-17T00:00:00+08:00",
+    };
+  }
+  manifest.layout_version = 2;
+  await saveManifest(root, manifest);
 }
 
 afterEach(async () => {
@@ -254,6 +286,7 @@ describe("v2 to v3 layout migration", () => {
       "system:\n  name: demo-core\n  status: primary\n  version: 0.2.0\n",
       "utf8",
     );
+    await addLegacySystemManagedFiles(root);
 
     const plan = await buildLayoutMigrationPlan({ root });
 
@@ -301,6 +334,61 @@ describe("v2 to v3 layout migration", () => {
     expect(plan.steps.some((s) => s.type === "upgrade-manifest")).toBe(false);
   });
 
+  it("upgrades an old layout_version without overwriting an existing systems registry", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    await writeFile(
+      path.join(root, ".framework", "systems-registry.json"),
+      JSON.stringify({
+        __schema: 1,
+        primary: "demo-core",
+        systems: {
+          "demo-core": {
+            name: "demo-core",
+            path: "systems/demo-core",
+            status: "primary",
+            vcs: "embedded",
+            vcs_ref: "",
+            version: "0.1.0",
+            contract_file: "systems/demo-core/system.yaml",
+            supersedes: [],
+            absorbed_on: "2026-06-17",
+            archived_on: null,
+            archive_path: null,
+          },
+        },
+        updated_at: "2026-06-17T00:00:00+08:00",
+      }),
+      "utf8",
+    );
+    const manifest = await loadManifest(root);
+    if (!manifest) {
+      throw new Error("manifest missing");
+    }
+    manifest.layout_version = 2;
+    await saveManifest(root, manifest);
+
+    const plan = await buildLayoutMigrationPlan({ root });
+
+    expect(plan.steps.some((s) => s.type === "create-systems-registry")).toBe(false);
+    expect(plan.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "upgrade-manifest",
+          action: "upgrade",
+        }),
+      ]),
+    );
+
+    await migrateLayout({ root, apply: true, now: new Date("2026-06-17T10:00:00") });
+    const upgradedManifest = await loadManifest(root);
+    const registry = await loadSystemsRegistry(root);
+
+    expect(upgradedManifest?.layout_version).toBe(3);
+    expect(registry?.primary).toBe("demo-core");
+    expect(Object.keys(registry?.systems ?? {})).toEqual(["demo-core"]);
+  });
+
   it("applies migration: creates registry, contracts, removes stale managed files", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo", core: "demo-core" });
@@ -312,6 +400,7 @@ describe("v2 to v3 layout migration", () => {
       "system:\n  name: demo-core\n  status: primary\n  version: 0.2.0\n  supersedes: [old-system]\n",
       "utf8",
     );
+    await addLegacySystemManagedFiles(root);
     // Create an archived system
     await mkdir(path.join(root, "systems", "archive", "2026-06-16-pre-old", "old-system"), {
       recursive: true,

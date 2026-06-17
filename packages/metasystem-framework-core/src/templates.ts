@@ -131,44 +131,9 @@ export function desiredTemplates(project: string, core: string): TemplateFile[] 
       content: systemsReadme(),
     }),
     templateFile({
-      path: `systems/${core}/README.md`,
-      templateId: "system.core.readme",
-      content: coreReadme(core),
-    }),
-    templateFile({
-      path: `systems/${core}/framework.yaml`,
-      templateId: "system.core.framework_yaml",
-      content: coreFrameworkYaml(project, core),
-    }),
-    templateFile({
-      path: `systems/${core}/CHANGELOG.md`,
-      templateId: "system.core.changelog",
-      content: changelog(),
-    }),
-    templateFile({
-      path: `systems/${core}/docs/architecture.md`,
-      templateId: "system.core.architecture",
-      content: architectureDoc(project, core),
-    }),
-    templateFile({
-      path: `systems/${core}/docs/artifact-model.md`,
-      templateId: "system.core.artifact_model",
-      content: artifactModelDoc(),
-    }),
-    templateFile({
-      path: `systems/${core}/docs/workflows.md`,
-      templateId: "system.core.workflows",
-      content: workflowsDoc(),
-    }),
-    templateFile({
-      path: `systems/${core}/docs/update-mechanism.md`,
-      templateId: "system.core.update_mechanism",
-      content: updateMechanismDoc(),
-    }),
-    templateFile({
-      path: `systems/${core}/docs/roadmap.md`,
-      templateId: "system.core.roadmap",
-      content: roadmapDoc(),
+      path: `systems/${core}/system.yaml`,
+      templateId: "system.core.contract",
+      content: systemContract(project, core),
     }),
     templateFile({
       path: "iterations/README.md",
@@ -189,6 +154,11 @@ export function desiredTemplates(project: string, core: string): TemplateFile[] 
       path: "knowledge/decisions/README.md",
       templateId: "knowledge.decisions.readme",
       content: "# decisions/\n\nAccepted decisions and ADRs.\n",
+    }),
+    templateFile({
+      path: "knowledge/decisions/ADR-TEMPLATE.md",
+      templateId: "knowledge.decisions.adr_template",
+      content: adrTemplate(),
     }),
     templateFile({
       path: "knowledge/guides/README.md",
@@ -415,7 +385,7 @@ export function patternCardTemplate(): string {
 }
 
 export function systemsReadme(): string {
-  return "# systems/\n\nOur active framework/system implementations. Do not place external project snapshots here.\n";
+  return "# systems/\n\nOur active framework/system implementations. The framework manages only each system's `system.yaml` contract; system source, README files, changelogs, and docs belong to the system itself.\n";
 }
 
 export function coreReadme(core: string): string {
@@ -434,19 +404,40 @@ export function coreReadme(core: string): string {
     `);
 }
 
-export function coreFrameworkYaml(project: string, core: string): string {
+export function systemContract(project: string, core: string): string {
   return dedent(`
     system:
       project: ${project}
       name: ${core}
       version: 0.1.0
-      status: bootstrap
+      status: primary
+      vcs: embedded
+      vcs_ref: ""
+      supersedes: []
+    contract_managed_by: metasystem
+    `);
+}
 
-    modules:
-      reference_intake: documented
-      analysis: documented
-      iteration_loop: documented
-      update_mechanism: documented
+export function adrTemplate(): string {
+  return dedent(`
+    ---
+    adr: ADR-0000-example
+    title: "Example decision"
+    status: proposed
+    date: YYYY-MM-DD
+    supersedes: []
+    superseded_by: null
+    related_analysis: null
+    related_iteration: null
+    ---
+
+    # Example decision
+
+    ## Context
+
+    ## Decision
+
+    ## Consequences
     `);
 }
 

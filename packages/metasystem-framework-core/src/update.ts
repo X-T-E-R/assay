@@ -183,6 +183,13 @@ function requireManifest(manifest: FrameworkManifest | null, root: string): Fram
   return manifest;
 }
 
+function isLegacySystemManagedFile(managedPath: string, coreName: string): boolean {
+  if (!managedPath.startsWith(`systems/${coreName}/`)) {
+    return false;
+  }
+  return managedPath !== `systems/${coreName}/system.yaml`;
+}
+
 async function writeTemplate(root: string, template: TemplateFile): Promise<void> {
   const target = path.join(root, template.path);
   await mkdir(path.dirname(target), { recursive: true });
@@ -483,7 +490,7 @@ export async function buildLayoutMigrationPlan(
 
     // Step 4: mark old systems/<core>/** managed files as user-deleted
     for (const managedPath of Object.keys(manifest.managed_files)) {
-      if (managedPath.startsWith(`systems/${coreName}/`)) {
+      if (isLegacySystemManagedFile(managedPath, coreName)) {
         steps.push({
           type: "mark-user-deleted",
           from: managedPath,
@@ -499,7 +506,21 @@ export async function buildLayoutMigrationPlan(
       type: "upgrade-manifest",
       from: MANIFEST_FILE,
       to: MANIFEST_FILE,
-      reason: `upgrade __schema to 2, layout_version to ${LAYOUT_VERSION}`,
+      reason: `keep __schema at 1, upgrade layout_version to ${LAYOUT_VERSION}`,
+      action: "upgrade",
+    });
+  }
+
+  if (
+    manifest &&
+    manifest.layout_version < LAYOUT_VERSION &&
+    !steps.some((step) => step.type === "upgrade-manifest")
+  ) {
+    steps.push({
+      type: "upgrade-manifest",
+      from: MANIFEST_FILE,
+      to: MANIFEST_FILE,
+      reason: `keep __schema at 1, upgrade layout_version to ${LAYOUT_VERSION}`,
       action: "upgrade",
     });
   }
@@ -709,7 +730,12 @@ async function applyV2ToV3Migration(root: string, steps: readonly MigrationStep[
 
   const coreName = manifest.project.core;
   const projectName = manifest.project.name;
-  const registry = defaultSystemsRegistry();
+  const needsRegistryWrite = steps.some(
+    (step) =>
+      step.type === "generate-contract" ||
+      (step.type === "create-systems-registry" && step.to === SYSTEMS_REGISTRY_FILE),
+  );
+  const registry = (await loadSystemsRegistry(root)) ?? defaultSystemsRegistry();
 
   // Process generate-contract steps: register active systems
   for (const step of steps) {
@@ -791,21 +817,25 @@ async function applyV2ToV3Migration(root: string, steps: readonly MigrationStep[
     };
   }
 
-  await saveSystemsRegistry(root, registry);
+  if (needsRegistryWrite) {
+    await saveSystemsRegistry(root, registry);
+  }
 
   // Process mark-user-deleted steps: remove old system-internal managed files from manifest
   const manifestToDelete = new Set(
     steps.filter((s) => s.type === "mark-user-deleted").map((s) => s.from),
   );
-  if (manifestToDelete.size > 0 && manifest) {
+  if (manifest) {
     const updatedManaged: Record<string, (typeof manifest.managed_files)[string]> = {};
     for (const [filePath, record] of Object.entries(manifest.managed_files)) {
       if (!manifestToDelete.has(filePath)) {
         updatedManaged[filePath] = record;
       }
     }
-    manifest.managed_files = updatedManaged;
-    manifest.user_deleted = [...manifest.user_deleted, ...manifestToDelete];
+    if (manifestToDelete.size > 0) {
+      manifest.managed_files = updatedManaged;
+      manifest.user_deleted = [...manifest.user_deleted, ...manifestToDelete];
+    }
 
     // Process upgrade-manifest step: upgrade schema and layout version
     const hasUpgrade = steps.some((s) => s.type === "upgrade-manifest");

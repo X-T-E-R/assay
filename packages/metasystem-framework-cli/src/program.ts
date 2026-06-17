@@ -1,10 +1,12 @@
 import { Command, Option } from "@commander-js/extra-typings";
 import {
+  type AdrStatus,
   type AnalysisExit,
   type IterationResult,
   type KnowledgeType,
   type MetaSystemProjectRegistryStatus,
   type SystemVcs,
+  acceptAdr,
   addKnowledge,
   addReference,
   adoptExistingProject,
@@ -14,13 +16,17 @@ import {
   checkFramework,
   closeAnalysis,
   closeIteration,
+  createAdr,
   createAnalysis,
+  deprecateAdr,
   discoverFrameworkRoot,
+  findAdr,
   findProjectRecord,
   findSystem,
   forgetProject,
   getFrameworkStatus,
   initFramework,
+  listAdrs,
   listProjectRecords,
   listSystems,
   migrateLayout,
@@ -28,14 +34,18 @@ import {
   pruneProjects,
   recordProjectLifecycleBestEffort,
   registerSystem,
+  requireAdrIndex,
   requireSystemsRegistry,
   scanForProjects,
   startIteration,
+  supersedeAdr,
 } from "metasystem-framework-core";
 
 import { mapCliError } from "./errors.js";
 import {
   formatAdoptionResult,
+  formatAdrList,
+  formatAdrRecord,
   formatCheckResult,
   formatInitResult,
   formatMigrationResult,
@@ -71,11 +81,19 @@ interface ProjectPruneOptions extends ProjectJsonOptions {
   readonly dryRun?: boolean;
 }
 
+interface AdrListOptions {
+  readonly json?: boolean;
+  readonly root: string;
+  readonly status?: string;
+}
+
 const PROJECT_STATUSES: readonly MetaSystemProjectRegistryStatus[] = [
   "active",
   "missing",
   "uninstalled",
 ];
+
+const ADR_STATUSES: readonly AdrStatus[] = ["proposed", "accepted", "superseded", "deprecated"];
 
 function defaultOutput(): CliOutput {
   return {
@@ -120,6 +138,16 @@ function parseStatusFilter(status?: string): MetaSystemProjectRegistryStatus | u
     return status as MetaSystemProjectRegistryStatus;
   }
   throw new Error(`--status must be one of: ${PROJECT_STATUSES.join(", ")}`);
+}
+
+function parseAdrStatusFilter(status?: string): AdrStatus | undefined {
+  if (status === undefined) {
+    return undefined;
+  }
+  if (ADR_STATUSES.includes(status as AdrStatus)) {
+    return status as AdrStatus;
+  }
+  throw new Error(`--status must be one of: ${ADR_STATUSES.join(", ")}`);
 }
 
 export function createProgram(options: CreateProgramOptions = {}): Command {
@@ -468,6 +496,104 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         text: commandOptions.text,
       });
       writeLine(output, "stdout", `Captured event: ${result.eventFile}`);
+    });
+
+  const adr = program.command("adr").description("Architecture decision record operations");
+
+  adr
+    .command("new")
+    .description("Create a proposed ADR under knowledge/decisions")
+    .argument("<title>", "ADR title")
+    .option("--from-analysis <path>", "originating analysis path")
+    .option("--from-iteration <path>", "originating iteration path")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (title, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await createAdr(root, {
+        title,
+        ...(commandOptions.fromAnalysis === undefined
+          ? {}
+          : { relatedAnalysis: commandOptions.fromAnalysis }),
+        ...(commandOptions.fromIteration === undefined
+          ? {}
+          : { relatedIteration: commandOptions.fromIteration }),
+      });
+      writeLine(output, "stdout", `Created ADR: ${result.adr.id}`);
+      writeLine(output, "stdout", `Path: ${result.adr.path}`);
+      writeLine(output, "stdout", `Status: ${result.adr.status}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  adr
+    .command("accept")
+    .description("Accept a proposed ADR")
+    .argument("<selector>", "ADR id, number, or unique id prefix")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await acceptAdr(root, selector);
+      writeLine(output, "stdout", `Accepted ADR: ${result.adr.id}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  adr
+    .command("supersede")
+    .description("Mark an accepted ADR as superseded by another accepted ADR")
+    .argument("<old-selector>", "ADR being superseded")
+    .argument("<new-selector>", "accepted replacement ADR")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (oldSelector, newSelector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await supersedeAdr(root, oldSelector, newSelector);
+      writeLine(output, "stdout", `Superseded ADR: ${result.oldAdr.id}`);
+      writeLine(output, "stdout", `Replacement: ${result.newAdr.id}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  adr
+    .command("deprecate")
+    .description("Deprecate a proposed or accepted ADR without replacing it")
+    .argument("<selector>", "ADR id, number, or unique id prefix")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await deprecateAdr(root, selector);
+      writeLine(output, "stdout", `Deprecated ADR: ${result.adr.id}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  adr
+    .command("list")
+    .description("List indexed ADRs")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--json", "emit JSON")
+    .addOption(new Option("--status <status>", "filter by status").choices([...ADR_STATUSES]))
+    .action(async (commandOptions: AdrListOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const status = parseAdrStatusFilter(commandOptions.status);
+      const { adrs } = await listAdrs(root, status);
+      if (commandOptions.json) {
+        writeJson(output, { adrs });
+        return;
+      }
+      writeLine(output, "stdout", formatAdrList("Architecture decision records", adrs));
+    });
+
+  adr
+    .command("show")
+    .description("Show one ADR by id, number, or unique id prefix")
+    .argument("<selector>", "ADR id, number, or unique id prefix")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const index = await requireAdrIndex(root);
+      const record = findAdr(index, selector);
+      if (commandOptions.json) {
+        writeJson(output, record);
+        return;
+      }
+      writeLine(output, "stdout", formatAdrRecord(record));
     });
 
   const system = program.command("system").description("System registry operations");

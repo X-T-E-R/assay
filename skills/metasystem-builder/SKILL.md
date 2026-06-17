@@ -1,6 +1,6 @@
 ---
 name: metasystem-builder
-description: "Build, adopt, update, analyze, and iterate MetaSystem framework workspaces. Use when the user wants to initialize a MetaSystem project, adopt an existing project into MetaSystem, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-MetaSystem knowledge management workflows."
+description: "Build, adopt, update, analyze, and iterate MetaSystem framework workspaces. Use when the user wants to initialize a MetaSystem project, adopt an existing project into MetaSystem, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-MetaSystem knowledge management workflows."
 ---
 
 # MetaSystem Builder
@@ -43,6 +43,14 @@ metasystem iteration start "Title"
 metasystem iteration close <selector> --result applied|rejected|retest [--note ...]
 metasystem knowledge add <type> "Title" [--from-analysis <path>] [--from-iteration <path>]
 
+# ADRs
+metasystem adr new "Title" [--from-analysis <path>] [--from-iteration <path>]
+metasystem adr accept <selector>
+metasystem adr supersede <old-selector> <new-selector>
+metasystem adr deprecate <selector>
+metasystem adr list [--status proposed|accepted|superseded|deprecated] [--json]
+metasystem adr show <selector> [--json]
+
 # System registry (layout v3+)
 metasystem system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
 metasystem system promote <selector>
@@ -54,7 +62,7 @@ metasystem system show <selector>
 metasystem projects list | scan | show <selector> | forget <selector> | prune
 ```
 
-For build instructions, PATH setup, and registry commands, read `references/cli-setup.md`. For lifecycle close semantics, read `references/lifecycle-commands.md`.
+For build instructions, PATH setup, and registry commands, read `references/cli-setup.md`. For lifecycle close semantics, read `references/lifecycle-commands.md`. For ADR state, frontmatter, and supersede-chain rules, read `references/adr-workflow.md`.
 
 ## Adopt an existing project
 
@@ -77,6 +85,18 @@ Each system under `systems/` may be an independently version-controlled reposito
 
 Never hand-edit `.framework/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration from layout v2, read `references/systems-registry.md`.
 
+## Decisions and ADRs
+
+Use ADRs for durable architecture decisions that need status, numbering, and supersede history. The framework stores ADR markdown under `knowledge/decisions/` and tracks the index in `.framework/adrs.json`.
+
+- `adr new` creates a proposed ADR draft with required frontmatter.
+- `adr accept` marks a proposed ADR as accepted.
+- `adr supersede` records a bidirectional replacement chain between accepted ADRs.
+- `adr deprecate` closes a proposed or accepted ADR without replacement.
+- `check` validates dangling ADR links, non-bidirectional supersede chains, cycles, and missing ADR frontmatter.
+
+Never hand-edit `.framework/adrs.json`. Use `adr` commands for lifecycle transitions. Read `references/adr-workflow.md` before creating or changing ADRs.
+
 ## Update policy
 
 Always run `update --dry-run` before applying. User-modified files are skipped by default; use `--create-new` for sidecar copies or `--force` only with explicit user consent. For change classification rules, conflict flags, and backup behavior, read `references/update-policy.md`.
@@ -91,7 +111,7 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 6. Convert promising findings into a candidate pattern under `analyses/patterns/`.
 7. Start an iteration against `systems/<core>/` with `iteration start`.
 8. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate).
-9. Close every started iteration with `iteration close --result ...` and every analysis with `analysis close --exit ...`. Promote durable findings into `knowledge/` with `knowledge add`.
+9. Close every started iteration with `iteration close --result ...` and every analysis with `analysis close --exit ...`. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
 10. Run `update --dry-run` before applying framework upgrades.
 
 ## Anti-rules
@@ -99,7 +119,7 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 - Do not overwrite existing user files by default.
 - Do not adopt an already initialized MetaSystem workspace; use `update` or `migrate-layout` instead.
 - Do not put external project source under `systems/`; freeze it under the workspace's `frozen/` references area.
-- Do not hand-edit `.framework/manifest.json` or `.framework/systems-registry.json`; use the CLI.
+- Do not hand-edit `.framework/manifest.json`, `.framework/systems-registry.json`, or `.framework/adrs.json`; use the CLI.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
 - Do not leave iterations open indefinitely; `check` flags `Status: open` plans as warnings.
@@ -120,9 +140,9 @@ metasystem status
 `check` reports four severity levels:
 
 - `[ok]` — directory or managed file present and unchanged.
-- `[warning]` — managed file modified by user, contract file missing, independent-git system without `.git`, or open iterations remain. Does not fail the check.
+- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, independent-git system without `.git`, or open iterations remain. Does not fail the check.
 - `[missing]` — required directory or manifest absent.
-- `[error]` — managed file missing from disk, registered system path missing, or two primary systems. **Exits non-zero.**
+- `[error]` — managed file missing from disk, registered system path missing, two primary systems, or inconsistent ADR supersede links. **Exits non-zero.**
 
 `status` shows `Systems` (with primary marker, vcs, version, supersedes chain), `Open iterations`, and `Knowledge entries`. For update and migrate, always run `--dry-run` first and review the plan before `--apply`.
 
@@ -135,6 +155,7 @@ Report:
 - Current `.framework/VERSION` and layout version.
 - Whether migration was only planned or applied.
 - Which reference/analysis/iteration/knowledge artifacts were produced.
+- Which ADRs were created, accepted, superseded, deprecated, or left proposed.
 - Registered systems and the current `primary`.
 - Any open iterations or unresolved warnings reported by `check`.
 - Next recommended adoption, iteration, or close step.

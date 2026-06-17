@@ -43,7 +43,7 @@ Choose one of three approaches:
 
 ## Working directory conventions
 
-All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `system register|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.framework/manifest.json`.
+All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.framework/manifest.json`.
 
 Use `cd <target-dir>` before running commands, or pass `--root <path>` / `[target-dir]` only when operating on a workspace from another directory.
 
@@ -74,3 +74,18 @@ metasystem system show <selector>
 ```
 
 Selectors can be the full system name or a unique name prefix.
+
+## ADR index (per-workspace)
+
+Each workspace can track architecture decision records in `.framework/adrs.json` with markdown files under `knowledge/decisions/`. Manage ADRs with the `adr` command group rather than editing the JSON directly:
+
+```bash
+metasystem adr new "Title" [--from-analysis <path>] [--from-iteration <path>]
+metasystem adr accept <selector>
+metasystem adr supersede <old-selector> <new-selector>
+metasystem adr deprecate <selector>
+metasystem adr list [--status proposed|accepted|superseded|deprecated] [--json]
+metasystem adr show <selector> [--json]
+```
+
+Selectors can be the full ADR id, a unique id prefix, or the ADR number.

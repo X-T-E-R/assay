@@ -1,5 +1,6 @@
 import type {
   AdoptExistingProjectResult,
+  AdrRecord,
   ApplyUpdateResult,
   CheckFrameworkResult,
   FrameworkStatusResult,
@@ -280,4 +281,33 @@ export function formatSystemList(
   return [title, ...lines, "", `${systems.length} system(s), primary: ${primary ?? "(none)"}`].join(
     "\n",
   );
+}
+
+function adrRelationLine(values: readonly string[]): string {
+  return values.length > 0 ? values.join(", ") : "-";
+}
+
+export function formatAdrRecord(adr: AdrRecord): string {
+  return [
+    `${adr.id} (${adr.status})`,
+    `  title:             ${adr.title}`,
+    `  date:              ${adr.date}`,
+    `  path:              ${adr.path}`,
+    `  supersedes:        ${adrRelationLine(adr.supersedes)}`,
+    `  superseded by:     ${adr.superseded_by ?? "-"}`,
+    `  related analysis:  ${adr.related_analysis ?? "-"}`,
+    `  related iteration: ${adr.related_iteration ?? "-"}`,
+  ].join("\n");
+}
+
+export function formatAdrList(title: string, adrs: readonly AdrRecord[]): string {
+  if (adrs.length === 0) {
+    return `${title}\n(none)`;
+  }
+  return [
+    title,
+    ...adrs.map((adr) => `${adr.id.padEnd(32)} ${adr.status.padEnd(10)} ${adr.date}  ${adr.title}`),
+    "",
+    `${adrs.length} ADR(s)`,
+  ].join("\n");
 }

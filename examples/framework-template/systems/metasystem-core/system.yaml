@@ -1,0 +1,10 @@
+
+system:
+  project: MetaSystem
+  name: metasystem-core
+  version: 0.1.0
+  status: primary
+  vcs: embedded
+  vcs_ref: ""
+  supersedes: []
+contract_managed_by: metasystem
