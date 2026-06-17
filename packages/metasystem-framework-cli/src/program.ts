@@ -1,13 +1,19 @@
 import { Command, Option } from "@commander-js/extra-typings";
 import {
+  type AnalysisExit,
+  type IterationResult,
+  type KnowledgeType,
   type MetaSystemProjectRegistryStatus,
   type SystemVcs,
+  addKnowledge,
   addReference,
   adoptExistingProject,
   applyUpdate,
   archiveSystem,
   captureEvent,
   checkFramework,
+  closeAnalysis,
+  closeIteration,
   createAnalysis,
   discoverFrameworkRoot,
   findProjectRecord,
@@ -382,6 +388,30 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 
+  analysis
+    .command("close")
+    .description("Close an analysis with a decision exit")
+    .argument("<path>", "analysis file path relative to framework root")
+    .addOption(
+      new Option("--exit <exit>", "decision exit")
+        .choices(["adopt", "reject", "experiment", "adr"])
+        .makeOptionMandatory(),
+    )
+    .option("--note <note>", "closing note")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (analysisPath, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await closeAnalysis({
+        root,
+        path: analysisPath,
+        exit: commandOptions.exit as AnalysisExit,
+        ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
+      });
+      writeLine(output, "stdout", `Closed analysis: ${result.path}`);
+      writeLine(output, "stdout", `Exit: ${commandOptions.exit}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
   const iteration = program.command("iteration").description("Iteration operations");
   iteration
     .command("start")
@@ -393,6 +423,29 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       const result = await startIteration({ root, title });
       writeLine(output, "stdout", `Started iteration: ${result.path}`);
       writeLine(output, "stdout", `Plan: ${result.planPath}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  iteration
+    .command("close")
+    .description("Close an iteration with a result")
+    .argument("<selector>", "iteration path or directory name prefix")
+    .addOption(
+      new Option("--result <result>", "iteration outcome")
+        .choices(["applied", "rejected", "retest"])
+        .makeOptionMandatory(),
+    )
+    .option("--note <note>", "closing note")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await closeIteration({
+        root,
+        selector,
+        result: commandOptions.result as IterationResult,
+        ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
+      });
+      writeLine(output, "stdout", `Closed iteration: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 
@@ -551,6 +604,38 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         return;
       }
       writeLine(output, "stdout", formatSystemRecord(record));
+    });
+
+  const knowledge = program.command("knowledge").description("Knowledge operations");
+  knowledge
+    .command("add")
+    .description("Add a knowledge entry")
+    .argument("<type>", "knowledge type: decision, pattern, guide, troubleshooting")
+    .argument("<title>", "knowledge entry title")
+    .option("--from-analysis <path>", "originating analysis path")
+    .option("--from-iteration <path>", "originating iteration path")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (type, title, commandOptions) => {
+      const validTypes = ["decision", "pattern", "guide", "troubleshooting"];
+      if (!validTypes.includes(type)) {
+        output.stderr(`Invalid type '${type}'. Must be one of: ${validTypes.join(", ")}\n`);
+        output.setExitCode(1);
+        return;
+      }
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await addKnowledge({
+        root,
+        type: type as KnowledgeType,
+        title,
+        ...(commandOptions.fromAnalysis === undefined
+          ? {}
+          : { fromAnalysis: commandOptions.fromAnalysis }),
+        ...(commandOptions.fromIteration === undefined
+          ? {}
+          : { fromIteration: commandOptions.fromIteration }),
+      });
+      writeLine(output, "stdout", `Added knowledge: ${result.path}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 
   return program;

@@ -6,9 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MANIFEST_FILE,
   PRIMARY_DIRS,
+  addKnowledge,
   addReference,
   captureEvent,
   checkFramework,
+  closeAnalysis,
+  closeIteration,
   createAnalysis,
   desiredTemplates,
   getFrameworkStatus,
@@ -387,5 +390,139 @@ describe("workspace operations", () => {
       kind: "note",
       text: "Captured from test",
     });
+  });
+});
+
+describe("closeIteration", () => {
+  it("closes an open iteration and writes an event", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const started = await startIteration({
+      root,
+      title: "Test Pattern",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    const result = await closeIteration({
+      root,
+      selector: started.path,
+      result: "applied",
+      note: "works as expected",
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    expect(result.path).toBe(started.path);
+
+    const planContent = await readFile(path.join(root, started.planPath), "utf8");
+    expect(planContent).toContain("Status: closed");
+    expect(planContent).toContain("applied on 2026-06-15");
+    expect(planContent).toContain("works as expected");
+
+    // Verify the open-iteration count drops to 0
+    const status = await getFrameworkStatus({ root });
+    expect(status.openIterations).toBe(0);
+  });
+
+  it("throws NotFound for unknown iteration selector", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    await expect(
+      closeIteration({ root, selector: "nonexistent", result: "rejected" }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("closeAnalysis", () => {
+  it("closes an analysis with an adopt exit", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const created = await createAnalysis({
+      root,
+      title: "Review Source",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    const result = await closeAnalysis({
+      root,
+      path: created.path,
+      exit: "adopt",
+      note: "good pattern",
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    expect(result.path).toBe(created.path);
+
+    const content = await readFile(created.absolutePath, "utf8");
+    expect(content).toContain("Status: applied");
+    expect(content).toContain("[x] adopt");
+  });
+
+  it("checks the ADR checkbox for adr exit", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const created = await createAnalysis({
+      root,
+      title: "ADR Candidate",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    await closeAnalysis({
+      root,
+      path: created.path,
+      exit: "adr",
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    const content = await readFile(created.absolutePath, "utf8");
+    expect(content).toContain("[x] ADR");
+  });
+});
+
+describe("addKnowledge", () => {
+  it("creates a knowledge entry with back-references", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    const result = await addKnowledge({
+      root,
+      type: "pattern",
+      title: "Config-Driven Design",
+      fromAnalysis: "analyses/references/2026-06-14-review-source.md",
+      fromIteration: "iterations/2026-06-14-try-pattern",
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    expect(result.path).toBe("knowledge/patterns/2026-06-15-config-driven-design.md");
+    const content = await readFile(path.join(root, result.path), "utf8");
+    expect(content).toContain("# Config-Driven Design");
+    expect(content).toContain("Type: pattern");
+    expect(content).toContain("from analysis: analyses/references/2026-06-14-review-source.md");
+    expect(content).toContain("from iteration: iterations/2026-06-14-try-pattern");
+
+    // Status should reflect the new knowledge entry
+    const status = await getFrameworkStatus({ root });
+    expect(status.knowledgeEntries).toBe(1);
+  });
+
+  it("rejects duplicate knowledge entries", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    await addKnowledge({
+      root,
+      type: "guide",
+      title: "Setup Guide",
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    await expect(
+      addKnowledge({
+        root,
+        type: "guide",
+        title: "Setup Guide",
+        now: new Date("2026-06-15T10:00:00"),
+      }),
+    ).rejects.toThrow();
   });
 });

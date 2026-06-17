@@ -140,6 +140,55 @@ export interface CaptureEventResult {
   readonly eventFile: string;
 }
 
+export type IterationResult = "applied" | "rejected" | "retest";
+
+export interface CloseIterationOptions {
+  readonly root: string;
+  readonly selector: string;
+  readonly result: IterationResult;
+  readonly note?: string;
+  readonly now?: Date;
+}
+
+export interface CloseIterationResult {
+  readonly root: string;
+  readonly path: string;
+  readonly eventFile: string;
+}
+
+export type AnalysisExit = "adopt" | "reject" | "experiment" | "adr";
+
+export interface CloseAnalysisOptions {
+  readonly root: string;
+  readonly path: string;
+  readonly exit: AnalysisExit;
+  readonly note?: string;
+  readonly now?: Date;
+}
+
+export interface CloseAnalysisResult {
+  readonly root: string;
+  readonly path: string;
+  readonly eventFile: string;
+}
+
+export type KnowledgeType = "decision" | "pattern" | "guide" | "troubleshooting";
+
+export interface AddKnowledgeOptions {
+  readonly root: string;
+  readonly type: KnowledgeType;
+  readonly title: string;
+  readonly fromAnalysis?: string;
+  readonly fromIteration?: string;
+  readonly now?: Date;
+}
+
+export interface AddKnowledgeResult {
+  readonly root: string;
+  readonly path: string;
+  readonly eventFile: string;
+}
+
 async function exists(target: string): Promise<boolean> {
   try {
     await stat(target);
@@ -614,7 +663,7 @@ export async function createAnalysis(
     throw new FrameworkAlreadyExistsError(`analysis already exists: ${relativePath}`);
   }
 
-  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n\n## Reference\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n`;
+  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n\n## Reference\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n- [ ] ADR\n`;
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, content, "utf8");
   const eventFile = await appendEvent(
@@ -677,4 +726,166 @@ export async function captureEvent(options: CaptureEventOptions): Promise<Captur
   );
 
   return { root, eventFile: relativeDisplayPath(eventFile, root) };
+}
+
+export async function closeIteration(
+  options: CloseIterationOptions,
+): Promise<CloseIterationResult> {
+  const root = path.resolve(options.root);
+  requireManifest(await loadManifest(root), root);
+  const now = options.now ?? new Date();
+  const date = dateStamp(now);
+
+  // Resolve iteration directory from selector (path or date-slug prefix)
+  const iterationsDir = path.join(root, "iterations");
+  let iterPath: string | null = null;
+  const selectorNormalized = options.selector.replace(/\\/g, "/");
+
+  // Try as direct path
+  const directPath = path.join(root, selectorNormalized);
+  if (await exists(directPath)) {
+    iterPath = selectorNormalized;
+  } else {
+    // Search by prefix match
+    if (await exists(iterationsDir)) {
+      const entries = await readdir(iterationsDir, { withFileTypes: true });
+      const matches = entries
+        .filter((e) => e.isDirectory() && e.name.startsWith(options.selector))
+        .map((e) => e.name);
+      if (matches.length === 1 && matches[0]) {
+        iterPath = `iterations/${matches[0]}`;
+      } else if (matches.length > 1) {
+        throw new FrameworkNotFoundError(
+          `iteration selector '${options.selector}' is ambiguous (${matches.join(", ")})`,
+        );
+      }
+    }
+  }
+
+  if (!iterPath) {
+    throw new FrameworkNotFoundError(`iteration not found: ${options.selector}`);
+  }
+
+  const planPath = path.join(root, iterPath, "plan.md");
+  if (!(await exists(planPath))) {
+    throw new FrameworkNotFoundError(`iteration plan not found: ${iterPath}/plan.md`);
+  }
+
+  // Update plan.md: set Status to closed, add Result
+  let content = await readFile(planPath, "utf8");
+  content = content.replace(/(?<![a-z])Status:\s*open\b/i, "Status: closed");
+  content = content.replace(
+    /## Result\s*\n/,
+    `## Result\n\n- ${options.result} on ${date}${options.note ? ` — ${options.note}` : ""}\n`,
+  );
+  if (!/## Result/.test(content)) {
+    content += `\n## Result\n\n- ${options.result} on ${date}${options.note ? ` — ${options.note}` : ""}\n`;
+  }
+  await writeFile(planPath, content, "utf8");
+
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "iteration.closed",
+      path: iterPath,
+      result: options.result,
+      note: options.note ?? null,
+    },
+    now,
+  );
+
+  return { root, path: iterPath, eventFile: relativeDisplayPath(eventFile, root) };
+}
+
+export async function closeAnalysis(options: CloseAnalysisOptions): Promise<CloseAnalysisResult> {
+  const root = path.resolve(options.root);
+  requireManifest(await loadManifest(root), root);
+  const now = options.now ?? new Date();
+  const date = dateStamp(now);
+
+  const analysisPath = options.path.replace(/\\/g, "/");
+  const absolutePath = path.join(root, analysisPath);
+  if (!(await exists(absolutePath))) {
+    throw new FrameworkNotFoundError(`analysis not found: ${analysisPath}`);
+  }
+
+  let content = await readFile(absolutePath, "utf8");
+  // Set status
+  const statusMap: Record<AnalysisExit, string> = {
+    adopt: "applied",
+    reject: "rejected",
+    experiment: "experiment",
+    adr: "adr",
+  };
+  const statusValue = statusMap[options.exit];
+  if (/- Status:\s*\S+/i.test(content)) {
+    content = content.replace(/- Status:\s*\S+/i, `- Status: ${statusValue}`);
+  } else {
+    content = `# Analysis\n\n- Status: ${statusValue}\n${content}`;
+  }
+  // Check the decision exit checkbox
+  const exitLabel = options.exit === "adr" ? "ADR" : options.exit;
+  const checkboxPattern = new RegExp(/- \[[\s]?\] /.source + exitLabel + /\b/.source, "i");
+  content = content.replace(checkboxPattern, `- [x] ${exitLabel}`);
+  if (options.note) {
+    content += `\n> Closed on ${date}: ${options.note}\n`;
+  }
+  await writeFile(absolutePath, content, "utf8");
+
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "analysis.closed",
+      path: analysisPath,
+      exit: options.exit,
+      note: options.note ?? null,
+    },
+    now,
+  );
+
+  return { root, path: analysisPath, eventFile: relativeDisplayPath(eventFile, root) };
+}
+
+export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKnowledgeResult> {
+  const root = path.resolve(options.root);
+  requireManifest(await loadManifest(root), root);
+  const now = options.now ?? new Date();
+  const date = dateStamp(now);
+
+  const typeDir = `knowledge/${options.type}s`;
+  const fileName = `${date}-${slugify(options.title)}.md`;
+  const relativePath = `${typeDir}/${fileName}`;
+  const absolutePath = path.join(root, relativePath);
+
+  if (await exists(absolutePath)) {
+    throw new FrameworkAlreadyExistsError(`knowledge entry already exists: ${relativePath}`);
+  }
+
+  const refs: string[] = [];
+  if (options.fromAnalysis) {
+    refs.push(`- from analysis: ${options.fromAnalysis}`);
+  }
+  if (options.fromIteration) {
+    refs.push(`- from iteration: ${options.fromIteration}`);
+  }
+  const refBlock = refs.length > 0 ? `\n${refs.join("\n")}\n` : "\n";
+
+  const content = `# ${options.title}\n\n- Type: ${options.type}\n- Date: ${date}\n- Status: accepted${refBlock}\n## Summary\n\n## Detail\n`;
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, content, "utf8");
+
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "knowledge.added",
+      path: relativePath,
+      type: options.type,
+      title: options.title,
+      from_analysis: options.fromAnalysis ?? null,
+      from_iteration: options.fromIteration ?? null,
+    },
+    now,
+  );
+
+  return { root, path: relativePath, eventFile: relativeDisplayPath(eventFile, root) };
 }
