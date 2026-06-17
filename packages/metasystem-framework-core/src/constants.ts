@@ -6,6 +6,7 @@ export const VERSION_FILE = `${MANAGED_DIR}/VERSION`;
 export const MANIFEST_FILE = `${MANAGED_DIR}/manifest.json`;
 export const EVENTS_DIR = `${MANAGED_DIR}/events`;
 export const BACKUPS_DIR = `${MANAGED_DIR}/backups`;
+export const SYSTEMS_REGISTRY_FILE = `${MANAGED_DIR}/systems-registry.json`;
 
 export const PRIMARY_DIRS = [
   "references/intake",
@@ -15,6 +16,7 @@ export const PRIMARY_DIRS = [
   "analyses/patterns",
   "analyses/templates",
   "systems",
+  "systems/archive",
   "iterations/templates",
   "knowledge/guides",
   "knowledge/decisions",

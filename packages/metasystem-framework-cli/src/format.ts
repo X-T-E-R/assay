@@ -7,6 +7,7 @@ import type {
   MetaSystemProjectRecord,
   MigrateLayoutResult,
   OperationReport,
+  SystemRecord,
   UpdateAnalysis,
   UpdatePlan,
 } from "metasystem-framework-core";
@@ -220,4 +221,42 @@ function formatProjectDate(iso: string): string {
 
 function projectLabel(record: MetaSystemProjectRecord): string {
   return `${record.name}/${record.core}`;
+}
+
+function supersedesLine(system: SystemRecord): string {
+  return system.supersedes.length > 0 ? system.supersedes.join(", ") : "-";
+}
+
+export function formatSystemRecord(system: SystemRecord): string {
+  return [
+    `${system.name} (${system.status})`,
+    `  path:           ${system.path}`,
+    `  vcs:            ${system.vcs}${system.vcs_ref ? `@${system.vcs_ref}` : ""}`,
+    `  version:        ${system.version}`,
+    `  contract:       ${system.contract_file ?? "-"}`,
+    `  supersedes:     ${supersedesLine(system)}`,
+    `  absorbed on:    ${system.absorbed_on ?? "-"}`,
+    `  archived on:    ${system.archived_on ?? "-"}`,
+    `  archive path:   ${system.archive_path ?? "-"}`,
+  ].join("\n");
+}
+
+export function formatSystemList(
+  title: string,
+  primary: string | null,
+  systems: readonly SystemRecord[],
+): string {
+  if (systems.length === 0) {
+    return `${title}\n(none)`;
+  }
+  const lines = systems.map((system) => {
+    const marker = system.name === primary ? "*" : " ";
+    const vcs = `${system.vcs}${system.vcs_ref ? `@${system.vcs_ref}` : ""}`;
+    const supersedes =
+      system.supersedes.length > 0 ? ` supersedes ${system.supersedes.join(",")}` : "";
+    return `${marker} ${system.status.padEnd(11)} ${system.name.padEnd(28)} ${vcs.padEnd(20)} v${system.version}${supersedes}`;
+  });
+  return [title, ...lines, "", `${systems.length} system(s), primary: ${primary ?? "(none)"}`].join(
+    "\n",
+  );
 }

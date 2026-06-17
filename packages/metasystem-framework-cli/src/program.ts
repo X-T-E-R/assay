@@ -1,21 +1,28 @@
 import { Command, Option } from "@commander-js/extra-typings";
 import {
   type MetaSystemProjectRegistryStatus,
+  type SystemVcs,
   addReference,
   adoptExistingProject,
   applyUpdate,
+  archiveSystem,
   captureEvent,
   checkFramework,
   createAnalysis,
   discoverFrameworkRoot,
   findProjectRecord,
+  findSystem,
   forgetProject,
   getFrameworkStatus,
   initFramework,
   listProjectRecords,
+  listSystems,
   migrateLayout,
+  promoteSystem,
   pruneProjects,
   recordProjectLifecycleBestEffort,
+  registerSystem,
+  requireSystemsRegistry,
   scanForProjects,
   startIteration,
 } from "metasystem-framework-core";
@@ -29,6 +36,8 @@ import {
   formatProjectList,
   formatProjectRecord,
   formatStatusResult,
+  formatSystemList,
+  formatSystemRecord,
   formatUpdateResult,
 } from "./format.js";
 
@@ -406,6 +415,142 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         text: commandOptions.text,
       });
       writeLine(output, "stdout", `Captured event: ${result.eventFile}`);
+    });
+
+  const system = program.command("system").description("System registry operations");
+
+  system
+    .command("register")
+    .description("Register a system directory in the systems registry")
+    .argument("<path>", "system directory (relative to framework root)")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--name <name>", "system name (defaults to directory basename)")
+    .addOption(
+      new Option("--vcs <vcs>", "version control mode").choices([
+        "independent-git",
+        "embedded",
+        "none",
+      ]),
+    )
+    .option("--vcs-ref <ref>", "branch, commit, or tag")
+    .option("--system-version <version>", "system semantic version")
+    .option("--primary", "set this system as the primary system")
+    .option("--supersedes <names>", "comma-separated superseded system names")
+    .action(async (systemPath, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const vcs = commandOptions.vcs as SystemVcs | undefined;
+      const supersedes = commandOptions.supersedes
+        ? commandOptions.supersedes
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : [];
+      const result = await registerSystem(root, {
+        path: systemPath,
+        ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
+        ...(vcs === undefined ? {} : { vcs }),
+        ...(commandOptions.vcsRef === undefined ? {} : { vcsRef: commandOptions.vcsRef }),
+        ...(commandOptions.systemVersion === undefined
+          ? {}
+          : { version: commandOptions.systemVersion }),
+        primary: commandOptions.primary ?? false,
+        supersedes,
+      });
+      writeLine(output, "stdout", `Registered system: ${result.system.name}`);
+      writeLine(output, "stdout", `Status: ${result.system.status}`);
+      writeLine(output, "stdout", "Registry: .framework/systems-registry.json");
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  system
+    .command("promote")
+    .description("Promote a system to primary; demotes the previous primary")
+    .argument("<selector>", "system name or unique name prefix")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await promoteSystem(root, selector);
+      writeLine(output, "stdout", `Promoted: ${result.system.name}`);
+      if (result.previousPrimary) {
+        writeLine(
+          output,
+          "stdout",
+          `Previous primary: ${result.previousPrimary.name} (now superseded)`,
+        );
+      }
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  system
+    .command("archive")
+    .description("Archive a non-primary system into systems/archive/")
+    .argument("<selector>", "system name or unique name prefix")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .addOption(new Option("--dry-run", "plan archive without moving files").conflicts("apply"))
+    .addOption(new Option("--apply", "move the system into the archive").conflicts("dryRun"))
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const dryRun = commandOptions.dryRun ?? !commandOptions.apply;
+      const result = await archiveSystem(root, selector, { dryRun });
+      writeLine(output, "stdout", `System archive: ${result.dryRun ? "dry-run" : "applied"}`);
+      writeLine(output, "stdout", `System: ${result.system.name}`);
+      if (result.movedTo) {
+        writeLine(
+          output,
+          "stdout",
+          `${result.dryRun ? "Would move to" : "Moved to"}: ${result.movedTo}`,
+        );
+      }
+      if (result.eventFile) {
+        writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      }
+    });
+
+  system
+    .command("list")
+    .description("List all registered systems")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--json", "emit JSON")
+    .addOption(
+      new Option("--status <status>", "filter by status").choices([
+        "primary",
+        "active",
+        "superseded",
+        "archived",
+      ]),
+    )
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const { registry, systems } = await listSystems(root);
+      const filtered = commandOptions.status
+        ? systems.filter((sys) => sys.status === commandOptions.status)
+        : systems;
+      if (commandOptions.json) {
+        writeJson(output, { primary: registry.primary, systems: filtered });
+        return;
+      }
+      writeLine(
+        output,
+        "stdout",
+        formatSystemList("Registered systems", registry.primary, filtered),
+      );
+    });
+
+  system
+    .command("show")
+    .description("Show one registered system by name or unique prefix")
+    .argument("<selector>", "system name or unique name prefix")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const registry = await requireSystemsRegistry(root);
+      const record = await findSystem(registry, selector);
+      if (commandOptions.json) {
+        writeJson(output, record);
+        return;
+      }
+      writeLine(output, "stdout", formatSystemRecord(record));
     });
 
   return program;

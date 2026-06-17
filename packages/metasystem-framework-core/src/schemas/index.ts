@@ -18,6 +18,37 @@ export const frameworkProjectSchema = z
   })
   .strict();
 
+// --- Systems registry (layout v3) -------------------------------------------
+
+export const systemVcsSchema = z.enum(["independent-git", "embedded", "none"]);
+
+export const systemStatusSchema = z.enum(["primary", "active", "archived", "superseded"]);
+
+export const systemRecordSchema = z
+  .object({
+    name: z.string().min(1),
+    path: z.string().min(1),
+    status: systemStatusSchema,
+    vcs: systemVcsSchema,
+    vcs_ref: z.string(),
+    version: z.string(),
+    contract_file: z.string().nullable(),
+    supersedes: z.array(z.string().min(1)),
+    absorbed_on: z.string().nullable(),
+    archived_on: z.string().nullable(),
+    archive_path: z.string().nullable(),
+  })
+  .strict();
+
+export const systemsRegistrySchema = z
+  .object({
+    __schema: z.literal(1),
+    primary: z.string().min(1).nullable(),
+    systems: z.record(systemRecordSchema),
+    updated_at: z.string().min(1),
+  })
+  .strict();
+
 export const frameworkManifestSchema = z
   .object({
     __schema: z.literal(1),
@@ -157,6 +188,10 @@ export const migrationPlanSchema = z
 export type ManagedFileRecord = z.infer<typeof managedFileRecordSchema>;
 export type FrameworkProject = z.infer<typeof frameworkProjectSchema>;
 export type FrameworkManifest = z.infer<typeof frameworkManifestSchema>;
+export type SystemVcs = z.infer<typeof systemVcsSchema>;
+export type SystemStatus = z.infer<typeof systemStatusSchema>;
+export type SystemRecord = z.infer<typeof systemRecordSchema>;
+export type SystemsRegistry = z.infer<typeof systemsRegistrySchema>;
 export type EventEntry = z.input<typeof eventEntrySchema>;
 export type PersistedEventEntry = z.infer<typeof persistedEventEntrySchema>;
 export type MigrationStep = z.infer<typeof migrationStepSchema>;

@@ -10,6 +10,7 @@ export * from "./paths.js";
 export * from "./project-registry.js";
 export * from "./results.js";
 export * from "./schemas/index.js";
+export * from "./systems-registry.js";
 export * from "./templates.js";
 export * from "./time.js";
 export * from "./update.js";

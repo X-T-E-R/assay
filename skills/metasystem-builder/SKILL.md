@@ -1,157 +1,91 @@
 ---
 name: metasystem-builder
-description: "Build, adopt, update, analyze, and iterate MetaSystem framework workspaces. Use when the user wants to initialize a MetaSystem project, adopt an existing project into MetaSystem, learn from external projects, freeze references, create analyses, evolve local systems, manage framework updates, safely migrate old folders, or run the bundled engineering-grade CLI."
+description: "Build, adopt, update, analyze, and iterate MetaSystem framework workspaces. Use when the user wants to initialize a MetaSystem project, adopt an existing project into MetaSystem, learn from external projects, freeze references, create analyses, evolve local systems, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-MetaSystem knowledge management workflows."
 ---
 
 # MetaSystem Builder
 
-This skill builds and maintains a MetaSystem external-system-learning framework. The framework is not a generic notes folder: it is a versioned project layer that stores external systems, analyzes them, converts validated patterns into our own framework, and iterates that framework over time.
+Build and maintain a MetaSystem external-system-learning framework — a versioned project layer that stores external systems, analyzes them, converts validated patterns into our own framework, and iterates that framework over time.
 
-Core loop:
+## Prerequisites
+
+- Node.js >= 18
+- `metasystem` CLI built from the `metasystem-kit` monorepo (`pnpm build`)
+- Read `references/cli-setup.md` for build, PATH, and invocation details
+
+## Core loop
 
 ```text
-references → analyses → systems → iterations → knowledge
+references -> analyses -> systems -> iterations -> knowledge
 ```
 
-## Use the bundled CLI first
+## CLI quick reference
 
-Prefer the bundled CLI because it preserves user files, writes a manifest, and keeps update behavior auditable.
-
-Default terminal usage follows normal project habits: enter the directory you
-want to manage, then run `init` or other commands without passing a path.
+Prefer the CLI for all workspace operations — it preserves user files, writes a manifest, and keeps updates auditable.
 
 ```bash
-mkdir -p <target-dir>
-cd <target-dir>
-metasystem init --name <project-name>
-metasystem adopt --dry-run
+metasystem init [target-dir] --name <project-name>
+metasystem adopt --dry-run                        # always dry-run first
 metasystem adopt --apply --name <project-name>
 metasystem check
 metasystem status
-metasystem update --dry-run
-metasystem migrate-layout --dry-run
+metasystem update --dry-run                       # always dry-run first
+metasystem migrate-layout --dry-run               # always dry-run first
 metasystem reference add <source-dir> <name>
-metasystem analysis new "Reference analysis"
-metasystem iteration start "CLI refactor"
-metasystem projects list
-metasystem projects scan <parent-dir>
+metasystem analysis new "Title"
+metasystem iteration start "Title"
+metasystem projects list | scan | show | prune
 ```
 
-Use `metasystem init <target-dir>` or `--root <target-dir>` only when operating
-on a workspace from another directory. For repository-local development before a
-global command is installed, build the package and invoke the compiled CLI by
-absolute or relative path from the target workspace.
-
-The CLI tracks initialized framework workspaces in a user-local registry at
-`~/.metasystem/projects`. Use `projects list` to locate known scaffolded
-workspaces, `projects show <id-or-path>` to inspect one, `projects scan` to
-discover existing workspaces by `.framework/manifest.json`, and
-`projects prune --dry-run` before removing stale registry records. These
-commands remove only registry metadata, never project files.
+For build instructions, PATH setup, and registry commands, read `references/cli-setup.md`.
 
 ## Adopt an existing project
 
-Use `adopt` when the current directory already contains a non-MetaSystem project
-and the user wants to rebuild it as a clean MetaSystem workspace.
+Use `adopt` when the current directory already contains a non-MetaSystem project. Always run `--dry-run` first, review the plan, then `--apply`. The CLI archives root contents under `.old/<timestamp>/`, preserves `.git/`, and creates the standard scaffold.
 
-```bash
-cd <existing-project>
-metasystem adopt --dry-run
-metasystem adopt --apply --name <project-name>
-metasystem check
-metasystem status
-```
+For the full post-adoption workflow (inspect, analyze, confirm direction, move artifacts, validate), read `references/adoption-workflow.md`.
 
-Adoption archives existing root contents under `.old/<timestamp>/`, preserves
-`.git/` at the project root, then creates the standard MetaSystem scaffold. The
-archive is a staging source, not the final organization.
+## Framework structure
 
-After adoption:
+Target projects converge to an 8-directory layout (`.framework/`, `references/`, `analyses/`, `systems/`, `iterations/`, `knowledge/`, `data/`, `releases/`). For the full structure diagram and intent-to-directory mapping, read `references/framework-structure.md`.
 
-1. Inspect `.old/<timestamp>/` and its adoption manifest.
-2. Write or update an adoption analysis describing what each meaningful old
-   artifact is and where it should live now.
-3. Confirm the target direction when the mapping changes project structure,
-   build behavior, public docs, or user-facing semantics.
-4. Move old artifacts into the appropriate new locations after the direction is
-   clear. Do not default to copying, and do not assume every artifact belongs in
-   one fixed directory.
-5. Run `metasystem check` and any project-specific validation after moves.
+## Update policy
 
-Do not delete `.old/<timestamp>/` until the user explicitly accepts the migrated
-structure or a separate cleanup task is created.
-
-## Required framework structure
-
-Target projects should converge to:
-
-```text
-<project-root>/
-├── .framework/       # version, manifest, events, migrations, backups
-├── references/       # external systems; intake + frozen snapshots
-├── analyses/         # reference analysis, gap analysis, candidate patterns
-├── systems/          # our active framework/system implementation
-├── iterations/       # iterations on our own framework
-├── knowledge/        # accepted reusable knowledge only
-├── data/             # samples, evaluation data, research data
-└── releases/         # release notes, packages, migration guides
-```
-
-Primary mapping:
-
-| User intent | Directory |
-| --- | --- |
-| store others' projects/materials | `references/` |
-| analyze them | `analyses/` |
-| build our own framework | `systems/` |
-| iterate our own framework | `iterations/` |
-
-## Version and update rules
-
-The CLI writes:
-
-- `.framework/VERSION` — installed framework template version.
-- `.framework/manifest.json` — managed file manifest with template IDs and hashes.
-- `.framework/events/YYYY-MM.jsonl` — auditable events.
-- `.framework/backups/` — update/migration backups.
-
-Update policy:
-
-1. New managed templates may be created.
-2. Managed files whose current hash still matches the manifest hash may auto-update.
-3. Managed files changed by the user are skipped by default.
-4. Use `--create-new` to write new templates as `.new` copies.
-5. Use `--force` only with explicit user consent.
-6. Frozen references, analyses, iterations, knowledge, and data are protected user artifacts.
-7. Breaking layout moves require `migrate-layout --apply`; default is dry-run.
+Always run `update --dry-run` before applying. User-modified files are skipped by default; use `--create-new` for sidecar copies or `--force` only with explicit user consent. For change classification rules, conflict flags, and backup behavior, read `references/update-policy.md`.
 
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.
-2. Run `init` if the target is empty/new, `adopt --dry-run` then
-   `adopt --apply` if the target already has ordinary project content, or
-   `check`/`status` if it already has a MetaSystem manifest.
-3. Use `projects list` or `projects scan <parent-dir>` when you need to locate
-   existing MetaSystem scaffolded workspaces.
+2. Run `init` if empty, `adopt --dry-run` then `--apply` if it has existing content, or `check`/`status` if it already has a MetaSystem manifest.
+3. Use `projects list` or `projects scan <parent-dir>` to locate existing workspaces.
 4. Freeze external projects with `reference add` or manually under `references/frozen/YYYYMM/`.
 5. Write an analysis card under `analyses/`.
 6. Convert promising findings into a candidate pattern.
-7. Start an iteration against our own `systems/<core>/`.
+7. Start an iteration against `systems/<core>/`.
 8. Promote successful results into `knowledge/`, ADRs, CLI behavior, or system docs.
 9. Run `update --dry-run` before applying framework upgrades.
 
 ## Anti-rules
 
 - Do not overwrite existing user files by default.
-- Do not adopt an already initialized MetaSystem workspace; use update or
-  migration commands instead.
+- Do not adopt an already initialized MetaSystem workspace; use update or migration instead.
 - Do not put external project source under `systems/`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress.
-- Do not silently rename/delete legacy folders.
-- Do not move archived `.old/` content into new locations before the direction
-  is understood and confirmed when necessary.
+- Do not silently rename or delete legacy folders.
+- Do not move `.old/` content into new locations before the direction is understood and confirmed.
 - Do not copy AGPL or incompatible upstream source into our skill; extract patterns and document decisions instead.
 - Do not leave an external reference without an analysis exit: adopt, reject, experiment, or ADR.
+
+## Validation
+
+After any init, adopt, update, or migrate operation:
+
+```bash
+metasystem check
+metasystem status
+```
+
+Confirm `check` reports no missing managed files and `status` shows the expected `.framework/VERSION`. For update and migrate, always run `--dry-run` first and review the plan before `--apply`.
 
 ## Final response checklist
 
@@ -162,4 +96,4 @@ Report:
 - Current `.framework/VERSION`.
 - Whether migration was only planned or applied.
 - Which reference/analysis/iteration artifacts were produced.
-- Next recommended adoption or iteration.
+- Next recommended adoption or iteration step.
