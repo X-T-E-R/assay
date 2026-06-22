@@ -32,17 +32,17 @@ After adoption, follow these steps in order:
 
 1. **Inspect** `.old/<timestamp>/` and its adoption manifest to understand what was archived.
 
-2. **Write an adoption analysis** with `metasystem analysis new "<title>"` describing what each meaningful old artifact is and where it should live in the new structure.
+2. **Write an adoption analysis** with `metasystem analysis new "<title>"` (or get one automatically with `adopt --apply --analyze`) describing what each meaningful old artifact is and where it should live in the new structure.
 
-3. **Confirm the target direction** when the mapping changes project structure, build behavior, public docs, or user-facing semantics. Ask the user before making irreversible moves.
+3. **Propose a concrete move plan first**. For each archived entry, decide its destination and present the plan as a diff/preview or the inventory table. Do not default to "stop and wait" after archiving — the framework's job is to propose the direction, then apply on confirmation. Ask the user before making irreversible moves, but come with a plan, not a blank.
 
-4. **Move old artifacts** into the appropriate new locations after the direction is clear. Do not default to copying. Do not assume every artifact belongs in one fixed directory.
+4. **Move old artifacts** into the appropriate new locations after the direction is confirmed. Do not default to copying. Do not assume every artifact belongs in one fixed directory. `check` warns on a lingering `.old/` until it is cleared, so the archive cannot become a silent graveyard.
 
 5. **Register the active system** with `metasystem system register`. If the system was a separate git repository before adoption (or will be), declare `--vcs independent-git` and add the system path to root `.gitignore` while exempting `system.yaml`. Use `--primary` for the active system; archived predecessors can be registered later or via `migrate-layout`.
 
 6. **Close the adoption analysis** with `metasystem analysis close <path> --exit adopt|reject` so the decision is recorded in the event ledger.
 
-7. **Validate** with `metasystem check` and `metasystem status`. Both should report the new `primary` system and zero open iterations from the adoption.
+7. **Validate** with `metasystem check` and `metasystem status`. Both should report the new `primary` system and zero open iterations from the adoption. A lingering `.old/` warning means step 4 is incomplete.
 
 ## Cleanup
 

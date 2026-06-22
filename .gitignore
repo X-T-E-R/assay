@@ -25,6 +25,8 @@ Thumbs.db
 **/.framework/events/*
 !**/.framework/events/.gitkeep
 **/.framework/.runtime/
+# ADRs and framework self-governance decisions are local artifacts, not version-controlled
+**/.framework/decisions/
 **/references/frozen/*
 !**/references/frozen/README.md
 

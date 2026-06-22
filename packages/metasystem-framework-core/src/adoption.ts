@@ -6,7 +6,7 @@ import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } f
 import { appendEvent } from "./events.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import { recordProjectLifecycleBestEffort } from "./project-registry.js";
-import { type InitFrameworkResult, initFramework } from "./workspace.js";
+import { type InitFrameworkResult, createAnalysis, initFramework } from "./workspace.js";
 
 const ADOPTION_ROOT = ".old";
 const ADOPTION_MANIFEST_BASENAME = "adoption-manifest";
@@ -19,6 +19,8 @@ export interface AdoptExistingProjectOptions {
   readonly core?: string;
   readonly dryRun?: boolean;
   readonly apply?: boolean;
+  /** After a successful apply, generate an adoption inventory and open an adoption analysis so the archived content is tracked to completion. */
+  readonly analyze?: boolean;
   readonly now?: Date;
 }
 
@@ -61,6 +63,7 @@ export interface AdoptExistingProjectResult {
   readonly scaffold?: AdoptionScaffoldMetadata;
   readonly init?: InitFrameworkResult;
   readonly eventFile?: string;
+  readonly adoptionAnalysisPath?: string;
 }
 
 interface AdoptionPlan {
@@ -252,6 +255,66 @@ function failureMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Suggest a target directory for an archived root entry based on its name.
+ * Heuristic only — the user confirms the actual placement. This is what makes
+ * adoption "propose a direction" instead of leaving .old/ as an undifferentiated
+ * pile.
+ */
+function suggestDestination(entryName: string): string {
+  const lower = entryName.toLowerCase();
+  if (lower === "readme.md" || lower.startsWith("readme")) return "references/ or problem/";
+  if (lower.endsWith(".md") || lower === "docs" || lower === "documentation")
+    return "references/ or knowledge/guides/";
+  if (lower === "src" || lower === "source" || lower === "lib") return "systems/<core>/";
+  if (lower === "test" || lower === "tests" || lower === "spec") return "systems/<core>/tests/";
+  if (lower === "data" || lower === "datasets") return "data/";
+  if (lower === "scripts" || lower === "tools") return "systems/<core>/ or releases/";
+  if (lower === ".git") return "preserved at root";
+  return "systems/<core>/ or references/";
+}
+
+/**
+ * Create an open adoption analysis containing an inventory of every archived
+ * entry and a suggested destination. Returns the analysis path. `check` will
+ * flag this analysis as an empty draft until it is filled and closed, so the
+ * adoption cannot be silently abandoned.
+ */
+async function writeAdoptionAnalysis(
+  root: string,
+  archiveDir: string,
+  moves: readonly AdoptionMove[],
+  now: Date,
+): Promise<string> {
+  const title = "Adoption inventory";
+  const analysis = await createAnalysis({ root, title, now });
+
+  // Build the inventory table and append it to the analysis.
+  const { readFile, writeFile } = await import("node:fs/promises");
+  let content = await readFile(analysis.absolutePath, "utf8");
+  const inventoryLines = [
+    "## Adoption inventory",
+    "",
+    `Archived under \`${archiveDir}/\`. For each entry, decide where it lands in the new structure, then move it (do not copy by default).`,
+    "",
+    "| Archived entry | Suggested destination | Decision |",
+    "| --- | --- | --- |",
+  ];
+  for (const move of moves) {
+    const entry = path.basename(move.source);
+    const suggestion = suggestDestination(entry);
+    inventoryLines.push(`| ${entry} | ${suggestion} | (fill) |`);
+  }
+  inventoryLines.push("");
+  inventoryLines.push("## Key observations");
+  inventoryLines.push("");
+  inventoryLines.push("- (Record what each meaningful artifact is and where it should live.)");
+
+  content = content.replace("## Key observations", inventoryLines.join("\n"));
+  await writeFile(analysis.absolutePath, content, "utf8");
+  return analysis.path;
+}
+
 export async function adoptExistingProject(
   options: AdoptExistingProjectOptions,
 ): Promise<AdoptExistingProjectResult> {
@@ -305,6 +368,7 @@ export async function adoptExistingProject(
     failures,
   };
 
+  let adoptionAnalysisPath: string | undefined;
   if (failures.length === 0) {
     try {
       init = await initFramework({ target: plan.root, name: project, core });
@@ -317,6 +381,12 @@ export async function adoptExistingProject(
       });
       eventFile = relativeDisplayPath(eventPath, plan.root);
       await recordProjectLifecycleBestEffort(plan.root, "adopt");
+
+      // Optionally open an adoption analysis so the archived content is tracked
+      // to completion instead of left in .old/ to be forgotten.
+      if (options.analyze === true) {
+        adoptionAnalysisPath = await writeAdoptionAnalysis(plan.root, plan.archiveDir, moves, now);
+      }
     } catch (error) {
       failures.push({
         source: ".",
@@ -330,6 +400,7 @@ export async function adoptExistingProject(
     failures,
     ...(init ? { init, scaffold: scaffoldMetadata(init) } : {}),
     ...(eventFile ? { eventFile } : {}),
+    ...(adoptionAnalysisPath ? { adoptionAnalysisPath } : {}),
   };
   await writeAdoptionManifest(result);
   return result;

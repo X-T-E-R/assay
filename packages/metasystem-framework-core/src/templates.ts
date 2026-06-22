@@ -37,7 +37,11 @@ function dedent(text: string): string {
   return lines.map((line) => (line.trim().length > 0 ? line.slice(margin) : "")).join("\n");
 }
 
-export function desiredTemplates(project: string, core: string): TemplateFile[] {
+export function desiredTemplates(
+  project: string,
+  core: string,
+  mode: "learning" | "absorption" = "learning",
+): TemplateFile[] {
   return [
     templateFile({
       path: "README.md",
@@ -58,7 +62,7 @@ export function desiredTemplates(project: string, core: string): TemplateFile[] 
     templateFile({
       path: ".framework/config.yaml",
       templateId: "framework.config",
-      content: configYaml(project, core),
+      content: configYaml(project, core, mode),
     }),
     templateFile({
       path: ".framework/migrations/README.md",
@@ -248,13 +252,18 @@ export function frameworkReadme(): string {
     `);
 }
 
-export function configYaml(project: string, core: string): string {
+export function configYaml(
+  project: string,
+  core: string,
+  mode: "learning" | "absorption" = "learning",
+): string {
   return dedent(`
     framework:
       name: ${project}
       core: ${core}
       version: ${CURRENT_VERSION}
       layout_version: ${LAYOUT_VERSION}
+      mode: ${mode}
 
     paths:
       runtime: .framework

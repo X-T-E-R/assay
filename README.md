@@ -17,10 +17,12 @@ packages/metasystem-framework-core/         TypeScript reusable framework operat
 packages/metasystem-framework-cli/          TypeScript Commander CLI adapter
 skills/metasystem-builder/           AI-facing Skill and agent metadata
 examples/framework-template/         Generated example framework workspace
-docs/decisions/                      ADRs and migration notes
 docs/background/                     Design background and public references
 scripts/                             Repository validation helpers
 ```
+
+Framework evolution decisions (ADRs) live under `.framework/decisions/` and are
+local governance artifacts, not version-controlled in this repository.
 
 ## What the Framework Creates
 

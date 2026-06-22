@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MANIFEST_FILE,
   PRIMARY_DIRS,
+  absorbReference,
   acceptAdr,
   addKnowledge,
   addReference,
@@ -21,6 +22,7 @@ import {
   loadAdrIndex,
   loadManifest,
   loadSystemsRegistry,
+  readFrameworkMode,
   registerSystem,
   saveAdrIndex,
   saveSystemsRegistry,
@@ -424,6 +426,142 @@ describe("checkFramework semantic validation", () => {
       ),
     ).toBe(true);
   });
+
+  it("warns on an unexpected knowledge subdirectory (e.g. troubleshootings)", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    // Simulate the legacy bug: a parallel "knowledge/troubleshootings/" dir
+    await mkdir(path.join(root, "knowledge", "troubleshootings"), { recursive: true });
+
+    const result = await checkFramework({ root });
+
+    // warning does not fail the check, but must be surfaced
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === "knowledge/troubleshootings" &&
+          row.status === "warning" &&
+          row.message?.includes("troubleshootings"),
+      ),
+    ).toBe(true);
+  });
+
+  it("warns on a frozen reference that no analysis cites", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    // Freeze a reference directory with no analysis mentioning it.
+    await mkdir(path.join(root, "references", "frozen", "202606", "lonely-ref"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(root, "references", "frozen", "202606", "lonely-ref", "README.md"),
+      "# lonely\n",
+      "utf8",
+    );
+
+    const result = await checkFramework({ root });
+
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === "references/frozen/202606/lonely-ref" &&
+          row.status === "warning" &&
+          row.message?.includes("no analysis citing"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not warn on a frozen reference that an analysis cites", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    await mkdir(path.join(root, "references", "frozen", "202606", "cited-ref"), {
+      recursive: true,
+    });
+    // An analysis that mentions the reference name.
+    await writeFile(
+      path.join(root, "analyses", "references", "2026-06-20-cited-ref.md"),
+      "# Cited ref\n\n- Status: applied\n\n## Reference\n\ncited-ref\n\n## Key observations\n\nsomething\n",
+      "utf8",
+    );
+
+    const result = await checkFramework({ root });
+
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === "references/frozen/202606/cited-ref" &&
+          row.status === "warning" &&
+          row.message?.includes("no analysis citing"),
+      ),
+    ).toBe(false);
+  });
+
+  it("warns on a draft analysis with empty Key observations", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    // A draft analysis whose Key observations section is empty.
+    await writeFile(
+      path.join(root, "analyses", "references", "2026-06-20-shell.md"),
+      "# Shell\n\n- Status: draft\n\n## Reference\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Decision exit\n\n- [ ] adopt\n",
+      "utf8",
+    );
+
+    const result = await checkFramework({ root });
+
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === "analyses/references/2026-06-20-shell.md" &&
+          row.status === "warning" &&
+          row.message?.includes("empty 'Key observations'"),
+      ),
+    ).toBe(true);
+  });
+
+  it("warns on a stale .old/ adoption archive", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    await mkdir(path.join(root, ".old", "20260620-120000"), { recursive: true });
+
+    const result = await checkFramework({ root });
+
+    expect(
+      result.rows.some(
+        (row) =>
+          row.path === ".old" &&
+          row.status === "warning" &&
+          row.message?.includes("adoption archive .old/"),
+      ),
+    ).toBe(true);
+  });
+
+  it("warns on pending queue entries (freeze-then-forget)", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    await writeFile(
+      path.join(root, ".framework", "queue.json"),
+      JSON.stringify([
+        { id: "r1", status: "pending", summary: "Analyze ref A" },
+        { id: "r2", status: "done", summary: "Analyze ref B" },
+        { id: "r3", status: "pending", summary: "Analyze ref C" },
+      ]),
+      "utf8",
+    );
+
+    const result = await checkFramework({ root });
+
+    expect(
+      result.rows.some(
+        (row) => row.status === "warning" && row.message?.includes("2 pending entry/entries"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("getFrameworkStatus systems section", () => {
@@ -494,6 +632,212 @@ describe("workspace operations", () => {
     expect(await exists(path.join(result.absolutePath, "node_modules"))).toBe(false);
     expect(await exists(path.join(result.absolutePath, "dist"))).toBe(false);
     expect(await readFile(path.join(root, result.eventFile), "utf8")).toContain("reference.frozen");
+  });
+
+  it("writes a reference.yaml case file with analyzed: false on freeze", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
+
+    const result = await addReference({
+      root,
+      source,
+      name: "Source Project",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    const yamlPath = path.join(result.absolutePath, "reference.yaml");
+    expect(await exists(yamlPath)).toBe(true);
+    const yaml = await readFile(yamlPath, "utf8");
+    expect(yaml).toContain("name: Source Project");
+    expect(yaml).toContain("analyzed: false");
+    expect(yaml).toContain("freeze_path: references/frozen/202606/source-project");
+
+    // The freeze event should record analysis_required.
+    const event = await readFile(path.join(root, result.eventFile), "utf8");
+    expect(event).toContain('"analysis_required":true');
+  });
+
+  it("createAnalysis --forReference pre-fills provenance from reference.yaml", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
+
+    const ref = await addReference({
+      root,
+      source,
+      name: "Source Project",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    const analysis = await createAnalysis({
+      root,
+      title: "Review Source Project",
+      forReference: ref.path,
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    const content = await readFile(analysis.absolutePath, "utf8");
+    expect(content).toContain("- Reference: Source Project");
+    expect(content).toContain("- Freeze path: references/frozen/202606/source-project");
+  });
+
+  it("closeAnalysis flips the bound reference.yaml analyzed flag to true", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
+
+    const ref = await addReference({
+      root,
+      source,
+      name: "Source Project",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+    const analysis = await createAnalysis({
+      root,
+      title: "Review Source Project",
+      forReference: ref.path,
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    await closeAnalysis({
+      root,
+      path: analysis.path,
+      exit: "adopt",
+      now: new Date("2026-06-16T10:00:00"),
+    });
+
+    const yaml = await readFile(path.join(ref.absolutePath, "reference.yaml"), "utf8");
+    expect(yaml).toContain("analyzed: true");
+
+    // check should no longer warn about this reference being unanalyzed.
+    const check = await checkFramework({ root });
+    expect(
+      check.rows.some(
+        (row) =>
+          row.path === ref.path &&
+          row.status === "warning" &&
+          row.message?.includes("no analysis citing"),
+      ),
+    ).toBe(false);
+  });
+
+  it("absorbReference freezes, opens a bound analysis, and pre-fills it", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      path.join(source, "README.md"),
+      "# Source Project\n\nA short description of the source.\n",
+      "utf8",
+    );
+    await mkdir(path.join(source, "src"), { recursive: true });
+    await writeFile(path.join(source, "src", "index.ts"), "export {};\n", "utf8");
+
+    const result = await absorbReference({
+      root,
+      source,
+      name: "Source Project",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    // Reference frozen with a case file.
+    expect(result.referencePath).toBe("references/frozen/202606/source-project");
+    const yaml = await readFile(path.join(root, result.referencePath, "reference.yaml"), "utf8");
+    expect(yaml).toContain("analyzed: false");
+
+    // An analysis was opened and bound.
+    expect(result.analysisPath).toBe("analyses/references/2026-06-14-absorb-source-project.md");
+    const analysis = await readFile(path.join(root, result.analysisPath), "utf8");
+    expect(analysis).toContain("- Freeze path: references/frozen/202606/source-project");
+
+    // The analysis is pre-filled with a README lead and a top-level layout.
+    expect(analysis).toContain("## Architecture / structure");
+    expect(analysis).toContain("A short description of the source.");
+    expect(analysis).toContain("src/");
+    expect(analysis).toContain("README.md");
+
+    // Status is draft (open work), so check flags it as an open analysis — not
+    // silently "done". The reference is unanalyzed until the analysis closes.
+    const check = await checkFramework({ root });
+    expect(
+      check.rows.some(
+        (row) =>
+          row.path === result.referencePath &&
+          row.status === "warning" &&
+          row.message?.includes("no analysis citing"),
+      ),
+    ).toBe(false); // cited by its own bound analysis
+  });
+
+  it("absorbReference rejects a file source (expects a directory)", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source.txt");
+    await initFramework({ target: root, name: "Demo" });
+    await writeFile(source, "not a dir\n", "utf8");
+
+    await expect(
+      absorbReference({ root, source, now: new Date("2026-06-14T10:00:00") }),
+    ).rejects.toThrow(/directory source/);
+  });
+
+  it("init with absorption mode writes mode to config.yaml and readFrameworkMode reads it", async () => {
+    const root = path.join(await tempDir(), "absorb-mode");
+    await initFramework({ target: root, name: "AbsorbProj", mode: "absorption" });
+
+    const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
+    expect(config).toContain("mode: absorption");
+
+    expect(await readFrameworkMode(root)).toBe("absorption");
+
+    // A default (learning) workspace reads back as learning.
+    const learningRoot = path.join(await tempDir(), "learning-mode");
+    await initFramework({ target: learningRoot, name: "LearnProj" });
+    expect(await readFrameworkMode(learningRoot)).toBe("learning");
+  });
+
+  it("absorbReference routes to problem/ (not references/frozen/) in absorption mode", async () => {
+    const root = path.join(await tempDir(), "absorb-mode-ws");
+    const source = path.join(await tempDir(), "absorb-src");
+    await initFramework({ target: root, name: "AbsorbProj", mode: "absorption" });
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      path.join(source, "README.md"),
+      "# Real Project\n\nThe project itself.\n",
+      "utf8",
+    );
+    await mkdir(path.join(source, "src"), { recursive: true });
+
+    const result = await absorbReference({
+      root,
+      source,
+      name: "Real Project",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    // Landed under problem/, not references/frozen/.
+    expect(result.referencePath).toBe("problem/real-project");
+    expect(await exists(path.join(root, "problem", "real-project", "README.md"))).toBe(true);
+    expect(await exists(path.join(root, "problem", "real-project", "source.yaml"))).toBe(true);
+    expect(await exists(path.join(root, "references", "frozen", "202606", "real-project"))).toBe(
+      false,
+    );
+
+    // No reference.yaml (it is not a reference), but an analysis was opened.
+    expect(await exists(path.join(root, "problem", "real-project", "reference.yaml"))).toBe(false);
+    expect(result.analysisPath).toBe("analyses/references/2026-06-14-absorb-real-project.md");
+
+    // The analysis is pre-filled with the README lead.
+    const analysis = await readFile(path.join(root, result.analysisPath), "utf8");
+    expect(analysis).toContain("The project itself.");
+    expect(analysis).toContain("src/");
   });
 
   it("creates deterministic analysis and iteration artifacts for a supplied date", async () => {
@@ -662,5 +1006,23 @@ describe("addKnowledge", () => {
         now: new Date("2026-06-15T10:00:00"),
       }),
     ).rejects.toThrow();
+  });
+
+  it("writes troubleshooting entries to knowledge/troubleshooting/ (not troubleshootings/)", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+
+    const result = await addKnowledge({
+      root,
+      type: "troubleshooting",
+      title: "OpenBLAS thread limiter noise",
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    // The directory must match the template/constants name, not a naive plural.
+    expect(result.path).toBe(
+      "knowledge/troubleshooting/2026-06-15-openblas-thread-limiter-noise.md",
+    );
+    expect(result.path).not.toContain("troubleshootings");
   });
 });

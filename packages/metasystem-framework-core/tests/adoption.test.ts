@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   type AdoptExistingProjectResult,
   adoptExistingProject,
+  checkFramework,
   initFramework,
   loadManifest,
 } from "../src/index.js";
@@ -165,5 +166,43 @@ describe("adoptExistingProject", () => {
     await expect(adoptExistingProject({ root, apply: true, now: fixedNow() })).rejects.toThrow(
       "Cannot adopt missing project root",
     );
+  });
+
+  it("opens an adoption inventory analysis with --analyze", async () => {
+    const root = path.join(await tempDir(), "existing");
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "index.ts"), "export {};\n", "utf8");
+    await writeFile(path.join(root, "README.md"), "# Old project\n", "utf8");
+    await writeFile(path.join(root, "data.csv"), "a,b\n1,2\n", "utf8");
+
+    const result = await adoptExistingProject({
+      root,
+      apply: true,
+      analyze: true,
+      now: fixedNow(),
+    });
+
+    expect(result.adoptionAnalysisPath).toBeDefined();
+    const analysisPath = result.adoptionAnalysisPath ?? "";
+    expect(await exists(path.join(root, analysisPath))).toBe(true);
+
+    const analysis = await readFile(path.join(root, analysisPath), "utf8");
+    // The inventory lists every archived entry with a suggested destination.
+    expect(analysis).toContain("## Adoption inventory");
+    expect(analysis).toContain("README.md");
+    expect(analysis).toContain("src");
+    expect(analysis).toContain("data.csv");
+    // The analysis is a draft with a Key observations section, so check flags
+    // it as open work — the adoption cannot be silently abandoned.
+    expect(analysis).toContain("- Status: draft");
+    const check = await checkFramework({ root });
+    expect(
+      check.rows.some(
+        (row) =>
+          row.status === "warning" &&
+          (row.message?.includes("empty 'Key observations'") ||
+            row.message?.includes("adoption archive .old/")),
+      ),
+    ).toBe(true);
   });
 });

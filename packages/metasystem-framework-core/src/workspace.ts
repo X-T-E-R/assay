@@ -4,7 +4,7 @@ import { execa } from "execa";
 
 import { loadAdrIndex } from "./adrs.js";
 import { ADRS_FILE, MANIFEST_FILE, PRIMARY_DIRS } from "./constants.js";
-import { FrameworkAlreadyExistsError, FrameworkNotFoundError } from "./errors.js";
+import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
@@ -14,6 +14,7 @@ import type { AdrIndex, AdrRecord, FrameworkManifest } from "./schemas/index.js"
 import { toPosixPath } from "./serialization.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
 import { desiredTemplates } from "./templates.js";
+import { nowIso } from "./time.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
   ".venv",
@@ -31,6 +32,8 @@ export interface InitFrameworkOptions {
   readonly git?: boolean;
   readonly force?: boolean;
   readonly createNew?: boolean;
+  /** Project mode: "learning" (default) treats external sources as references; "absorption" treats them as project-level sources. */
+  readonly mode?: "learning" | "absorption";
 }
 
 export interface InitFrameworkResult {
@@ -102,9 +105,26 @@ export interface AddReferenceResult {
   readonly eventFile: string;
 }
 
+export interface AbsorbReferenceOptions {
+  readonly root: string;
+  readonly source: string;
+  readonly name?: string;
+  readonly now?: Date;
+}
+
+export interface AbsorbReferenceResult {
+  readonly root: string;
+  readonly source: string;
+  readonly referencePath: string;
+  readonly analysisPath: string;
+  readonly eventFile: string;
+}
+
 export interface CreateAnalysisOptions {
   readonly root: string;
   readonly title: string;
+  /** Path of a frozen reference this analysis is bound to (relative to root). */
+  readonly forReference?: string;
   readonly now?: Date;
 }
 
@@ -174,6 +194,18 @@ export interface CloseAnalysisResult {
 }
 
 export type KnowledgeType = "decision" | "pattern" | "guide" | "troubleshooting";
+
+// Map each knowledge type to its directory name. Most types pluralize by
+// appending "s", but "troubleshooting" is already the directory name used by
+// the templates and constants (knowledge/troubleshooting/). Appending "s"
+// here would create a parallel "knowledge/troubleshootings/" directory and
+// split entries from their README — the bug this map exists to prevent.
+const KNOWLEDGE_TYPE_DIRS: Record<KnowledgeType, string> = {
+  decision: "decisions",
+  pattern: "patterns",
+  guide: "guides",
+  troubleshooting: "troubleshooting",
+};
 
 export interface AddKnowledgeOptions {
   readonly root: string;
@@ -426,7 +458,8 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   }
 
   let manifest = (await loadManifest(root)) ?? defaultManifest(project, core);
-  for (const template of desiredTemplates(project, core)) {
+  const mode = options.mode ?? "learning";
+  for (const template of desiredTemplates(project, core, mode)) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,
@@ -653,6 +686,149 @@ export async function checkFramework(
     });
   }
 
+  // Semantic check 5: knowledge directory-name consistency
+  // The framework owns knowledge subdirectory names (decisions, patterns,
+  // guides, troubleshooting). A legacy bug appended "s" to every knowledge
+  // type, producing a parallel "knowledge/troubleshootings/" directory that
+  // split troubleshooting entries from their README. Flag any knowledge
+  // subdirectory that is not one of the expected names so the drift cannot
+  // hide silently.
+  try {
+    const knowledgeRoot = path.join(root, "knowledge");
+    if (await exists(knowledgeRoot)) {
+      const EXPECTED_KNOWLEDGE_DIRS = new Set([
+        "decisions",
+        "patterns",
+        "guides",
+        "troubleshooting",
+        "templates",
+        "evaluations",
+      ]);
+      const entries = await readdir(knowledgeRoot, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (!EXPECTED_KNOWLEDGE_DIRS.has(entry.name)) {
+          rows.push({
+            path: `knowledge/${entry.name}`,
+            status: "warning",
+            message: `unexpected knowledge subdirectory '${entry.name}' (expected one of: ${[...EXPECTED_KNOWLEDGE_DIRS].join(", ")}). A legacy bug created 'troubleshootings'; move entries into 'knowledge/troubleshooting/'.`,
+          });
+        }
+      }
+    }
+  } catch {
+    // knowledge dir may not exist; skip
+  }
+
+  // Semantic check 6: unanalyzed frozen references
+  // The core loop is references → analyses → .... A frozen reference that no
+  // analysis cites is "absorbed into the archive then forgotten" — exactly
+  // the failure mode this framework exists to prevent. Scan every frozen
+  // reference directory and check whether any analysis file mentions its name
+  // or path. Unanalyzed references surface as warnings so they cannot hide.
+  try {
+    const frozenRoot = path.join(root, "references", "frozen");
+    if (await exists(frozenRoot)) {
+      const references = await collectFrozenReferences(frozenRoot);
+      if (references.length > 0) {
+        const analysisText = await readAllAnalysisText(root);
+        for (const ref of references) {
+          // Authoritative signal: reference.yaml.analyzed === true means an
+          // analysis was closed against this reference (see closeAnalysis).
+          const yamlPath = path.join(root, ref.relativePath, "reference.yaml");
+          let explicitlyAnalyzed = false;
+          try {
+            if (await exists(yamlPath)) {
+              const parsed = parseReferenceYaml(await readFile(yamlPath, "utf8"));
+              explicitlyAnalyzed = parsed.analyzed === true;
+            }
+          } catch {
+            // unreadable yaml; fall back to citation check
+          }
+          if (explicitlyAnalyzed) continue;
+          const cited = analysisText.some(
+            (text) => text.includes(ref.name) || text.includes(ref.relativePath),
+          );
+          if (!cited) {
+            rows.push({
+              path: ref.relativePath,
+              status: "warning",
+              message: `frozen reference '${ref.name}' has no analysis citing it (references → analyses loop is incomplete)`,
+            });
+          }
+        }
+      }
+    }
+  } catch {
+    // references/frozen may not exist; skip
+  }
+
+  // Semantic check 7: empty draft analyses
+  // An analysis card left at Status: draft with no Key observations content is
+  // a shell that was never filled — the "write docs then stop" anti-pattern.
+  try {
+    const analysesRoot = path.join(root, "analyses");
+    if (await exists(analysesRoot)) {
+      const emptyDrafts = await findEmptyDraftAnalyses(analysesRoot);
+      for (const draft of emptyDrafts) {
+        rows.push({
+          path: draft.relativePath,
+          status: "warning",
+          message: `analysis '${draft.relativePath}' is still a draft with empty 'Key observations' (content was never filled in)`,
+        });
+      }
+    }
+  } catch {
+    // analyses dir may not exist; skip
+  }
+
+  // Semantic check 8: stale adoption archive
+  // `adopt` moves existing content into .old/<stamp>/ and is supposed to be
+  // followed by moving artifacts into the new structure once direction is
+  // clear. A lingering .old/ means adoption stopped halfway.
+  try {
+    const oldRoot = path.join(root, ".old");
+    if (await exists(oldRoot)) {
+      const entries = await readdir(oldRoot, { withFileTypes: true });
+      const stamps = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      if (stamps.length > 0) {
+        rows.push({
+          path: ".old",
+          status: "warning",
+          message: `adoption archive .old/ still contains ${stamps.length} stamp(s): ${stamps.join(", ")}. Move archived artifacts into the new structure or confirm cleanup.`,
+        });
+      }
+    }
+  } catch {
+    // .old may not exist; skip
+  }
+
+  // Semantic check 9: dangling pending queue entries
+  // A queue.json of pending reference-analysis actions that never get consumed
+  // is the literal evidence of "freeze then forget". Surface pending entries so
+  // the framework cannot report ok while work is stranded.
+  try {
+    const queueCandidates = [
+      path.join(root, ".framework", "queue.json"),
+      path.join(root, ".metasystem", "queue.json"),
+    ];
+    for (const queuePath of queueCandidates) {
+      if (!(await exists(queuePath))) continue;
+      const raw = await readFile(queuePath, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      const pending = countPendingQueueEntries(parsed);
+      if (pending > 0) {
+        rows.push({
+          path: relativeDisplayPath(queuePath, root),
+          status: "warning",
+          message: `queue has ${pending} pending entry/entries never consumed (freeze-then-forget). Process or prune them.`,
+        });
+      }
+    }
+  } catch {
+    // queue may be missing or unreadable; skip
+  }
+
   return {
     root,
     ok: rows.every((row) => row.status === "ok" || row.status === "warning"),
@@ -670,6 +846,143 @@ export async function checkFramework(
       ? { systems: { primary: primaryName, total: systemCount, openIterations } }
       : {}),
   };
+}
+
+interface FrozenReference {
+  readonly name: string;
+  readonly relativePath: string;
+}
+
+/**
+ * Collect frozen reference directories under references/frozen/<month>/<name>.
+ * Each leaf directory (the <name> level) is one reference. Returns its name and
+ * path relative to the framework root.
+ */
+async function collectFrozenReferences(frozenRoot: string): Promise<FrozenReference[]> {
+  const references: FrozenReference[] = [];
+  const rootParent = path.dirname(frozenRoot); // .../references
+  const frameworkRoot = path.dirname(rootParent); // project root
+
+  const months = await readdir(frozenRoot, { withFileTypes: true });
+  for (const month of months) {
+    if (!month.isDirectory()) continue;
+    const monthPath = path.join(frozenRoot, month.name);
+    const names = await readdir(monthPath, { withFileTypes: true });
+    for (const name of names) {
+      if (!name.isDirectory()) continue;
+      const absolute = path.join(monthPath, name.name);
+      const relativePath = toPosixPath(path.relative(frameworkRoot, absolute));
+      references.push({ name: name.name, relativePath });
+    }
+  }
+  return references;
+}
+
+/**
+ * Read the concatenated text of every markdown file under analyses/. Used to
+ * test whether a frozen reference is cited by any analysis.
+ */
+async function readAllAnalysisText(root: string): Promise<string[]> {
+  const analysesRoot = path.join(root, "analyses");
+  if (!(await exists(analysesRoot))) return [];
+  const files: string[] = [];
+  await collectMarkdownFiles(analysesRoot, files);
+  const texts: string[] = [];
+  for (const file of files) {
+    try {
+      texts.push(await readFile(file, "utf8"));
+    } catch {
+      // skip unreadable
+    }
+  }
+  return texts;
+}
+
+async function collectMarkdownFiles(dir: string, out: string[]): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const child = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await collectMarkdownFiles(child, out);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      out.push(child);
+    }
+  }
+}
+
+interface EmptyDraft {
+  readonly relativePath: string;
+}
+
+/**
+ * Find analysis markdown files that are still drafts (Status: draft) and whose
+ * "Key observations" section has no real content. "Empty" means the section
+ * heading is immediately followed by another heading or end-of-file, with only
+ * blank lines between.
+ */
+async function findEmptyDraftAnalyses(analysesRoot: string): Promise<EmptyDraft[]> {
+  const root = path.dirname(analysesRoot);
+  const files: string[] = [];
+  await collectMarkdownFiles(analysesRoot, files);
+  const empty: EmptyDraft[] = [];
+  for (const file of files) {
+    try {
+      const content = await readFile(file, "utf8");
+      if (!/- Status:\s*draft\b/i.test(content)) continue;
+      if (!hasEmptyKeyObservations(content)) continue;
+      empty.push({ relativePath: toPosixPath(path.relative(root, file)) });
+    } catch {
+      // skip unreadable
+    }
+  }
+  return empty;
+}
+
+/**
+ * True when the "## Key observations" (or similar) section body is empty.
+ * Section body is the text between the heading and the next ## heading or EOF;
+ * it counts as empty if it contains no non-whitespace, non-list-marker lines.
+ */
+function hasEmptyKeyObservations(content: string): boolean {
+  const headingMatch = content.match(/^##\s+Key observations\s*$/im);
+  if (!headingMatch || headingMatch.index === undefined) {
+    // No Key observations heading at all in a draft → treat as empty.
+    return true;
+  }
+  const after = content.slice(headingMatch.index + headingMatch[0].length);
+  // Stop at the next ## heading.
+  const nextHeading = after.match(/\n##\s/);
+  const sectionBody =
+    nextHeading && nextHeading.index !== undefined ? after.slice(0, nextHeading.index) : after;
+  // Non-empty if there is any line with visible content that is not a bare
+  // list marker or checkbox placeholder.
+  const hasContent = sectionBody.split("\n").some((line) => {
+    const trimmed = line.trim();
+    if (trimmed === "") return false;
+    if (/^[-*]\s*(\[[ xX]\])?\s*$/.test(trimmed)) return false; // empty list item
+    return true;
+  });
+  return !hasContent;
+}
+
+/**
+ * Count entries in a parsed queue.json that are still "pending". Accepts both
+ * an array of entry objects and an object with an "entries" array. Each entry
+ * is counted if it has a status field equal to "pending".
+ */
+function countPendingQueueEntries(parsed: unknown): number {
+  let entries: unknown[] = [];
+  if (Array.isArray(parsed)) {
+    entries = parsed;
+  } else if (parsed && typeof parsed === "object" && "entries" in parsed) {
+    const maybeEntries = (parsed as Record<string, unknown>).entries;
+    if (Array.isArray(maybeEntries)) entries = maybeEntries;
+  }
+  return entries.filter((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const status = (entry as Record<string, unknown>).status;
+    return status === "pending";
+  }).length;
 }
 
 export async function getFrameworkStatus(
@@ -777,6 +1090,23 @@ export async function addReference(options: AddReferenceOptions): Promise<AddRef
     recursive: true,
     filter: (_source, dest) => shouldCopyReference(destination, dest),
   });
+
+  // Freeze = open a case file, not just copy files. Write a reference.yaml that
+  // records provenance and an `analyzed: false` flag so the framework can track
+  // whether this reference ever received an analysis. Without this, a frozen
+  // reference is indistinguishable from "done" and tends to be forgotten.
+  const referenceYamlPath = path.join(destination, "reference.yaml");
+  await writeFile(
+    referenceYamlPath,
+    referenceYaml({
+      name: options.name,
+      source,
+      freezePath: relativePath,
+      frozenOn: nowIso(now),
+    }),
+    "utf8",
+  );
+
   const eventFile = await appendEvent(
     root,
     {
@@ -784,6 +1114,8 @@ export async function addReference(options: AddReferenceOptions): Promise<AddRef
       name: options.name,
       path: relativePath,
       source,
+      analyzed: false,
+      analysis_required: true,
     },
     now,
   );
@@ -795,6 +1127,333 @@ export async function addReference(options: AddReferenceOptions): Promise<AddRef
     absolutePath: destination,
     eventFile: relativeDisplayPath(eventFile, root),
   };
+}
+
+/**
+ * Build the reference.yaml case-file content for a frozen reference. Kept as
+ * plain YAML so it is human-readable and editable without a YAML dependency.
+ */
+function referenceYaml(input: {
+  readonly name: string;
+  readonly source: string;
+  readonly freezePath: string;
+  readonly frozenOn: string;
+}): string {
+  return [
+    "# Reference case file. Managed by `metasystem`. Edit provenance fields",
+    "# freely; the `analyzed` flag is flipped by `analysis close`.",
+    `name: ${yamlScalar(input.name)}`,
+    `source: ${yamlScalar(input.source)}`,
+    `freeze_path: ${yamlScalar(input.freezePath)}`,
+    `frozen_on: ${input.frozenOn}`,
+    "analyzed: false",
+    "# analysis_points: fill with concrete questions this reference should answer",
+    "analysis_points: []",
+    "",
+  ].join("\n");
+}
+
+/** Quote a YAML scalar only when it contains characters that need quoting. */
+function yamlScalar(value: string): string {
+  if (value === "" || /[:#\[\]\{\},&*!|>'"%@`]/.test(value) || /^\s|\s$/.test(value)) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+/**
+ * Minimal reference.yaml reader. Extracts the plain scalar fields we write
+ * (name, source, freeze_path) without a YAML dependency. Returns the raw
+ * string for each found field; unknown/missing fields are undefined.
+ */
+function parseReferenceYaml(content: string): {
+  name?: string;
+  source?: string;
+  freezePath?: string;
+  analyzed?: boolean;
+} {
+  const result: { name?: string; source?: string; freezePath?: string; analyzed?: boolean } = {};
+  for (const line of content.split("\n")) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("#") || trimmed === "") continue;
+    const match = trimmed.match(/^([a-z_]+):\s*(.*)$/);
+    if (!match || match[1] === undefined || match[2] === undefined) continue;
+    const key = match[1];
+    let raw = match[2].trim();
+    if (raw === "[]") continue;
+    // Strip a surrounding JSON-style quote pair if present.
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+      raw = raw.slice(1, -1);
+    }
+    if (key === "name") result.name = raw;
+    else if (key === "source") result.source = raw;
+    else if (key === "freeze_path") result.freezePath = raw;
+    else if (key === "analyzed") result.analyzed = raw === "true";
+  }
+  return result;
+}
+
+/**
+ * Flip `analyzed: false` to `analyzed: true` in a reference.yaml, preserving
+ * all other lines. Returns true if the file was updated.
+ */
+async function markReferenceAnalyzed(yamlPath: string): Promise<boolean> {
+  if (!(await exists(yamlPath))) return false;
+  const content = await readFile(yamlPath, "utf8");
+  if (!/^analyzed:\s*false\s*$/m.test(content)) return false;
+  const updated = content.replace(/^analyzed:\s*false\s*$/m, "analyzed: true");
+  await writeFile(yamlPath, updated, "utf8");
+  return true;
+}
+
+/**
+ * Absorb an external source as a frozen reference AND open an analysis for it
+ * in one step. This is the command that replaces "freeze then forget": it
+ * freezes (via addReference, which writes reference.yaml), then creates a
+ * bound analysis (via createAnalysis --forReference) and pre-fills the
+ * Architecture/structure section with a lightweight probe of the source — the
+ * README lead and a one-level directory tree. The result is an open analysis
+ * that `check` can track, not a frozen directory with no follow-up.
+ *
+ * Mode routing:
+ * - learning (default): source is frozen under references/frozen/ as a
+ *   reference and a bound analysis is opened.
+ * - absorption: source is copied under problem/<name>/ as project-level
+ *   material (it IS the project, not an external reference) and an analysis is
+ *   opened against it. No reference.yaml is written because the source is not
+ *   a reference.
+ */
+export async function readFrameworkMode(root: string): Promise<"learning" | "absorption"> {
+  const configPath = path.join(root, ".framework", "config.yaml");
+  if (!(await exists(configPath))) return "learning";
+  try {
+    const content = await readFile(configPath, "utf8");
+    const match = content.match(/^\s*mode:\s*(\w+)/m);
+    if (match && match[1] === "absorption") return "absorption";
+  } catch {
+    // unreadable config; default
+  }
+  return "learning";
+}
+
+export async function absorbReference(
+  options: AbsorbReferenceOptions,
+): Promise<AbsorbReferenceResult> {
+  const root = path.resolve(options.root);
+  requireManifest(await loadManifest(root), root);
+  const source = path.resolve(options.source);
+  const now = options.now ?? new Date();
+
+  if (!(await exists(source))) {
+    throw new FrameworkNotFoundError(`source not found: ${source}`);
+  }
+  const sourceStats = await stat(source);
+  if (!sourceStats.isDirectory()) {
+    throw new FrameworkError(`absorb expects a directory source, got file: ${source}`, {
+      code: "IO_ERROR",
+    });
+  }
+
+  const name = options.name ?? path.basename(source);
+  const mode = await readFrameworkMode(root);
+
+  let sourcePath: string;
+  let eventPayload: Record<string, unknown>;
+  if (mode === "absorption") {
+    // Absorption mode: the source is project-level material, not a reference.
+    // Copy it under problem/<name>/ (creating problem/ if needed) and record a
+    // case file so the open work is still tracked.
+    sourcePath = await absorbAsProblem(root, source, name, now);
+    eventPayload = {
+      event: "source.absorbed",
+      name,
+      problem_path: sourcePath,
+      source,
+    };
+  } else {
+    // Learning mode: freeze + reference.yaml case file.
+    const frozen = await addReference({ root, source, name, now });
+    sourcePath = frozen.path;
+    eventPayload = {
+      event: "reference.absorbed",
+      name,
+      reference_path: frozen.path,
+      source,
+    };
+  }
+
+  // Probe the source for lightweight pre-fill content.
+  const probe = await probeSource(source);
+
+  // Create a bound analysis, then append the probe into its
+  // ## Architecture / structure section so the analysis carries real
+  // content instead of being an empty shell.
+  const title = `Absorb ${name}`;
+  const analysis = await createAnalysis({
+    root,
+    title,
+    forReference: sourcePath,
+    now,
+  });
+
+  if (probe.hasContent) {
+    let analysisContent = await readFile(analysis.absolutePath, "utf8");
+    const sectionHeader = "## Architecture / structure";
+    if (analysisContent.includes(sectionHeader)) {
+      analysisContent = analysisContent.replace(sectionHeader, `${sectionHeader}\n\n${probe.body}`);
+    } else {
+      analysisContent += `\n${sectionHeader}\n\n${probe.body}\n`;
+    }
+    await writeFile(analysis.absolutePath, analysisContent, "utf8");
+  }
+
+  const eventFile = await appendEvent(root, { ...eventPayload, analysis_path: analysis.path }, now);
+
+  return {
+    root,
+    source,
+    referencePath: sourcePath,
+    analysisPath: analysis.path,
+    eventFile: relativeDisplayPath(eventFile, root),
+  };
+}
+
+/**
+ * Absorption-mode landing: copy the source under problem/<name>/ as
+ * project-level material. Unlike a frozen reference, this is the project's own
+ * source, so no reference.yaml is written. Returns the relative path.
+ */
+async function absorbAsProblem(
+  root: string,
+  source: string,
+  name: string,
+  now: Date,
+): Promise<string> {
+  const relativePath = `problem/${slugify(name)}`;
+  const destination = path.join(root, relativePath);
+  if (await exists(destination)) {
+    throw new FrameworkAlreadyExistsError(`problem source already exists: ${relativePath}`);
+  }
+  await mkdir(path.join(root, "problem"), { recursive: true });
+  await cp(source, destination, {
+    recursive: true,
+    filter: (_src, dest) => shouldCopyReference(destination, dest),
+  });
+  // Write a minimal source.yaml so the absorption is still tracked as a case
+  // file (without the reference-specific `analyzed` flag).
+  const sourceYamlPath = path.join(destination, "source.yaml");
+  await writeFile(
+    sourceYamlPath,
+    [
+      "# Project-level source case file. Managed by `metasystem`.",
+      `name: ${yamlScalar(name)}`,
+      `source: ${yamlScalar(source)}`,
+      `absorb_path: ${yamlScalar(relativePath)}`,
+      `absorbed_on: ${nowIso(now)}`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return relativePath;
+}
+
+interface SourceProbe {
+  readonly hasContent: boolean;
+  readonly body: string;
+}
+
+const README_CANDIDATES = [
+  "README.md",
+  "README.MD",
+  "README.rst",
+  "README.txt",
+  "readme.md",
+  "readme.txt",
+  "Readme.md",
+];
+
+/**
+ * Lightweight source probe: extract the README lead (first non-empty paragraph
+ * block, capped to a few lines) and a one-level directory tree. Deliberately
+ * shallow — no source parsing, no dependency-file heuristics — to keep the
+ * first version low on false fills.
+ */
+async function probeSource(source: string): Promise<SourceProbe> {
+  const parts: string[] = [];
+
+  const readmeLead = await readReadmeLead(source);
+  if (readmeLead) {
+    parts.push("**README lead:**\n");
+    parts.push(readmeLead);
+    parts.push("");
+  }
+
+  const tree = await oneLevelTree(source);
+  if (tree.length > 0) {
+    parts.push("**Top-level layout:**\n");
+    parts.push("```");
+    parts.push(...tree);
+    parts.push("```");
+    parts.push("");
+  }
+
+  const body = parts.join("\n").trim();
+  return { hasContent: body.length > 0, body };
+}
+
+async function readReadmeLead(source: string): Promise<string> {
+  for (const candidate of README_CANDIDATES) {
+    const candidatePath = path.join(source, candidate);
+    if (!(await exists(candidatePath))) continue;
+    try {
+      const raw = await readFile(candidatePath, "utf8");
+      return extractLead(raw);
+    } catch {
+      // unreadable readme; try next candidate
+    }
+  }
+  return "";
+}
+
+/**
+ * Extract the first meaningful paragraph block from a README: skip the leading
+ * H1 title and blank lines, then take up to 8 lines of the first non-empty
+ * block. Caps length so a huge README cannot dominate the analysis.
+ */
+function extractLead(raw: string): string {
+  const lines = raw.replaceAll("\r\n", "\n").split("\n");
+  let start = 0;
+  // Skip a leading H1.
+  if (lines.length > 0 && /^#\s+/.test(lines[0] ?? "")) {
+    start = 1;
+  }
+  // Skip blank lines.
+  while (start < lines.length && (lines[start]?.trim() ?? "") === "") {
+    start += 1;
+  }
+  const block: string[] = [];
+  for (let i = start; i < lines.length && block.length < 8; i += 1) {
+    const line = lines[i] ?? "";
+    if (line.trim() === "") break;
+    block.push(line);
+  }
+  return block.join("\n");
+}
+
+async function oneLevelTree(source: string): Promise<string[]> {
+  try {
+    const entries = await readdir(source, { withFileTypes: true });
+    const lines: string[] = [];
+    for (const entry of entries.slice(0, 40)) {
+      lines.push(entry.isDirectory() ? `${entry.name}/` : entry.name);
+    }
+    if (entries.length > 40) {
+      lines.push(`... (${entries.length - 40} more entries)`);
+    }
+    return lines;
+  } catch {
+    return [];
+  }
 }
 
 export async function createAnalysis(
@@ -811,12 +1470,47 @@ export async function createAnalysis(
     throw new FrameworkAlreadyExistsError(`analysis already exists: ${relativePath}`);
   }
 
-  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n\n## Reference\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n- [ ] ADR\n`;
+  // When bound to a frozen reference, pre-fill the provenance fields from its
+  // reference.yaml instead of leaving an empty shell. This is what makes the
+  // analysis "carry content forward" rather than being a blank template the AI
+  // forgets to fill.
+  let refName = "";
+  let refSource = "";
+  let refFreezePath = "";
+  if (options.forReference) {
+    const refPath = options.forReference.replace(/\\/g, "/");
+    const refAbsolute = path.join(root, refPath);
+    const yamlPath = path.join(refAbsolute, "reference.yaml");
+    if (!(await exists(refAbsolute))) {
+      throw new FrameworkNotFoundError(`reference not found: ${refPath}`);
+    }
+    if (await exists(yamlPath)) {
+      const parsed = parseReferenceYaml(await readFile(yamlPath, "utf8"));
+      refName = parsed.name ?? path.basename(refPath);
+      refSource = parsed.source ?? "";
+      refFreezePath = parsed.freezePath ?? refPath;
+    } else {
+      // Pre-reference.yaml freeze (legacy or manual): degrade gracefully.
+      refName = path.basename(refPath);
+      refFreezePath = refPath;
+    }
+  }
+
+  const referenceBlock =
+    refFreezePath || refName
+      ? `- Reference: ${refName}\n- Source: ${refSource}\n- Freeze path: ${refFreezePath}\n`
+      : "";
+  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n${referenceBlock}\n## Reference\n\n${refName || ""}\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n- [ ] ADR\n`;
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, content, "utf8");
   const eventFile = await appendEvent(
     root,
-    { event: "analysis.created", path: relativePath, title: options.title },
+    {
+      event: "analysis.created",
+      path: relativePath,
+      title: options.title,
+      ...(options.forReference ? { for_reference: options.forReference.replace(/\\/g, "/") } : {}),
+    },
     now,
   );
 
@@ -980,6 +1674,20 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   }
   await writeFile(absolutePath, content, "utf8");
 
+  // If this analysis was bound to a frozen reference, flip that reference's
+  // `analyzed` flag to true so `check` stops warning about it. This closes the
+  // references → analyses loop: freezing opens the case, closing the analysis
+  // marks it resolved.
+  const freezePathMatch = content.match(/^- Freeze path:\s*(\S+)/m);
+  let analyzedReference: string | null = null;
+  if (freezePathMatch?.[1]) {
+    const freezePath = freezePathMatch[1];
+    const yamlPath = path.join(root, freezePath, "reference.yaml");
+    if (await markReferenceAnalyzed(yamlPath)) {
+      analyzedReference = freezePath;
+    }
+  }
+
   const eventFile = await appendEvent(
     root,
     {
@@ -987,6 +1695,7 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
       path: analysisPath,
       exit: options.exit,
       note: options.note ?? null,
+      ...(analyzedReference ? { marked_reference_analyzed: analyzedReference } : {}),
     },
     now,
   );
@@ -1000,7 +1709,7 @@ export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKno
   const now = options.now ?? new Date();
   const date = dateStamp(now);
 
-  const typeDir = `knowledge/${options.type}s`;
+  const typeDir = `knowledge/${KNOWLEDGE_TYPE_DIRS[options.type]}`;
   const fileName = `${date}-${slugify(options.title)}.md`;
   const relativePath = `${typeDir}/${fileName}`;
   const absolutePath = path.join(root, relativePath);

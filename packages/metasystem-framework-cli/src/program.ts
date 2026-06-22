@@ -6,6 +6,7 @@ import {
   type KnowledgeType,
   type MetaSystemProjectRegistryStatus,
   type SystemVcs,
+  absorbReference,
   acceptAdr,
   addKnowledge,
   addReference,
@@ -170,6 +171,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--git", "initialize a git repository in the framework root")
     .option("--force", "overwrite existing files and track them as managed")
     .option("--create-new", "write .new copies when files already exist")
+    .addOption(
+      new Option(
+        "--mode <mode>",
+        "project mode: learning (external refs) or absorption (source IS the project)",
+      )
+        .choices(["learning", "absorption"])
+        .default("learning"),
+    )
     .action(async (targetDir, commandOptions) => {
       const result = await initFramework({
         target: targetDir,
@@ -178,6 +187,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         git: commandOptions.git ?? false,
         force: commandOptions.force ?? false,
         createNew: commandOptions.createNew ?? false,
+        mode: commandOptions.mode as "learning" | "absorption",
       });
       await recordProjectLifecycleBestEffort(result.root, "init");
       writeLine(output, "stdout", formatInitResult(result));
@@ -195,6 +205,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "dryRun",
       ),
     )
+    .option("--analyze", "after apply, generate an adoption inventory and open an analysis for it")
     .action(async (commandOptions) => {
       const result = await adoptExistingProject({
         root: commandOptions.root,
@@ -202,8 +213,17 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.core === undefined ? {} : { core: commandOptions.core }),
         dryRun: commandOptions.dryRun ?? false,
         apply: commandOptions.apply ?? false,
+        analyze: commandOptions.analyze ?? false,
       });
       writeLine(output, "stdout", formatAdoptionResult(result));
+      if (result.adoptionAnalysisPath) {
+        writeLine(output, "stdout", `Adoption analysis: ${result.adoptionAnalysisPath}`);
+        writeLine(
+          output,
+          "stdout",
+          "Next: review the inventory, move archived entries into the new structure, then close the analysis.",
+        );
+      }
       if (!result.dryRun && result.failures.length > 0) {
         output.setExitCode(1);
       }
@@ -403,15 +423,50 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 
+  program
+    .command("absorb")
+    .description(
+      "Freeze a source as a reference AND open a pre-filled analysis for it (learning mode)",
+    )
+    .argument("<source-dir>", "local source directory to absorb")
+    .option("--name <name>", "reference name (defaults to source directory basename)")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (sourceDir, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await absorbReference({
+        root,
+        source: sourceDir,
+        ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
+      });
+      writeLine(output, "stdout", `Absorbed reference: ${result.referencePath}`);
+      writeLine(output, "stdout", `Opened analysis: ${result.analysisPath}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        "Next: fill ## Key observations in the analysis, then `metasystem analysis close <path> --exit ...`.",
+      );
+    });
+
   const analysis = program.command("analysis").description("Analysis operations");
   analysis
     .command("new")
     .description("Create a reference analysis draft")
     .argument("<title>", "analysis title")
     .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option(
+      "--for-reference <path>",
+      "frozen reference path to bind (pre-fills Reference/Source/Freeze path)",
+    )
     .action(async (title, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await createAnalysis({ root, title });
+      const result = await createAnalysis({
+        root,
+        title,
+        ...(commandOptions.forReference === undefined
+          ? {}
+          : { forReference: commandOptions.forReference }),
+      });
       writeLine(output, "stdout", `Created analysis: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
