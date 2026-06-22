@@ -1,0 +1,51 @@
+# Contest profile: a project that exists to absorb a specific external thing
+# (a contest, a paper, a spec to implement). The external material IS the
+# project — it lands under problem/ in absorption mode. Systems/ holds the
+# implementation; data/ holds contest datasets. No external-reference intake
+# (the contest is not a "reference", it is the problem), no iterations, no
+# releases. Shaped after the Huawei3 project (see ADR-0005).
+
+version: 1
+mode: absorption
+modules:
+  - knowledge
+  - events
+  - adr
+
+dirs:
+  - .framework/events
+  - .framework/backups
+  - .framework/migrations
+  - systems
+  - systems/archive
+  - knowledge/guides
+  - knowledge/decisions
+  - knowledge/patterns
+  - knowledge/troubleshooting
+  - data
+
+# Absorption mode: problem/ holds the contest's own source materials.
+dirs_learning: []
+dirs_absorption:
+  - problem
+
+# Minimal templates. Analyses still useful for recording what was learned from
+# the problem materials, but references/iteration templates are omitted.
+templates:
+  - { path: "README.md", templateId: "root.readme" }
+  - { path: ".gitignore", templateId: "root.gitignore" }
+  - { path: ".framework/README.md", templateId: "framework.readme" }
+  - { path: ".framework/VERSION", templateId: "framework.version" }
+  - { path: ".framework/config.yaml", templateId: "framework.config" }
+  - { path: ".framework/migrations/README.md", templateId: "framework.migrations.readme" }
+  - { path: ".framework/events/.gitkeep", templateId: "framework.events.gitkeep" }
+  - { path: ".framework/backups/.gitkeep", templateId: "framework.backups.gitkeep" }
+  - { path: "systems/README.md", templateId: "systems.readme" }
+  - { path: "systems/{core}/system.yaml", templateId: "system.core.contract" }
+  - { path: "knowledge/README.md", templateId: "knowledge.readme" }
+  - { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" }
+  - { path: "knowledge/decisions/ADR-TEMPLATE.md", templateId: "knowledge.decisions.adr_template" }
+  - { path: "knowledge/guides/README.md", templateId: "knowledge.guides.readme" }
+  - { path: "knowledge/patterns/README.md", templateId: "knowledge.patterns.readme" }
+  - { path: "knowledge/troubleshooting/README.md", templateId: "knowledge.troubleshooting.readme" }
+  - { path: "data/README.md", templateId: "data.readme" }

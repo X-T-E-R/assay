@@ -842,6 +842,45 @@ describe("workspace operations", () => {
     expect(analysis).toContain("src/");
   });
 
+  it("library profile scaffolds only systems/knowledge/data, no references or analyses", async () => {
+    const root = path.join(await tempDir(), "lib-profile");
+    await initFramework({ target: root, name: "LibProj", profile: "library" });
+
+    // Core dirs present
+    expect(await exists(path.join(root, "systems"))).toBe(true);
+    expect(await exists(path.join(root, "knowledge"))).toBe(true);
+    expect(await exists(path.join(root, "data"))).toBe(true);
+
+    // Governance dirs absent — library profile does not scaffold them
+    expect(await exists(path.join(root, "references"))).toBe(false);
+    expect(await exists(path.join(root, "analyses"))).toBe(false);
+    expect(await exists(path.join(root, "iterations"))).toBe(false);
+    expect(await exists(path.join(root, "releases"))).toBe(false);
+
+    // config records the profile
+    const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
+    expect(config).toContain("profile: library");
+  });
+
+  it("contest profile scaffolds problem/ in absorption mode, no references or iterations", async () => {
+    const root = path.join(await tempDir(), "contest-profile");
+    await initFramework({ target: root, name: "ConProj", profile: "contest" });
+
+    // Contest-specific: problem/ present (absorption mode from profile default)
+    expect(await exists(path.join(root, "problem"))).toBe(true);
+    expect(await exists(path.join(root, "systems"))).toBe(true);
+    expect(await exists(path.join(root, "data"))).toBe(true);
+
+    // No reference intake, no iterations
+    expect(await exists(path.join(root, "references"))).toBe(false);
+    expect(await exists(path.join(root, "iterations"))).toBe(false);
+
+    // Mode defaults to absorption from the contest profile
+    const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
+    expect(config).toContain("mode: absorption");
+    expect(config).toContain("profile: contest");
+  });
+
   it("creates deterministic analysis and iteration artifacts for a supplied date", async () => {
     const root = path.join(await tempDir(), "demo");
     const now = new Date("2026-06-14T10:00:00");

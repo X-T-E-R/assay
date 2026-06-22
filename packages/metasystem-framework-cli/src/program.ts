@@ -177,10 +177,13 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .addOption(
       new Option(
         "--mode <mode>",
-        "project mode: learning (external refs) or absorption (source IS the project)",
-      )
-        .choices(["learning", "absorption"])
-        .default("learning"),
+        "project mode: learning (external refs) or absorption (source IS the project). Defaults to the profile's mode.",
+      ).choices(["learning", "absorption"]),
+    )
+    .addOption(
+      new Option("--profile <name>", "structure profile: metasystem (default), library, contest")
+        .choices(["metasystem", "library", "contest"])
+        .default("metasystem"),
     )
     .action(async (targetDir, commandOptions) => {
       const result = await initFramework({
@@ -190,7 +193,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         git: commandOptions.git ?? false,
         force: commandOptions.force ?? false,
         createNew: commandOptions.createNew ?? false,
-        mode: commandOptions.mode as "learning" | "absorption",
+        ...(commandOptions.mode === undefined
+          ? {}
+          : { mode: commandOptions.mode as "learning" | "absorption" }),
+        ...(commandOptions.profile === undefined ? {} : { profile: commandOptions.profile }),
       });
       await recordProjectLifecycleBestEffort(result.root, "init");
       writeLine(output, "stdout", formatInitResult(result));

@@ -35,6 +35,8 @@ export interface InitFrameworkOptions {
   readonly createNew?: boolean;
   /** Project mode: "learning" (default) treats external sources as references; "absorption" treats them as project-level sources. */
   readonly mode?: "learning" | "absorption";
+  /** Profile name: "metasystem" (default), "library", "contest". Determines scaffold structure (ADR-0005). */
+  readonly profile?: string;
 }
 
 export interface InitFrameworkResult {
@@ -453,8 +455,10 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   const core = options.core ?? `${slugify(project)}-core`;
   const report = createEmptyReport();
 
-  const mode = options.mode ?? "learning";
-  const profile = await loadProfile("metasystem");
+  const profileName = options.profile ?? "metasystem";
+  const profile = await loadProfile(profileName);
+  // Mode: explicit --mode wins; otherwise use the profile's default mode.
+  const mode = options.mode ?? profile.mode;
 
   await ensureDir(root, root, report);
   for (const directory of dirsForMode(profile, mode)) {
@@ -462,7 +466,7 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   }
 
   let manifest = (await loadManifest(root)) ?? defaultManifest(project, core);
-  for (const template of await desiredTemplates(project, core, mode)) {
+  for (const template of await desiredTemplates(project, core, mode, profileName)) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,
