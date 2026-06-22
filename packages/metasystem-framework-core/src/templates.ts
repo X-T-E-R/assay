@@ -70,7 +70,7 @@ export function profileTemplates(
   const result: TemplateFile[] = [];
   for (const entry of profile.templates) {
     const resolvedPath = entry.path.replace("{core}", core);
-    const content = templateContentById(entry.templateId, project, core, mode);
+    const content = templateContentById(entry.templateId, project, core, mode, profile);
     if (content === null) continue; // unknown templateId: skip (profile can reference future templates)
     result.push(templateFile({ path: resolvedPath, templateId: entry.templateId, content }));
   }
@@ -87,6 +87,7 @@ function templateContentById(
   project: string,
   core: string,
   mode: "learning" | "absorption",
+  profile: Profile,
 ): string | null {
   switch (templateId) {
     case "root.readme":
@@ -98,7 +99,7 @@ function templateContentById(
     case "framework.version":
       return `${CURRENT_VERSION}\n`;
     case "framework.config":
-      return configYaml(project, core, mode);
+      return configYaml(project, core, mode, profile.name, profile.version);
     case "framework.migrations.readme":
       return migrationsReadme();
     case "framework.events.gitkeep":
@@ -218,6 +219,8 @@ export function configYaml(
   project: string,
   core: string,
   mode: "learning" | "absorption" = "learning",
+  profileName = "metasystem",
+  profileVersion = 3,
 ): string {
   return dedent(`
     framework:
@@ -226,6 +229,8 @@ export function configYaml(
       version: ${CURRENT_VERSION}
       layout_version: ${LAYOUT_VERSION}
       mode: ${mode}
+      profile: ${profileName}
+      profile_version: ${profileVersion}
 
     paths:
       runtime: .framework

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { Command, Option } from "@commander-js/extra-typings";
 import {
   type AdrStatus,
@@ -30,6 +32,7 @@ import {
   listAdrs,
   listProjectRecords,
   listSystems,
+  loadProfile,
   migrateLayout,
   promoteSystem,
   pruneProjects,
@@ -407,6 +410,50 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         apply: shouldApply,
       });
       writeLine(output, "stdout", formatMigrationResult(result));
+    });
+
+  program
+    .command("profile")
+    .description("Show the current framework profile name and version")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      const profile = await loadProfile("metasystem");
+      if (commandOptions.json) {
+        writeJson(output, {
+          name: profile.name,
+          version: profile.version,
+          mode: profile.mode,
+          modules: profile.modules,
+        });
+        return;
+      }
+      writeLine(output, "stdout", `Profile: ${profile.name}`);
+      writeLine(output, "stdout", `Version: ${profile.version}`);
+      writeLine(output, "stdout", `Default mode: ${profile.mode}`);
+      writeLine(output, "stdout", `Modules: ${profile.modules.join(", ")}`);
+      // If run inside a workspace, show the installed profile version too.
+      try {
+        const root = await discoveredRoot(commandOptions.root);
+        const configPath = path.join(root, ".framework", "config.yaml");
+        const configContent = await readFile(configPath, "utf8");
+        const installedMatch = configContent.match(/profile_version:\s*(\d+)/);
+        const installedNameMatch = configContent.match(/^\s*profile:\s*(\w+)/m);
+        if (installedMatch && installedNameMatch) {
+          const installed = Number.parseInt(installedMatch[1] ?? "0", 10);
+          const installedName = installedNameMatch[1] ?? "metasystem";
+          writeLine(output, "stdout", `Installed: ${installedName} v${installed}`);
+          if (installed !== profile.version) {
+            writeLine(
+              output,
+              "stdout",
+              `Note: installed profile v${installed} differs from current v${profile.version}. Run \`metasystem update --dry-run\` to plan an upgrade.`,
+            );
+          }
+        }
+      } catch {
+        // not inside a workspace — just show the bundled profile
+      }
     });
 
   const reference = program.command("reference").description("Reference operations");
