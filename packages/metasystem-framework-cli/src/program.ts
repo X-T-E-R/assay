@@ -561,18 +561,26 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .argument("<title>", "ADR title")
     .option("--from-analysis <path>", "originating analysis path")
     .option("--from-iteration <path>", "originating iteration path")
+    .option(
+      "--force",
+      "create even if an external governance system (trellis, docs/adr/) is detected",
+    )
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .action(async (title, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await createAdr(root, {
-        title,
-        ...(commandOptions.fromAnalysis === undefined
-          ? {}
-          : { relatedAnalysis: commandOptions.fromAnalysis }),
-        ...(commandOptions.fromIteration === undefined
-          ? {}
-          : { relatedIteration: commandOptions.fromIteration }),
-      });
+      const result = await createAdr(
+        root,
+        {
+          title,
+          ...(commandOptions.fromAnalysis === undefined
+            ? {}
+            : { relatedAnalysis: commandOptions.fromAnalysis }),
+          ...(commandOptions.fromIteration === undefined
+            ? {}
+            : { relatedIteration: commandOptions.fromIteration }),
+        },
+        { force: commandOptions.force ?? false },
+      );
       writeLine(output, "stdout", `Created ADR: ${result.adr.id}`);
       writeLine(output, "stdout", `Path: ${result.adr.path}`);
       writeLine(output, "stdout", `Status: ${result.adr.status}`);

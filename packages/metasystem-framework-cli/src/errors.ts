@@ -7,6 +7,7 @@ const USER_ERROR_CODES = new Set<FrameworkErrorCode>([
   "INVALID_UPDATE_PLAN",
   "ALREADY_EXISTS",
   "NOT_FOUND",
+  "GOVERNANCE_DEFERRED",
 ]);
 
 export interface CliFailure {

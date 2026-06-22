@@ -4,6 +4,7 @@ import path from "node:path";
 import { ADRS_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { detectExternalGovernance } from "./governance.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import { type AdrIndex, type AdrRecord, type AdrStatus, adrIndexSchema } from "./schemas/index.js";
@@ -12,6 +13,8 @@ import { nowIso } from "./time.js";
 
 export interface AdrIndexOptions {
   readonly now?: Date;
+  /** Skip external-governance deferral (e.g. trellis detected). */
+  readonly force?: boolean;
 }
 
 export interface CreateAdrInput {
@@ -214,6 +217,19 @@ export async function createAdr(
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+
+  // Governance deferral (ADR-0005): if an external governance system (trellis,
+  // docs/adr/) is detected, defer ADR creation to it unless --force.
+  if (options.force !== true) {
+    const governance = await detectExternalGovernance(root);
+    if (governance.system !== "none") {
+      throw new FrameworkError(
+        `external governance detected (${governance.system} at ${governance.path}): ${governance.message}`,
+        { code: "GOVERNANCE_DEFERRED" },
+      );
+    }
+  }
+
   const now = options.now ?? new Date();
   const index = (await loadAdrIndex(root)) ?? defaultAdrIndex();
   const slug = slugify(input.title);

@@ -6,7 +6,8 @@ export type FrameworkErrorCode =
   | "INVALID_UPDATE_PLAN"
   | "ALREADY_EXISTS"
   | "NOT_FOUND"
-  | "IO_ERROR";
+  | "IO_ERROR"
+  | "GOVERNANCE_DEFERRED";
 
 export interface FrameworkErrorOptions {
   readonly code?: FrameworkErrorCode;

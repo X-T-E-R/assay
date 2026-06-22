@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -142,5 +142,19 @@ describe("ADR index", () => {
 
     const { adrs: acceptedAdrs } = await listAdrs(root, "accepted");
     expect(acceptedAdrs.map((adr) => adr.id)).toEqual([accepted.adr.id]);
+  });
+
+  it("defers ADR creation when trellis is detected, unless --force", async () => {
+    const root = await initWorkspace("AdrDefer");
+    // Simulate trellis presence
+    await mkdir(path.join(root, ".trellis"), { recursive: true });
+
+    await expect(createAdr(root, { title: "Should Defer" })).rejects.toThrow(
+      /external governance detected.*trellis/,
+    );
+
+    // --force bypasses deferral
+    const forced = await createAdr(root, { title: "Forced" }, { force: true });
+    expect(forced.adr.status).toBe("proposed");
   });
 });
