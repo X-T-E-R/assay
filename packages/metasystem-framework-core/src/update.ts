@@ -220,7 +220,7 @@ export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<Upda
     unchanged: [],
   };
 
-  for (const template of desiredTemplates(project, core)) {
+  for (const template of await desiredTemplates(project, core)) {
     const target = path.join(root, template.path);
     const record = manifest.managed_files[template.path];
     const desiredHash = computeHash(template.content);
@@ -362,7 +362,7 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
   const manifest = requireManifest(await loadManifest(root), root);
   const [project, core] = projectFromManifest(manifest, root);
   const templatesByPath = new Map(
-    desiredTemplates(project, core).map((template) => [template.path, template]),
+    (await desiredTemplates(project, core)).map((template) => [template.path, template]),
   );
   const backupPaths = [
     ...analysis.changes.auto_update,

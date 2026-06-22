@@ -35,8 +35,8 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-function readmeTemplate() {
-  const template = desiredTemplates("Demo", "demo-core").find(
+async function readmeTemplate() {
+  const template = (await desiredTemplates("Demo", "demo-core")).find(
     (candidate) => candidate.path === "README.md",
   );
   if (!template) {
@@ -89,7 +89,7 @@ afterEach(async () => {
 describe("applyUpdate", () => {
   it("auto-updates clean managed files and records a backup", async () => {
     const root = await initUpdateFixture();
-    const template = readmeTemplate();
+    const template = await readmeTemplate();
     const oldContent = "# Old generated README\n";
     const readme = path.join(root, "README.md");
     await writeFile(readme, oldContent, "utf8");
@@ -148,7 +148,7 @@ describe("applyUpdate", () => {
 
     const forced = await applyUpdate({ root, action: "force" });
     expect(forced.report.updated_files).toContain("README.md");
-    expect(await readFile(readme, "utf8")).toBe(readmeTemplate().content);
+    expect(await readFile(readme, "utf8")).toBe((await readmeTemplate()).content);
   });
 
   it("create-new writes .new files without changing modified files", async () => {
@@ -160,7 +160,9 @@ describe("applyUpdate", () => {
 
     expect(result.report.new_copies).toContain("README.md.new");
     expect(await readFile(readme, "utf8")).toBe("# User modified README\n");
-    expect(await readFile(path.join(root, "README.md.new"), "utf8")).toBe(readmeTemplate().content);
+    expect(await readFile(path.join(root, "README.md.new"), "utf8")).toBe(
+      (await readmeTemplate()).content,
+    );
   });
 
   it("keeps user-deleted managed files deleted", async () => {
@@ -202,7 +204,9 @@ describe("applyUpdate", () => {
     const copied = await applyUpdate({ root, action: "create-new" });
     expect(copied.report.new_copies).toContain("README.md.new");
     expect(await readFile(readme, "utf8")).toBe(userContent);
-    expect(await readFile(path.join(root, "README.md.new"), "utf8")).toBe(readmeTemplate().content);
+    expect(await readFile(path.join(root, "README.md.new"), "utf8")).toBe(
+      (await readmeTemplate()).content,
+    );
   });
 
   it("dry-run performs no writes", async () => {

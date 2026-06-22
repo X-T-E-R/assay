@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MANIFEST_FILE,
-  PRIMARY_DIRS,
   absorbReference,
   acceptAdr,
   addKnowledge,
@@ -17,10 +16,12 @@ import {
   createAdr,
   createAnalysis,
   desiredTemplates,
+  dirsForMode,
   getFrameworkStatus,
   initFramework,
   loadAdrIndex,
   loadManifest,
+  loadProfile,
   loadSystemsRegistry,
   readFrameworkMode,
   registerSystem,
@@ -54,9 +55,9 @@ afterEach(async () => {
 });
 
 describe("desiredTemplates", () => {
-  it("returns deterministic template paths and ids from the registry", () => {
-    const first = desiredTemplates("Demo", "demo-core");
-    const second = desiredTemplates("Demo", "demo-core");
+  it("returns deterministic template paths and ids from the registry", async () => {
+    const first = await desiredTemplates("Demo", "demo-core");
+    const second = await desiredTemplates("Demo", "demo-core");
 
     expect(second).toEqual(first);
     expect(first.map((template) => [template.path, template.template_id])).toContainEqual([
@@ -92,7 +93,8 @@ describe("initFramework", () => {
     expect(result.core).toBe("demo-core");
     expect(await exists(path.join(root, ".framework", "VERSION"))).toBe(true);
     expect(await exists(path.join(root, MANIFEST_FILE))).toBe(true);
-    for (const directory of PRIMARY_DIRS) {
+    const profile = await loadProfile("metasystem");
+    for (const directory of dirsForMode(profile, "learning")) {
       expect(await exists(path.join(root, directory))).toBe(true);
     }
     expect(await exists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
@@ -103,7 +105,7 @@ describe("initFramework", () => {
     expect(manifest).not.toBeNull();
     expect(Object.keys(manifest?.managed_files ?? {})).toContain(".framework/VERSION");
     expect(Object.keys(manifest?.managed_files ?? {})).toHaveLength(
-      desiredTemplates("Demo", "demo-core").length,
+      (await desiredTemplates("Demo", "demo-core")).length,
     );
   });
 
@@ -179,7 +181,7 @@ describe("checkFramework and getFrameworkStatus", () => {
       hasManifest: true,
       project: "Demo",
       core: "demo-core",
-      managedFiles: desiredTemplates("Demo", "demo-core").length,
+      managedFiles: (await desiredTemplates("Demo", "demo-core")).length,
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);
   });

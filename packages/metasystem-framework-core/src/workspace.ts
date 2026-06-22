@@ -9,6 +9,7 @@ import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
+import { dirsForMode, loadProfile } from "./profile.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import type { AdrIndex, AdrRecord, FrameworkManifest } from "./schemas/index.js";
 import { toPosixPath } from "./serialization.js";
@@ -452,14 +453,16 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   const core = options.core ?? `${slugify(project)}-core`;
   const report = createEmptyReport();
 
+  const mode = options.mode ?? "learning";
+  const profile = await loadProfile("metasystem");
+
   await ensureDir(root, root, report);
-  for (const directory of PRIMARY_DIRS) {
+  for (const directory of dirsForMode(profile, mode)) {
     await ensureDir(path.join(root, directory), root, report);
   }
 
   let manifest = (await loadManifest(root)) ?? defaultManifest(project, core);
-  const mode = options.mode ?? "learning";
-  for (const template of desiredTemplates(project, core, mode)) {
+  for (const template of await desiredTemplates(project, core, mode)) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,

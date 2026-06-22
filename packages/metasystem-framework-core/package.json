@@ -8,7 +8,7 @@
     "./schemas": "./dist/schemas/index.js"
   },
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": ["dist", "profiles"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --config vitest.config.ts",

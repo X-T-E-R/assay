@@ -1,4 +1,5 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
+import { type Profile, loadProfile } from "./profile.js";
 
 export interface TemplateFile {
   readonly path: string;
@@ -37,155 +38,116 @@ function dedent(text: string): string {
   return lines.map((line) => (line.trim().length > 0 ? line.slice(margin) : "")).join("\n");
 }
 
-export function desiredTemplates(
+/**
+ * Generate the list of template files for a new workspace, driven by a profile.
+ * The profile (profiles/<name>.yaml) declares which templates to write and at
+ * what path; this function resolves each templateId to its content generator.
+ * Mode overrides the profile's default mode when supplied (e.g. `init --mode absorption`).
+ *
+ * To evolve the default structure, edit profiles/metasystem.yaml — not this
+ * function (see ADR-0005).
+ */
+export async function desiredTemplates(
   project: string,
   core: string,
   mode: "learning" | "absorption" = "learning",
+  profileName = "metasystem",
+): Promise<TemplateFile[]> {
+  const profile = await loadProfile(profileName);
+  return profileTemplates(project, core, mode, profile);
+}
+
+/**
+ * Synchronous variant for tests/callers that already hold a Profile. Resolves
+ * template entries to content via the dispatcher.
+ */
+export function profileTemplates(
+  project: string,
+  core: string,
+  mode: "learning" | "absorption",
+  profile: Profile,
 ): TemplateFile[] {
-  return [
-    templateFile({
-      path: "README.md",
-      templateId: "root.readme",
-      content: rootReadme(project, core),
-    }),
-    templateFile({ path: ".gitignore", templateId: "root.gitignore", content: rootGitignore() }),
-    templateFile({
-      path: ".framework/README.md",
-      templateId: "framework.readme",
-      content: frameworkReadme(),
-    }),
-    templateFile({
-      path: ".framework/VERSION",
-      templateId: "framework.version",
-      content: `${CURRENT_VERSION}\n`,
-    }),
-    templateFile({
-      path: ".framework/config.yaml",
-      templateId: "framework.config",
-      content: configYaml(project, core, mode),
-    }),
-    templateFile({
-      path: ".framework/migrations/README.md",
-      templateId: "framework.migrations.readme",
-      content: migrationsReadme(),
-    }),
-    templateFile({
-      path: ".framework/events/.gitkeep",
-      templateId: "framework.events.gitkeep",
-      content: "",
-    }),
-    templateFile({
-      path: ".framework/backups/.gitkeep",
-      templateId: "framework.backups.gitkeep",
-      content: "",
-    }),
-    templateFile({
-      path: "references/README.md",
-      templateId: "references.readme",
-      content: referencesReadme(),
-    }),
-    templateFile({
-      path: "references/intake/README.md",
-      templateId: "references.intake.readme",
-      content: referencesIntakeReadme(),
-    }),
-    templateFile({
-      path: "references/frozen/README.md",
-      templateId: "references.frozen.readme",
-      content: referencesFrozenReadme(),
-    }),
-    templateFile({
-      path: "analyses/README.md",
-      templateId: "analyses.readme",
-      content: analysesReadme(),
-    }),
-    templateFile({
-      path: "analyses/references/.gitkeep",
-      templateId: "analyses.references.gitkeep",
-      content: "",
-    }),
-    templateFile({
-      path: "analyses/gaps/.gitkeep",
-      templateId: "analyses.gaps.gitkeep",
-      content: "",
-    }),
-    templateFile({
-      path: "analyses/patterns/.gitkeep",
-      templateId: "analyses.patterns.gitkeep",
-      content: "",
-    }),
-    templateFile({
-      path: "analyses/templates/reference-analysis-card.md",
-      templateId: "analysis.template.reference",
-      content: referenceAnalysisTemplate(),
-    }),
-    templateFile({
-      path: "analyses/templates/gap-analysis.md",
-      templateId: "analysis.template.gap",
-      content: gapAnalysisTemplate(),
-    }),
-    templateFile({
-      path: "analyses/templates/pattern-card.md",
-      templateId: "analysis.template.pattern",
-      content: patternCardTemplate(),
-    }),
-    templateFile({
-      path: "systems/README.md",
-      templateId: "systems.readme",
-      content: systemsReadme(),
-    }),
-    templateFile({
-      path: `systems/${core}/system.yaml`,
-      templateId: "system.core.contract",
-      content: systemContract(project, core),
-    }),
-    templateFile({
-      path: "iterations/README.md",
-      templateId: "iterations.readme",
-      content: iterationsReadme(),
-    }),
-    templateFile({
-      path: "iterations/templates/iteration-plan.md",
-      templateId: "iterations.template.plan",
-      content: iterationPlanTemplate(),
-    }),
-    templateFile({
-      path: "knowledge/README.md",
-      templateId: "knowledge.readme",
-      content: knowledgeReadme(),
-    }),
-    templateFile({
-      path: "knowledge/decisions/README.md",
-      templateId: "knowledge.decisions.readme",
-      content: "# decisions/\n\nAccepted decisions and ADRs.\n",
-    }),
-    templateFile({
-      path: "knowledge/decisions/ADR-TEMPLATE.md",
-      templateId: "knowledge.decisions.adr_template",
-      content: adrTemplate(),
-    }),
-    templateFile({
-      path: "knowledge/guides/README.md",
-      templateId: "knowledge.guides.readme",
-      content: "# guides/\n\nReusable operational guides.\n",
-    }),
-    templateFile({
-      path: "knowledge/patterns/README.md",
-      templateId: "knowledge.patterns.readme",
-      content: "# patterns/\n\nValidated reusable patterns only.\n",
-    }),
-    templateFile({
-      path: "knowledge/troubleshooting/README.md",
-      templateId: "knowledge.troubleshooting.readme",
-      content: "# troubleshooting/\n\nReusable failure modes and fixes.\n",
-    }),
-    templateFile({ path: "data/README.md", templateId: "data.readme", content: dataReadme() }),
-    templateFile({
-      path: "releases/README.md",
-      templateId: "releases.readme",
-      content: releasesReadme(),
-    }),
-  ];
+  const result: TemplateFile[] = [];
+  for (const entry of profile.templates) {
+    const resolvedPath = entry.path.replace("{core}", core);
+    const content = templateContentById(entry.templateId, project, core, mode);
+    if (content === null) continue; // unknown templateId: skip (profile can reference future templates)
+    result.push(templateFile({ path: resolvedPath, templateId: entry.templateId, content }));
+  }
+  return result;
+}
+
+/**
+ * Dispatcher: map a templateId to its content generator. Content functions
+ * remain in TS because of project/core/version interpolation. Adding a new
+ * template means adding a case here AND an entry in the profile yaml.
+ */
+function templateContentById(
+  templateId: string,
+  project: string,
+  core: string,
+  mode: "learning" | "absorption",
+): string | null {
+  switch (templateId) {
+    case "root.readme":
+      return rootReadme(project, core);
+    case "root.gitignore":
+      return rootGitignore();
+    case "framework.readme":
+      return frameworkReadme();
+    case "framework.version":
+      return `${CURRENT_VERSION}\n`;
+    case "framework.config":
+      return configYaml(project, core, mode);
+    case "framework.migrations.readme":
+      return migrationsReadme();
+    case "framework.events.gitkeep":
+    case "framework.backups.gitkeep":
+    case "analyses.references.gitkeep":
+    case "analyses.gaps.gitkeep":
+    case "analyses.patterns.gitkeep":
+      return "";
+    case "references.readme":
+      return referencesReadme();
+    case "references.intake.readme":
+      return referencesIntakeReadme();
+    case "references.frozen.readme":
+      return referencesFrozenReadme();
+    case "analyses.readme":
+      return analysesReadme();
+    case "analysis.template.reference":
+      return referenceAnalysisTemplate();
+    case "analysis.template.gap":
+      return gapAnalysisTemplate();
+    case "analysis.template.pattern":
+      return patternCardTemplate();
+    case "systems.readme":
+      return systemsReadme();
+    case "system.core.contract":
+      return systemContract(project, core);
+    case "iterations.readme":
+      return iterationsReadme();
+    case "iterations.template.plan":
+      return iterationPlanTemplate();
+    case "knowledge.readme":
+      return knowledgeReadme();
+    case "knowledge.decisions.readme":
+      return "# decisions/\n\nAccepted decisions and ADRs.\n";
+    case "knowledge.decisions.adr_template":
+      return adrTemplate();
+    case "knowledge.guides.readme":
+      return "# guides/\n\nReusable operational guides.\n";
+    case "knowledge.patterns.readme":
+      return "# patterns/\n\nValidated reusable patterns only.\n";
+    case "knowledge.troubleshooting.readme":
+      return "# troubleshooting/\n\nReusable failure modes and fixes.\n";
+    case "data.readme":
+      return dataReadme();
+    case "releases.readme":
+      return releasesReadme();
+    default:
+      return null;
+  }
 }
 
 export function rootReadme(project: string, core: string): string {
