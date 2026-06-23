@@ -146,6 +146,19 @@ function templateContentById(
       return dataReadme();
     case "releases.readme":
       return releasesReadme();
+    // Contest profile v2 (ADR-0006)
+    case "contest.manifest":
+      return contestManifest(project);
+    case "contest.selection":
+      return contestSelection();
+    case "contest.runs.jsonl":
+      return contestRunsJsonl();
+    case "contest.intake.readme":
+      return contestIntakeReadme();
+    case "contest.benchmarks.readme":
+      return contestBenchmarksReadme();
+    case "contest.submissions.readme":
+      return contestSubmissionsReadme();
     default:
       return null;
   }
@@ -614,4 +627,125 @@ export function dataReadme(): string {
 
 export function releasesReadme(): string {
   return "# releases/\n\nRelease notes, packages, and migration guides.\n";
+}
+
+// ---------------------------------------------------------------------------
+// Contest profile v2 templates (ADR-0006).
+// These are scoped to the `contest` profile; the metasystem default profile
+// does not reference them. Keep generators small and explicit — these files
+// hold contest-specific manifest semantics (spec/env/selection pointers,
+// runs.jsonl, intake/benchmarks/submissions READMEs).
+// ---------------------------------------------------------------------------
+
+export function contestManifest(project: string): string {
+  return dedent(`
+    {
+      "kind": "contest",
+      "schema_version": 1,
+      "contest_id": "${slugifyForJson(project)}",
+      "title": "${project}",
+      "status": "template",
+      "current_spec_id": null,
+      "current_environment_ids": [],
+      "current_selection_path": "systems/current.json",
+      "artifact_store": {
+        "type": "local-content-addressed",
+        "root": "intake/objects/sha256"
+      }
+    }
+  `);
+}
+
+export function contestSelection(): string {
+  // Q1+Q2 selection pointer (ADR-0006): a tiny pointer object, not a state
+  // machine. Set q1/q2 to a route name under systems/q1/<route>/ or
+  // systems/q2/<route>/ respectively. \`current\` is data, not a path.
+  return dedent(`
+    {
+      "kind": "selection",
+      "schema_version": 1,
+      "q1": null,
+      "q2": null,
+      "spec_id": null,
+      "environment_id": null,
+      "updated_at": null
+    }
+  `);
+}
+
+export function contestRunsJsonl(): string {
+  // Append-only run ledger. Each line is one run record. Empty by default —
+  // the file exists so absorb/check can detect the contest profile in use.
+  // Recommended row schema (kept minimal on purpose; add fields as needed):
+  //   {"ts": "...", "q": "q1|q2", "route": "...", "benchmark": "...", "spec": "...", "env": "...", "score": "...", "kind": "exploratory|formal"}
+  return "";
+}
+
+export function contestIntakeReadme(): string {
+  return dedent(`
+    # intake/
+
+    Raw external deliveries. Immutable layer (ADR-0006).
+
+    Every delivery lives at \`intake/<delivery-id>/\` and contains:
+    - the original artifact (ZIP, directory dump, etc.)
+    - \`sha256.txt\` recording the raw bytes hash
+    - \`source.md\` recording where it came from, when, and the prompt/context
+
+    Once written, a delivery is **not modified**. Mistakes create a new
+    delivery; the original stays as evidence of what was actually delivered.
+
+    This is the only place where Web AI ZIP packages or third-party deliveries
+    enter the project before any normalization. The normalized form (if any)
+    lives under \`systems/qN/<route>/\` with a back-reference to the delivery.
+  `);
+}
+
+export function contestBenchmarksReadme(): string {
+  return dedent(`
+    # benchmarks/
+
+    Versioned test sets with explicit applicability scope.
+
+    Each benchmark lives at \`benchmarks/<benchmark-id>/\` and should declare:
+    - what it tests (public samples / random / stress / regression / hidden)
+    - generator version and seed (if synthetic)
+    - leakage risk and interpretive scope
+
+    A run records its \`benchmark_id\` in \`runs.jsonl\`. Scores on a benchmark
+    are scoped to that benchmark — they do not auto-generalize to others.
+  `);
+}
+
+export function contestSubmissionsReadme(): string {
+  return dedent(`
+    # submissions/
+
+    Immutable submission packages (ADR-0006).
+
+    Each submission lives at \`submissions/<submission-id>/\` and contains:
+    - \`package.zip\` — the final upload bytes
+    - \`staging.sha256\` — file-tree hash of the staging directory the ZIP was built from
+    - \`package.sha256\` — hash of the ZIP bytes themselves
+    - \`manifest.md\` — references to the q1/q2 routes, spec, environment, and validation report
+
+    A submission is **assembled from sealed routes** referenced by a snapshot
+    of \`systems/current.json\`. Once sealed, the package is not edited; a new
+    submission gets a new id.
+
+    Double hashing matters: \`staging.sha256\` proves what content was packaged,
+    \`package.sha256\` proves what bytes were uploaded. Compression-tool
+    metadata differences (timestamps, file order) can change ZIP bytes without
+    changing content; both hashes together close that gap.
+  `);
+}
+
+// Helper for contestManifest: produce a JSON-safe lowercase slug.
+function slugifyForJson(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "")
+    .slice(0, 64);
 }

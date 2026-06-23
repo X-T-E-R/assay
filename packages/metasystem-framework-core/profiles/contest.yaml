@@ -1,16 +1,31 @@
-# Contest profile: a project that exists to absorb a specific external thing
-# (a contest, a paper, a spec to implement). The external material IS the
-# project — it lands under problem/ in absorption mode. Systems/ holds the
-# implementation; data/ holds contest datasets. No external-reference intake
-# (the contest is not a "reference", it is the problem), no iterations, no
-# releases. Shaped after the Huawei3 project (see ADR-0005).
+# Contest profile v2 (ADR-0006): a project that exists to absorb a specific
+# external thing (a contest, a paper, a spec to implement). The external
+# material IS the project — it lands under problem/ in absorption mode.
+#
+# v2 adopts five of pro's ContestOps insights (evaluation = function of 5
+# inputs, Q1+Q2 is a selection combination, raw-vs-normalized layering,
+# current is a pointer, hard/soft gate separation) while rejecting its
+# eleven-object / five-state-machine / nine-gate over-engineering. See
+# .framework/decisions/ADR-0006-contest-profile-v2-lazy-rigor.md.
+#
+# Three immutable objects only:
+#   1. intake delivery     — original ZIP/dir with sha256 (intake/<id>/)
+#   2. sealed route        — sealed at submission time (systems/qN/<route>/)
+#   3. submission package  — staging tree sha256 + ZIP byte sha256 (submissions/<id>/)
+#
+# Everything else (runs, decisions, memos, references) lives in markdown +
+# append-only logs. Audit ceremony is lazy: triggered at submission, not
+# imposed on every edit.
 
-version: 1
+version: 2
 mode: absorption
 modules:
   - knowledge
   - events
   - adr
+  - intake
+  - submissions
+  - analyses
 
 dirs:
   - .framework/events
@@ -23,14 +38,17 @@ dirs:
   - knowledge/patterns
   - knowledge/troubleshooting
   - data
+  - intake
+  - benchmarks
+  - submissions
+  - analyses/references
+  - analyses/templates
+  - references/frozen
 
-# Absorption mode: problem/ holds the contest's own source materials.
 dirs_learning: []
 dirs_absorption:
   - problem
 
-# Minimal templates. Analyses still useful for recording what was learned from
-# the problem materials, but references/iteration templates are omitted.
 templates:
   - { path: "README.md", templateId: "root.readme" }
   - { path: ".gitignore", templateId: "root.gitignore" }
@@ -49,3 +67,12 @@ templates:
   - { path: "knowledge/patterns/README.md", templateId: "knowledge.patterns.readme" }
   - { path: "knowledge/troubleshooting/README.md", templateId: "knowledge.troubleshooting.readme" }
   - { path: "data/README.md", templateId: "data.readme" }
+  - { path: "contest.json", templateId: "contest.manifest" }
+  - { path: "systems/current.json", templateId: "contest.selection" }
+  - { path: "runs.jsonl", templateId: "contest.runs.jsonl" }
+  - { path: "intake/README.md", templateId: "contest.intake.readme" }
+  - { path: "benchmarks/README.md", templateId: "contest.benchmarks.readme" }
+  - { path: "submissions/README.md", templateId: "contest.submissions.readme" }
+  - { path: "analyses/README.md", templateId: "analyses.readme" }
+  - { path: "analyses/templates/reference-analysis-card.md", templateId: "analysis.template.reference" }
+  - { path: "references/frozen/README.md", templateId: "references.frozen.readme" }

@@ -504,16 +504,39 @@ export async function checkFramework(
   options: CheckFrameworkOptions,
 ): Promise<CheckFrameworkResult> {
   const root = path.resolve(options.root);
-  const checkTargets = [
+  // Base structure check targets: always-required runtime files plus the
+  // *profile-declared* primary directories. Reading the profile here makes
+  // `check` aware of profile-trimmed shapes (e.g. contest v2 has no
+  // iterations/) without per-profile branching.
+  const checkTargets: Array<readonly [string, string]> = [
     [".framework directory", ".framework"],
     [".framework/VERSION", ".framework/VERSION"],
     [".framework/manifest.json", ".framework/manifest.json"],
-    ["references directory", "references"],
-    ["analyses directory", "analyses"],
     ["systems directory", "systems"],
-    ["iterations directory", "iterations"],
     ["knowledge directory", "knowledge"],
-  ] as const;
+  ];
+
+  // If a workspace declares its profile, augment checks with that profile's
+  // top-level dirs (intake/, problem/, references/, analyses/, iterations/,
+  // benchmarks/, submissions/...). Default to a permissive check when the
+  // profile cannot be read.
+  try {
+    const installedProfile = await readInstalledProfileName(root);
+    const profile = await loadProfile(installedProfile ?? "metasystem");
+    const mode = await readFrameworkMode(root);
+    const topLevels = new Set<string>();
+    for (const d of dirsForMode(profile, mode)) {
+      const top = d.split("/")[0];
+      if (top && !top.startsWith(".") && top !== "systems" && top !== "knowledge") {
+        topLevels.add(top);
+      }
+    }
+    for (const dir of topLevels) {
+      checkTargets.push([`${dir} directory`, dir]);
+    }
+  } catch {
+    // unreadable profile/config; fall back to base targets only
+  }
   const rows: CheckRow[] = [];
 
   for (const [label, target] of checkTargets) {
@@ -1241,6 +1264,23 @@ export async function readFrameworkMode(root: string): Promise<"learning" | "abs
     // unreadable config; default
   }
   return "learning";
+}
+
+/**
+ * Read the installed profile name from a workspace's `.framework/config.yaml`.
+ * Returns null when no profile field is recorded (legacy v3 workspaces).
+ */
+export async function readInstalledProfileName(root: string): Promise<string | null> {
+  const configPath = path.join(root, ".framework", "config.yaml");
+  if (!(await exists(configPath))) return null;
+  try {
+    const content = await readFile(configPath, "utf8");
+    const match = content.match(/^\s*profile:\s*(\w+)/m);
+    if (match?.[1]) return match[1];
+  } catch {
+    // unreadable config
+  }
+  return null;
 }
 
 export async function absorbReference(

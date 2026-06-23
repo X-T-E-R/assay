@@ -862,23 +862,66 @@ describe("workspace operations", () => {
     expect(config).toContain("profile: library");
   });
 
-  it("contest profile scaffolds problem/ in absorption mode, no references or iterations", async () => {
+  it("contest profile v2 scaffolds problem/ + intake/benchmarks/submissions in absorption mode", async () => {
     const root = path.join(await tempDir(), "contest-profile");
     await initFramework({ target: root, name: "ConProj", profile: "contest" });
 
-    // Contest-specific: problem/ present (absorption mode from profile default)
+    // Core contest dirs (v1 + v2)
     expect(await exists(path.join(root, "problem"))).toBe(true);
     expect(await exists(path.join(root, "systems"))).toBe(true);
     expect(await exists(path.join(root, "data"))).toBe(true);
 
-    // No reference intake, no iterations
-    expect(await exists(path.join(root, "references"))).toBe(false);
+    // Contest profile v2 (ADR-0006): three immutable-object layers
+    expect(await exists(path.join(root, "intake"))).toBe(true);
+    expect(await exists(path.join(root, "benchmarks"))).toBe(true);
+    expect(await exists(path.join(root, "submissions"))).toBe(true);
+
+    // v2 also re-introduces references/ (third-party side evidence) and
+    // analyses/ (thought/reference layer). v1 had stripped these too eagerly.
+    expect(await exists(path.join(root, "references", "frozen"))).toBe(true);
+    expect(await exists(path.join(root, "analyses", "references"))).toBe(true);
+
+    // contest v2 still rejects iterations/ — iteration ceremony is not used here
     expect(await exists(path.join(root, "iterations"))).toBe(false);
 
     // Mode defaults to absorption from the contest profile
     const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
     expect(config).toContain("mode: absorption");
     expect(config).toContain("profile: contest");
+    expect(config).toContain("profile_version: 2");
+  });
+
+  it("contest profile v2 writes contest.json + selection pointer + runs.jsonl", async () => {
+    const root = path.join(await tempDir(), "contest-v2-manifests");
+    await initFramework({ target: root, name: "Huawei3 Demo", profile: "contest" });
+
+    // contest.json manifest at root
+    const manifestPath = path.join(root, "contest.json");
+    expect(await exists(manifestPath)).toBe(true);
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    expect(manifest.kind).toBe("contest");
+    expect(manifest.contest_id).toBe("huawei3-demo");
+    expect(manifest.current_selection_path).toBe("systems/current.json");
+
+    // Q1+Q2 selection pointer
+    const selectionPath = path.join(root, "systems", "current.json");
+    expect(await exists(selectionPath)).toBe(true);
+    const selection = JSON.parse(await readFile(selectionPath, "utf8"));
+    expect(selection.kind).toBe("selection");
+    expect(selection).toHaveProperty("q1");
+    expect(selection).toHaveProperty("q2");
+
+    // runs.jsonl exists (append-only log starts empty)
+    const runsPath = path.join(root, "runs.jsonl");
+    expect(await exists(runsPath)).toBe(true);
+    expect(await readFile(runsPath, "utf8")).toBe("");
+
+    // intake/benchmarks/submissions READMEs explain the immutable-object contracts
+    const intakeReadme = await readFile(path.join(root, "intake", "README.md"), "utf8");
+    expect(intakeReadme).toContain("Immutable layer");
+    const submissionsReadme = await readFile(path.join(root, "submissions", "README.md"), "utf8");
+    expect(submissionsReadme).toContain("staging.sha256");
+    expect(submissionsReadme).toContain("package.sha256");
   });
 
   it("creates deterministic analysis and iteration artifacts for a supplied date", async () => {

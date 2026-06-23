@@ -424,13 +424,29 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
-      const profile = await loadProfile("metasystem");
+      // Prefer the workspace's installed profile name; fall back to metasystem.
+      let installedName: string | null = null;
+      let installedVersion: number | null = null;
+      try {
+        const root = await discoveredRoot(commandOptions.root);
+        const configPath = path.join(root, ".framework", "config.yaml");
+        const configContent = await readFile(configPath, "utf8");
+        const installedMatch = configContent.match(/profile_version:\s*(\d+)/);
+        const installedNameMatch = configContent.match(/^\s*profile:\s*(\w+)/m);
+        if (installedNameMatch?.[1]) installedName = installedNameMatch[1];
+        if (installedMatch?.[1]) installedVersion = Number.parseInt(installedMatch[1], 10);
+      } catch {
+        // not inside a workspace
+      }
+
+      const profile = await loadProfile(installedName ?? "metasystem");
       if (commandOptions.json) {
         writeJson(output, {
           name: profile.name,
           version: profile.version,
           mode: profile.mode,
           modules: profile.modules,
+          installed_version: installedVersion,
         });
         return;
       }
@@ -438,27 +454,15 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Version: ${profile.version}`);
       writeLine(output, "stdout", `Default mode: ${profile.mode}`);
       writeLine(output, "stdout", `Modules: ${profile.modules.join(", ")}`);
-      // If run inside a workspace, show the installed profile version too.
-      try {
-        const root = await discoveredRoot(commandOptions.root);
-        const configPath = path.join(root, ".framework", "config.yaml");
-        const configContent = await readFile(configPath, "utf8");
-        const installedMatch = configContent.match(/profile_version:\s*(\d+)/);
-        const installedNameMatch = configContent.match(/^\s*profile:\s*(\w+)/m);
-        if (installedMatch && installedNameMatch) {
-          const installed = Number.parseInt(installedMatch[1] ?? "0", 10);
-          const installedName = installedNameMatch[1] ?? "metasystem";
-          writeLine(output, "stdout", `Installed: ${installedName} v${installed}`);
-          if (installed !== profile.version) {
-            writeLine(
-              output,
-              "stdout",
-              `Note: installed profile v${installed} differs from current v${profile.version}. Run \`metasystem update --dry-run\` to plan an upgrade.`,
-            );
-          }
+      if (installedVersion !== null && installedName) {
+        writeLine(output, "stdout", `Installed: ${installedName} v${installedVersion}`);
+        if (installedVersion !== profile.version) {
+          writeLine(
+            output,
+            "stdout",
+            `Note: installed profile v${installedVersion} differs from current v${profile.version}. Run \`metasystem update --dry-run\` to plan an upgrade.`,
+          );
         }
-      } catch {
-        // not inside a workspace — just show the bundled profile
       }
     });
 
