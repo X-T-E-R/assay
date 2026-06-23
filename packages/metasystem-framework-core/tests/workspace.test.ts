@@ -862,7 +862,7 @@ describe("workspace operations", () => {
     expect(config).toContain("profile: library");
   });
 
-  it("contest profile v2 scaffolds problem/ + intake/benchmarks/submissions in absorption mode", async () => {
+  it("contest profile v3 scaffolds problem/ + intake/benchmarks/submissions + tools/iterations/analyses", async () => {
     const root = path.join(await tempDir(), "contest-profile");
     await initFramework({ target: root, name: "ConProj", profile: "contest" });
 
@@ -871,57 +871,60 @@ describe("workspace operations", () => {
     expect(await exists(path.join(root, "systems"))).toBe(true);
     expect(await exists(path.join(root, "data"))).toBe(true);
 
-    // Contest profile v2 (ADR-0006): three immutable-object layers
+    // Three immutable-object layers (v2 ADR-0006 kept in v3)
     expect(await exists(path.join(root, "intake"))).toBe(true);
     expect(await exists(path.join(root, "benchmarks"))).toBe(true);
     expect(await exists(path.join(root, "submissions"))).toBe(true);
 
-    // v2 also re-introduces references/ (third-party side evidence) and
-    // analyses/ (thought/reference layer). v1 had stripped these too eagerly.
-    expect(await exists(path.join(root, "references", "frozen"))).toBe(true);
+    // v3 restorations (double-sided adaptation against real Huawei3):
+    // iterations/ and tools/ were wrongly stripped in v2 — restored here.
+    expect(await exists(path.join(root, "iterations"))).toBe(true);
+    expect(await exists(path.join(root, "iterations", "templates"))).toBe(true);
+    expect(await exists(path.join(root, "tools"))).toBe(true);
+
+    // analyses keeps the default 4-folder split (references/gaps/patterns/templates)
     expect(await exists(path.join(root, "analyses", "references"))).toBe(true);
+    expect(await exists(path.join(root, "analyses", "gaps"))).toBe(true);
+    expect(await exists(path.join(root, "analyses", "patterns"))).toBe(true);
+    expect(await exists(path.join(root, "analyses", "templates"))).toBe(true);
 
-    // contest v2 still rejects iterations/ — iteration ceremony is not used here
-    expect(await exists(path.join(root, "iterations"))).toBe(false);
+    // references/frozen for third-party side evidence
+    expect(await exists(path.join(root, "references", "frozen"))).toBe(true);
 
-    // Mode defaults to absorption from the contest profile
+    // handoffs becomes a governance-layer location under .framework/
+    expect(await exists(path.join(root, ".framework", "handoffs"))).toBe(true);
+
+    // Mode + profile_version
     const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
     expect(config).toContain("mode: absorption");
     expect(config).toContain("profile: contest");
-    expect(config).toContain("profile_version: 2");
+    expect(config).toContain("profile_version: 3");
   });
 
-  it("contest profile v2 writes contest.json + selection pointer + runs.jsonl", async () => {
-    const root = path.join(await tempDir(), "contest-v2-manifests");
+  it("contest profile v3 selection schema uses generic questions[] list", async () => {
+    const root = path.join(await tempDir(), "contest-v3-manifests");
     await initFramework({ target: root, name: "Huawei3 Demo", profile: "contest" });
 
-    // contest.json manifest at root
-    const manifestPath = path.join(root, "contest.json");
-    expect(await exists(manifestPath)).toBe(true);
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    // contest.json manifest at root (unchanged from v2)
+    const manifest = JSON.parse(await readFile(path.join(root, "contest.json"), "utf8"));
     expect(manifest.kind).toBe("contest");
-    expect(manifest.contest_id).toBe("huawei3-demo");
     expect(manifest.current_selection_path).toBe("systems/current.json");
 
-    // Q1+Q2 selection pointer
-    const selectionPath = path.join(root, "systems", "current.json");
-    expect(await exists(selectionPath)).toBe(true);
-    const selection = JSON.parse(await readFile(selectionPath, "utf8"));
+    // v3 selection: questions[] generic list, not q1/q2 hardcoded fields
+    const selection = JSON.parse(
+      await readFile(path.join(root, "systems", "current.json"), "utf8"),
+    );
     expect(selection.kind).toBe("selection");
-    expect(selection).toHaveProperty("q1");
-    expect(selection).toHaveProperty("q2");
+    expect(Array.isArray(selection.questions)).toBe(true);
+    expect(selection.questions).toEqual([]);
+    expect(selection).not.toHaveProperty("q1"); // v2 fields no longer in v3 schema
+    expect(selection).not.toHaveProperty("q2");
+    expect(selection.schema_version).toBe("v3-1");
 
-    // runs.jsonl exists (append-only log starts empty)
-    const runsPath = path.join(root, "runs.jsonl");
-    expect(await exists(runsPath)).toBe(true);
-    expect(await readFile(runsPath, "utf8")).toBe("");
-
-    // intake/benchmarks/submissions READMEs explain the immutable-object contracts
-    const intakeReadme = await readFile(path.join(root, "intake", "README.md"), "utf8");
-    expect(intakeReadme).toContain("Immutable layer");
-    const submissionsReadme = await readFile(path.join(root, "submissions", "README.md"), "utf8");
-    expect(submissionsReadme).toContain("staging.sha256");
-    expect(submissionsReadme).toContain("package.sha256");
+    // runs.jsonl + tools/README explain contract
+    expect(await readFile(path.join(root, "runs.jsonl"), "utf8")).toBe("");
+    const toolsReadme = await readFile(path.join(root, "tools", "README.md"), "utf8");
+    expect(toolsReadme).toContain("tools/judge/");
   });
 
   it("creates deterministic analysis and iteration artifacts for a supplied date", async () => {

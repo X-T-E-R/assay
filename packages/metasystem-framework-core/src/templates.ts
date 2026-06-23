@@ -159,6 +159,8 @@ function templateContentById(
       return contestBenchmarksReadme();
     case "contest.submissions.readme":
       return contestSubmissionsReadme();
+    case "contest.tools.readme":
+      return contestToolsReadme();
     default:
       return null;
   }
@@ -656,16 +658,37 @@ export function contestManifest(project: string): string {
   `);
 }
 
+/**
+ * Q1+Q2 selection pointer (v2 ADR-0006). Deprecated in v3 — use
+ * contestSelectionV3 instead once migration completes. The new form
+ * uses a generic `questions: []` list where each entry carries an id,
+ * route path,  and an optional sealed_tree_hash. This handles any
+ * number of questions (not just 2).
+ */
 export function contestSelection(): string {
-  // Q1+Q2 selection pointer (ADR-0006): a tiny pointer object, not a state
-  // machine. Set q1/q2 to a route name under systems/q1/<route>/ or
-  // systems/q2/<route>/ respectively. \`current\` is data, not a path.
+  // v2 backward-compatible fallback — delegates to the new schema.
+  return contestSelectionV3();
+}
+
+/**
+ * Selection pointer v3: generic `questions: []` list.
+ *
+ * Example usage:
+ *   { "kind": "selection", "questions": [
+ *       { "id": "q1", "base_path": "systems/wireless-solution-systems/question-1-ai-forecasting", "route": "v6-main-gap-floor" },
+ *       { "id": "q2", "base_path": "systems/wireless-solution-systems/question-2-scheduler", "route": "v6-o3-52-main" }
+ *   ]}
+ *
+ * `base_path` is the absolute question directory under systems/<core>/,
+ * `route` is the folder name under that base_path. The sealed tree hash
+ * is null by default; it gets stamped when a submission is assembled.
+ */
+export function contestSelectionV3(): string {
   return dedent(`
     {
       "kind": "selection",
-      "schema_version": 1,
-      "q1": null,
-      "q2": null,
+      "schema_version": "v3-1",
+      "questions": [],
       "spec_id": null,
       "environment_id": null,
       "updated_at": null
@@ -737,6 +760,26 @@ export function contestSubmissionsReadme(): string {
     \`package.sha256\` proves what bytes were uploaded. Compression-tool
     metadata differences (timestamps, file order) can change ZIP bytes without
     changing content; both hashes together close that gap.
+  `);
+}
+
+export function contestToolsReadme(): string {
+  return dedent(`
+    # tools/
+
+    Contest-specific tooling. Conventional sub-locations:
+
+    - \`tools/judge/\` — local evaluator/judge (Dockerfile, runner, scoring config).
+      The judge is the local replica of the contest's official scoring environment.
+    - \`tools/pack/\` — submission packagers (assembles q1+q2 into the contest's
+      required ZIP layout, stamps both staging-tree and ZIP-byte SHA-256).
+    - \`tools/import/\` — importers for external deliveries (intake/<id>/ → a
+      normalized form usable as a candidate route).
+    - \`tools/handoff/\` — handoff helpers if any contest-specific glue is needed
+      (general handoff lives under \`.framework/handoffs/\`).
+
+    Tools that are not contest-specific belong elsewhere (handoff generators in
+    \`.framework/handoffs/\`, generic build scripts under each route's source).
   `);
 }
 

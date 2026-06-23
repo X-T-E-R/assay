@@ -1,23 +1,21 @@
-# Contest profile v2 (ADR-0006): a project that exists to absorb a specific
-# external thing (a contest, a paper, a spec to implement). The external
-# material IS the project — it lands under problem/ in absorption mode.
+# Contest profile v3 (post double-sided adaptation against Huawei3 real shape).
 #
-# v2 adopts five of pro's ContestOps insights (evaluation = function of 5
-# inputs, Q1+Q2 is a selection combination, raw-vs-normalized layering,
-# current is a pointer, hard/soft gate separation) while rejecting its
-# eleven-object / five-state-machine / nine-gate over-engineering. See
-# .framework/decisions/ADR-0006-contest-profile-v2-lazy-rigor.md.
+# v3 corrects two errors in v2:
+#   1. v2 framed contest profile as a "stripped-down" default profile (no
+#      analyses/, iterations/, releases). Real Huawei3 use proved that
+#      iterations/ and analyses/ are heavily used as metasystem governance
+#      artefacts in contest projects too. v3 restores them.
+#   2. v2 hardcoded systems/q1/<route> and current.json {q1, q2}. Real
+#      projects have a project-core layer (`systems/<core>/<question-id>/
+#      <route>/`) and variable problem counts. v3 changes current.json to
+#      a generic `questions: []` list with absolute base_paths.
 #
-# Three immutable objects only:
-#   1. intake delivery     — original ZIP/dir with sha256 (intake/<id>/)
-#   2. sealed route        — sealed at submission time (systems/qN/<route>/)
-#   3. submission package  — staging tree sha256 + ZIP byte sha256 (submissions/<id>/)
-#
-# Everything else (runs, decisions, memos, references) lives in markdown +
-# append-only logs. Audit ceremony is lazy: triggered at submission, not
-# imposed on every edit.
+# Three immutable objects (kept from v2): intake delivery, sealed route
+# (sealed only at submission time), submission package. Lazy rigor is still
+# the philosophy (see ADR-0006); the v3 revision is purely about widening the
+# scaffold to match real-project usage. See ADR-0007.
 
-version: 2
+version: 3
 mode: absorption
 modules:
   - knowledge
@@ -26,11 +24,14 @@ modules:
   - intake
   - submissions
   - analyses
+  - iterations
+  - tools
 
 dirs:
   - .framework/events
   - .framework/backups
   - .framework/migrations
+  - .framework/handoffs
   - systems
   - systems/archive
   - knowledge/guides
@@ -41,9 +42,14 @@ dirs:
   - intake
   - benchmarks
   - submissions
+  - tools
   - analyses/references
+  - analyses/gaps
+  - analyses/patterns
   - analyses/templates
+  - iterations/templates
   - references/frozen
+  - references/intake
 
 dirs_learning: []
 dirs_absorption:
@@ -73,6 +79,11 @@ templates:
   - { path: "intake/README.md", templateId: "contest.intake.readme" }
   - { path: "benchmarks/README.md", templateId: "contest.benchmarks.readme" }
   - { path: "submissions/README.md", templateId: "contest.submissions.readme" }
+  - { path: "tools/README.md", templateId: "contest.tools.readme" }
   - { path: "analyses/README.md", templateId: "analyses.readme" }
   - { path: "analyses/templates/reference-analysis-card.md", templateId: "analysis.template.reference" }
+  - { path: "analyses/templates/gap-analysis.md", templateId: "analysis.template.gap" }
+  - { path: "analyses/templates/pattern-card.md", templateId: "analysis.template.pattern" }
+  - { path: "iterations/README.md", templateId: "iterations.readme" }
+  - { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" }
   - { path: "references/frozen/README.md", templateId: "references.frozen.readme" }
