@@ -1,17 +1,17 @@
 ---
-name: metasystem-builder
-description: "Build, adopt, update, analyze, and iterate MetaSystem framework workspaces. Use when the user wants to initialize a MetaSystem project, adopt an existing project into MetaSystem, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-MetaSystem knowledge management workflows."
+name: assay-builder
+description: "Build, adopt, update, analyze, and iterate Assay framework workspaces. Use when the user wants to initialize an Assay project, adopt an existing project into Assay, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-Assay knowledge management workflows."
 ---
 
-# MetaSystem Builder
+# Assay Builder
 
-Build and maintain a MetaSystem external-system-learning framework — a versioned project layer that stores external systems, analyzes them, converts validated patterns into our own framework, and iterates that framework over time.
+Build and maintain an Assay external-system-learning framework — a versioned project layer that stores external systems, analyzes them, converts validated patterns into our own framework, and iterates that framework over time.
 
 ## Prerequisites
 
 - Node.js >= 18, `pnpm`
-- This skill lives inside the `metasystem-kit` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running `node scripts/install.mjs`, which builds the workspace and junctions this skill into your skills dir (default `~/.agents/skills`) so it resolves back to the repo.
-- Invoke via the skill-local launcher `scripts/metasystem.mjs`; it walks up to the repo and runs `packages/metasystem-framework-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — `install.mjs` builds it, or build manually with `pnpm install && pnpm build`.
+- This skill lives inside the `assay` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running `node scripts/install.mjs`, which builds the workspace and junctions this skill into your skills dir (default `~/.agents/skills`) so it resolves back to the repo.
+- Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — `install.mjs` builds it, or build manually with `pnpm install && pnpm build`.
 - Read `references/cli-setup.md` for install, build, and invocation details
 
 ## Core loop
@@ -24,55 +24,55 @@ Each transition has a CLI command and writes an event to `.framework/events/YYYY
 
 ## CLI quick reference
 
-Prefer the repo's CLI for all workspace operations — it preserves user files, writes a manifest, and keeps updates auditable. Invoke it from any working directory with the skill-local launcher (resolve `scripts/metasystem.mjs` relative to the skill root):
+Prefer the repo's CLI for all workspace operations — it preserves user files, writes a manifest, and keeps updates auditable. Invoke it from any working directory with the skill-local launcher (resolve `scripts/assay.mjs` relative to the skill root):
 
 ```bash
-node <skill-root>/scripts/metasystem.mjs <command>
+node <skill-root>/scripts/assay.mjs <command>
 ```
 
 ```bash
 # Workspace lifecycle
-metasystem init [target-dir] --name <project-name> [--mode learning|absorption]
-metasystem adopt --dry-run                        # always dry-run first
-metasystem adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
-metasystem check                                  # semantic + structural + content-health validation
-metasystem status                                 # systems + open iterations + knowledge counts
-metasystem update --dry-run                       # always dry-run first
-metasystem migrate-layout --dry-run               # always dry-run first; v2→v3 included
+assay init [target-dir] --name <project-name> [--mode learning|absorption]
+assay adopt --dry-run                        # always dry-run first
+assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
+assay check                                  # semantic + structural + content-health validation
+assay status                                 # systems + open iterations + knowledge counts
+assay update --dry-run                       # always dry-run first
+assay migrate-layout --dry-run               # always dry-run first; v2→v3 included
 
 # Reference / analysis / iteration / knowledge
-metasystem absorb <source-dir> [--name <name>]        # freeze + open a pre-filled analysis in ONE step
-metasystem reference add <source-dir> <name>           # freeze only (writes reference.yaml, analyzed: false)
-metasystem analysis new "Title" [--for-reference <path>]  # open an analysis; bind it to a frozen reference
-metasystem analysis close <path> --exit adopt|reject|experiment|adr  # closes analysis; flips reference.yaml analyzed
-metasystem iteration start "Title"
-metasystem iteration close <selector> --result applied|rejected|retest [--note ...]
-metasystem knowledge add <type> "Title" [--from-analysis <path>] [--from-iteration <path>]
+assay absorb <source-dir> [--name <name>]        # freeze + open a pre-filled analysis in ONE step
+assay reference add <source-dir> <name>           # freeze only (writes reference.yaml, analyzed: false)
+assay analysis new "Title" [--for-reference <path>]  # open an analysis; bind it to a frozen reference
+assay analysis close <path> --exit adopt|reject|experiment|adr  # closes analysis; flips reference.yaml analyzed
+assay iteration start "Title"
+assay iteration close <selector> --result applied|rejected|retest [--note ...]
+assay knowledge add <type> "Title" [--from-analysis <path>] [--from-iteration <path>]
 
 # ADRs
-metasystem adr new "Title" [--from-analysis <path>] [--from-iteration <path>]
-metasystem adr accept <selector>
-metasystem adr supersede <old-selector> <new-selector>
-metasystem adr deprecate <selector>
-metasystem adr list [--status proposed|accepted|superseded|deprecated] [--json]
-metasystem adr show <selector> [--json]
+assay adr new "Title" [--from-analysis <path>] [--from-iteration <path>]
+assay adr accept <selector>
+assay adr supersede <old-selector> <new-selector>
+assay adr deprecate <selector>
+assay adr list [--status proposed|accepted|superseded|deprecated] [--json]
+assay adr show <selector> [--json]
 
 # System registry (layout v3+)
-metasystem system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
-metasystem system promote <selector>
-metasystem system archive <selector> --dry-run | --apply
-metasystem system list [--status primary|active|superseded|archived] [--json]
-metasystem system show <selector>
+assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
+assay system promote <selector>
+assay system archive <selector> --dry-run | --apply
+assay system list [--status primary|active|superseded|archived] [--json]
+assay system show <selector>
 
 # Project registry
-metasystem projects list | scan | show <selector> | forget <selector> | prune
+assay projects list | scan | show <selector> | forget <selector> | prune
 ```
 
 For build instructions, PATH setup, and registry commands, read `references/cli-setup.md`. For lifecycle close semantics, read `references/lifecycle-commands.md`. For ADR state, frontmatter, and supersede-chain rules, read `references/adr-workflow.md`.
 
 ## Adopt an existing project
 
-Use `adopt` when the current directory already contains a non-MetaSystem project. Always run `--dry-run` first, review the plan, then `--apply`. The CLI archives root contents under `.old/<timestamp>/`, preserves `.git/`, and creates the standard scaffold.
+Use `adopt` when the current directory already contains a non-Assay project. Always run `--dry-run` first, review the plan, then `--apply`. The CLI archives root contents under `.old/<timestamp>/`, preserves `.git/`, and creates the standard scaffold.
 
 For the full post-adoption workflow (inspect, analyze, register systems, confirm direction, move artifacts, validate), read `references/adoption-workflow.md`.
 
@@ -110,7 +110,7 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.
-2. Run `init` if empty (use `--mode absorption` when the whole project exists to absorb a specific external thing — e.g. a contest, a paper, a repo you are rebuilding — so its official materials land in `problem/` instead of `references/frozen/`). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has a MetaSystem manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
+2. Run `init` if empty (use `--mode absorption` when the whole project exists to absorb a specific external thing — e.g. a contest, a paper, a repo you are rebuilding — so its official materials land in `problem/` instead of `references/frozen/`). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
 3. Use `projects list` or `projects scan <parent-dir>` to locate existing workspaces.
 
 ### Absorption pipeline (the core loop, made executable)
@@ -139,7 +139,7 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 ## Anti-rules
 
 - Do not overwrite existing user files by default.
-- Do not adopt an already initialized MetaSystem workspace; use `update` or `migrate-layout` instead.
+- Do not adopt an already initialized Assay workspace; use `update` or `migrate-layout` instead.
 - Do not put external project source under `systems/`; in learning mode freeze it under the workspace's `frozen/` references area; in absorption mode land it under `problem/` via `absorb`.
 - Do not hand-edit `.framework/manifest.json`, `.framework/systems-registry.json`, or `.framework/adrs.json`; use the CLI.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
@@ -163,8 +163,8 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 After any init, adopt, update, or migrate operation:
 
 ```bash
-metasystem check
-metasystem status
+assay check
+assay status
 ```
 
 `check` reports four severity levels:

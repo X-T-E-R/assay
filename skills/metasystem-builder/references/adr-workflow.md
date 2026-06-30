@@ -1,6 +1,6 @@
 # ADR workflow
 
-MetaSystem ADRs are numbered architecture decision records stored as markdown under `knowledge/decisions/` and indexed in `.framework/adrs.json`. Use ADRs for durable decisions that need status, replacement history, and validation. Use `knowledge add decision` only for reusable decision notes that do not need an ADR lifecycle.
+Assay ADRs are numbered architecture decision records stored as markdown under `knowledge/decisions/` and indexed in `.framework/adrs.json`. Use ADRs for durable decisions that need status, replacement history, and validation. Use `knowledge add decision` only for reusable decision notes that do not need an ADR lifecycle.
 
 ## Files
 
@@ -27,7 +27,7 @@ related_iteration: null
 ---
 ```
 
-`metasystem check` reports missing frontmatter fields as warnings. It reports broken supersede chains as errors.
+`assay check` reports missing frontmatter fields as warnings. It reports broken supersede chains as errors.
 
 ## State machine
 
@@ -45,7 +45,7 @@ related_iteration: null
 Create a draft:
 
 ```bash
-metasystem adr new "Use registry-backed ADRs" \
+assay adr new "Use registry-backed ADRs" \
   [--from-analysis analyses/references/example.md] \
   [--from-iteration iterations/2026-06-17-example]
 ```
@@ -53,26 +53,26 @@ metasystem adr new "Use registry-backed ADRs" \
 Accept a draft:
 
 ```bash
-metasystem adr accept ADR-0001-use-registry-backed-adrs
+assay adr accept ADR-0001-use-registry-backed-adrs
 ```
 
 Supersede an accepted ADR:
 
 ```bash
-metasystem adr supersede ADR-0001-use-registry-backed-adrs ADR-0002-revised-registry-backed-adrs
+assay adr supersede ADR-0001-use-registry-backed-adrs ADR-0002-revised-registry-backed-adrs
 ```
 
 Deprecate without replacement:
 
 ```bash
-metasystem adr deprecate ADR-0001-use-registry-backed-adrs
+assay adr deprecate ADR-0001-use-registry-backed-adrs
 ```
 
 Inspect:
 
 ```bash
-metasystem adr list [--status accepted] [--json]
-metasystem adr show ADR-0001 [--json]
+assay adr list [--status accepted] [--json]
+assay adr show ADR-0001 [--json]
 ```
 
 Selectors can be the full ADR id, a unique id prefix, or the ADR number.
@@ -82,8 +82,8 @@ Selectors can be the full ADR id, a unique id prefix, or the ADR number.
 When an analysis closes with an ADR exit:
 
 ```bash
-metasystem analysis close analyses/references/example.md --exit adr
-metasystem adr new "Decision title" --from-analysis analyses/references/example.md
+assay analysis close analyses/references/example.md --exit adr
+assay adr new "Decision title" --from-analysis analyses/references/example.md
 ```
 
 The close command records that the analysis needs an ADR. It does not create the ADR automatically.
@@ -93,7 +93,7 @@ The close command records that the analysis needs an ADR. It does not create the
 Run:
 
 ```bash
-metasystem check
+assay check
 ```
 
 `check` reports errors for:

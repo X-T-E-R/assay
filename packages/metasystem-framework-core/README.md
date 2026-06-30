@@ -1,6 +1,6 @@
-# metasystem-framework-core
+# assay-core
 
-Reusable TypeScript operations for MetaSystem framework workspaces.
+Reusable TypeScript operations for Assay framework workspaces.
 
 This package owns framework behavior that can be shared by CLI and future GUI adapters:
 
@@ -15,7 +15,7 @@ The core package must stay free of process concerns: no argv parsing, terminal o
 ## Development
 
 ```powershell
-pnpm --filter metasystem-framework-core build
-pnpm --filter metasystem-framework-core typecheck
-pnpm --filter metasystem-framework-core test
+pnpm --filter assay-core build
+pnpm --filter assay-core typecheck
+pnpm --filter assay-core test
 ```

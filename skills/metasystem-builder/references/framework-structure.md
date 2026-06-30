@@ -1,6 +1,6 @@
 # Framework directory structure
 
-Every MetaSystem workspace converges to this layout (layout v3):
+Every Assay workspace converges to this layout (layout v3):
 
 ```text
 <project-root>/
@@ -23,7 +23,7 @@ Every MetaSystem workspace converges to this layout (layout v3):
 
 ## Project modes
 
-A workspace declares its mode in `.framework/config.yaml` (`mode: learning` or `mode: absorption`), set by `metasystem init --mode <mode>`.
+A workspace declares its mode in `.framework/config.yaml` (`mode: learning` or `mode: absorption`), set by `assay init --mode <mode>`.
 
 - **learning** (default): the project learns from external systems. External sources are frozen under `references/frozen/YYYYMM/<name>/` with a `reference.yaml` case file and analyzed as references. Use this when the external thing is something you study, not something you are.
 - **absorption**: the project exists to absorb a specific external thing (a contest, a paper, a repo you are rebuilding). Its official/source materials land under `problem/<name>/` with a `source.yaml` case file, because they ARE the project, not external references. `references/frozen/` is still available for genuine third-party side evidence.

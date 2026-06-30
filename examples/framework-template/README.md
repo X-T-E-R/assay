@@ -1,5 +1,5 @@
 
-# MetaSystem
+# Assay
 
 A versioned external-system-learning framework.
 
@@ -14,7 +14,7 @@ references → analyses → systems → iterations → knowledge
 | `.framework/` | Runtime metadata: version, manifest, events, migrations, backups |
 | `references/` | External systems and frozen snapshots |
 | `analyses/` | Analysis layer that turns external systems into decisions |
-| `systems/` | Our active framework implementation; `metasystem-core/` is the current core |
+| `systems/` | Our active framework implementation; `assay-core/` is the current core |
 | `iterations/` | Iterations against our own framework |
 | `knowledge/` | Accepted reusable knowledge |
 | `data/` | Research samples and evaluation data |
@@ -26,5 +26,5 @@ references → analyses → systems → iterations → knowledge
 2. Write a reference analysis in `analyses/references/`.
 3. Convert a promising mechanism to `analyses/patterns/`.
 4. Start an iteration in `iterations/YYYY-MM-DD-<topic>/`.
-5. Land the validated change in `systems/metasystem-core/`.
+5. Land the validated change in `systems/assay-core/`.
 6. Promote durable learning to `knowledge/`.

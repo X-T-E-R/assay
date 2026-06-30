@@ -1,17 +1,17 @@
 # Lifecycle commands
 
-The MetaSystem core loop is `references → analyses → systems → iterations → knowledge`. Every step except `references` has a dedicated **start** and **close** command, and every close writes a structured event to the JSONL ledger so the workflow stays auditable.
+The Assay core loop is `references → analyses → systems → iterations → knowledge`. Every step except `references` has a dedicated **start** and **close** command, and every close writes a structured event to the JSONL ledger so the workflow stays auditable.
 
 ## Why explicit close
 
-In layout v2, iterations and analyses were created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to surface "this work is open" or to flag work that should have been promoted into reusable knowledge. Layout v3 makes close explicit and `metasystem check` flags open iterations as warnings.
+In layout v2, iterations and analyses were created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to surface "this work is open" or to flag work that should have been promoted into reusable knowledge. Layout v3 makes close explicit and `assay check` flags open iterations as warnings.
 
 ## Iterations
 
 Start an iteration:
 
 ```bash
-metasystem iteration start "Adopt config-driven design"
+assay iteration start "Adopt config-driven design"
 # creates: iterations/<date>-adopt-config-driven-design/plan.md  (Status: open)
 # event:   iteration.started
 ```
@@ -21,7 +21,7 @@ The plan template includes `Status: open` and a `## Result` section. Edit the pl
 Close an iteration:
 
 ```bash
-metasystem iteration close <selector> --result applied|rejected|retest [--note "..."]
+assay iteration close <selector> --result applied|rejected|retest [--note "..."]
 ```
 
 What `close` does:
@@ -41,7 +41,7 @@ Choose the result carefully:
 Start an analysis:
 
 ```bash
-metasystem analysis new "Review STS card-eval system"
+assay analysis new "Review STS card-eval system"
 # creates: analyses/references/<date>-review-sts-card-eval-system.md  (Status: draft)
 # event:   analysis.created
 ```
@@ -51,7 +51,7 @@ The template now includes a Decision exit checkbox block (`- [ ] adopt`, `- [ ] 
 Close an analysis:
 
 ```bash
-metasystem analysis close <path> --exit adopt|reject|experiment|adr [--note "..."]
+assay analysis close <path> --exit adopt|reject|experiment|adr [--note "..."]
 ```
 
 What `close` does:
@@ -62,14 +62,14 @@ What `close` does:
 4. Appends an optional `> Closed on <date>: <note>` line.
 5. Writes an `analysis.closed` event with `path`, `exit`, and `note`.
 
-The `adopt` exit signals "we are adopting the analyzed pattern as-is". The `adr` exit signals "this decision deserves a separate ADR entry under `knowledge/decisions/`" — follow up with `metasystem adr new --from-analysis <path>`.
+The `adopt` exit signals "we are adopting the analyzed pattern as-is". The `adr` exit signals "this decision deserves a separate ADR entry under `knowledge/decisions/`" — follow up with `assay adr new --from-analysis <path>`.
 
 ## Knowledge
 
 Promote durable findings into reusable knowledge:
 
 ```bash
-metasystem knowledge add <type> "Title" \
+assay knowledge add <type> "Title" \
   [--from-analysis <path>] \
   [--from-iteration <path>]
 ```
@@ -82,7 +82,7 @@ What `add` does:
 2. Writes a `knowledge.added` event with `path`, `type`, `title`, `from_analysis`, `from_iteration`.
 3. Refuses to overwrite an existing entry with the same date/title.
 
-`metasystem status` reports the knowledge entry count separately from README stubs, so promotions are visible in workspace summaries.
+`assay status` reports the knowledge entry count separately from README stubs, so promotions are visible in workspace summaries.
 
 ## Event vocabulary
 

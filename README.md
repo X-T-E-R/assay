@@ -1,6 +1,8 @@
-# MetaSystem Kit
+# Assay
 
-MetaSystem Kit is a local-first toolkit for learning from external systems and turning those lessons into a versioned framework of your own.
+**Study many. Grow your own.**
+
+A CLI workbench for the systems, tools, and workflows you're tempted to borrow from — freeze them as references, assay them through evaluation lenses, then distill the patterns worth keeping into your own.
 
 It combines a TypeScript framework core, a Commander-based CLI, a reusable framework template, architecture decision records, and an AI-facing Skill. The core workflow is:
 
@@ -8,14 +10,14 @@ It combines a TypeScript framework core, a Commander-based CLI, a reusable frame
 references -> analyses -> systems -> iterations -> knowledge
 ```
 
-Use it when you want to freeze external projects or documents, analyze their patterns, build your own system from the validated parts, and keep that system updatable over time.
+Use it when you want to freeze external projects or documents, assay their patterns, build your own system from the validated parts, and keep that system updatable over time.
 
 ## Repository Layout
 
 ```text
-packages/metasystem-framework-core/         TypeScript reusable framework operations
-packages/metasystem-framework-cli/          TypeScript Commander CLI adapter
-skills/metasystem-builder/           AI-facing Skill and agent metadata
+packages/assay-core/         TypeScript reusable framework operations
+packages/assay-cli/          TypeScript Commander CLI adapter
+skills/assay-builder/           AI-facing Skill and agent metadata
 examples/framework-template/         Generated example framework workspace
 docs/background/                     Design background and public references
 scripts/                             Repository validation helpers
@@ -53,20 +55,20 @@ pnpm build
 Then use the CLI from the framework workspace you want to create or manage:
 
 ```powershell
-mkdir ..\metasystem-demo
-cd ..\metasystem-demo
-metasystem init --name MetaSystem
-metasystem check
-metasystem status
+mkdir ..\assay-demo
+cd ..\assay-demo
+assay init --name Assay
+assay check
+assay status
 ```
 
-For repository-local development without a global `metasystem` command, run the
+For repository-local development without a global `assay` command, run the
 built CLI from the target workspace:
 
 ```powershell
-mkdir ..\metasystem-demo
-cd ..\metasystem-demo
-node ..\metasystem-kit\packages\metasystem-framework-cli\dist\cli.js init --name MetaSystem
+mkdir ..\assay-demo
+cd ..\assay-demo
+node ..\assay\packages\assay-cli\dist\cli.js init --name Assay
 ```
 
 For local development, the package scripts cover the TypeScript workspace:
@@ -81,46 +83,46 @@ pnpm smoke
 ## Common Commands
 
 ```powershell
-metasystem init --name <project-name>
-metasystem adopt --dry-run
-metasystem adopt --apply --name <project-name>
-metasystem check
-metasystem status
-metasystem update --dry-run
-metasystem projects list
-metasystem projects scan <parent-dir>
-metasystem migrate-layout --dry-run
-metasystem reference add <source-dir> <name>
-metasystem analysis new "Reference analysis"
-metasystem iteration start "CLI refactor"
+assay init --name <project-name>
+assay adopt --dry-run
+assay adopt --apply --name <project-name>
+assay check
+assay status
+assay update --dry-run
+assay projects list
+assay projects scan <parent-dir>
+assay migrate-layout --dry-run
+assay reference add <source-dir> <name>
+assay analysis new "Reference analysis"
+assay iteration start "CLI refactor"
 ```
 
 Run these commands from the framework workspace by default. Use
-`metasystem init <target-dir>` or `--root <target-dir>` only when operating on a
+`assay init <target-dir>` or `--root <target-dir>` only when operating on a
 workspace from another directory.
 
 ## Adopting Existing Projects
 
 Use `adopt` when the current directory already contains an ordinary project and
-you want a clean MetaSystem root:
+you want a clean Assay root:
 
 ```powershell
 cd C:\path\to\existing-project
-metasystem adopt --dry-run
-metasystem adopt --apply --name ExistingProject
+assay adopt --dry-run
+assay adopt --apply --name ExistingProject
 ```
 
 The apply step archives current root contents under a timestamped `.old/`
-directory, keeps `.git/` at the root, creates a new MetaSystem scaffold, and
+directory, keeps `.git/` at the root, creates a new Assay scaffold, and
 writes an adoption manifest into the archive. After that, inspect `.old/<stamp>/`
 and move archived content into the appropriate new project locations only after
 the target direction is clear.
 
-`metasystem init` and successful `metasystem update` runs register the scaffolded
-workspace in a user-local project registry under `~/.metasystem/projects`.
-Use `metasystem projects list` to find known framework workspaces,
-`metasystem projects show <id-or-path>` to inspect one record, and
-`metasystem projects prune --dry-run` to preview cleanup of missing registry
+`assay init` and successful `assay update` runs register the scaffolded
+workspace in a user-local project registry under `~/.assay/projects`.
+Use `assay projects list` to find known framework workspaces,
+`assay projects show <id-or-path>` to inspect one record, and
+`assay projects prune --dry-run` to preview cleanup of missing registry
 entries. These commands manage registry metadata only; they do not delete
 project files.
 
@@ -142,13 +144,13 @@ The repository check includes TypeScript build, typecheck, lint, tests, and a Ty
 
 ## Package Split And GUI Reuse
 
-- `metasystem-framework-core` owns framework operations, schemas, templates, manifest handling, update planning, migration planning, and file-safety behavior.
-- `metasystem-framework-cli` is a thin Commander adapter around the core package. It parses argv, formats structured results, and maps known errors to process exit codes.
-- Future GUI code should import `metasystem-framework-core` directly instead of shelling out to the CLI.
+- `assay-core` owns framework operations, schemas, templates, manifest handling, update planning, migration planning, and file-safety behavior.
+- `assay-cli` is a thin Commander adapter around the core package. It parses argv, formats structured results, and maps known errors to process exit codes.
+- Future GUI code should import `assay-core` directly instead of shelling out to the CLI.
 
 ## Compatibility Notes
 
-The TypeScript CLI is the active implementation. Its compatibility surface is the `metasystem` command set documented above and the reusable `metasystem-framework-core` API.
+The TypeScript CLI is the active implementation. Its compatibility surface is the `assay` command set documented above and the reusable `assay-core` API.
 
 ## Public Repository Boundary
 

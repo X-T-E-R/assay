@@ -78,16 +78,16 @@ system:
   vcs: independent-git
   vcs_ref: main
   supersedes: ["older-system-name"]
-contract_managed_by: metasystem
+contract_managed_by: assay
 ```
 
-The contract is the only system-side file the framework receives. System owners can edit it (e.g. bumping `version`), and `metasystem update` will treat it as `modified by user` and skip — never auto-overwrite.
+The contract is the only system-side file the framework receives. System owners can edit it (e.g. bumping `version`), and `assay update` will treat it as `modified by user` and skip — never auto-overwrite.
 
 ## CLI
 
 ```bash
 # Register an existing system directory in the registry
-metasystem system register <path> \
+assay system register <path> \
   [--name <name>] \
   [--vcs independent-git|embedded|none] \
   [--vcs-ref <ref>] \
@@ -96,26 +96,26 @@ metasystem system register <path> \
   [--supersedes <name1,name2,...>]
 
 # Promote another system to primary; demotes the previous one to superseded
-metasystem system promote <selector>
+assay system promote <selector>
 
 # Archive a non-primary system (copy-first move into systems/archive/<date>-pre-<name>/)
-metasystem system archive <selector> --dry-run
-metasystem system archive <selector> --apply
+assay system archive <selector> --dry-run
+assay system archive <selector> --apply
 
 # Inspect
-metasystem system list [--status primary|active|superseded|archived] [--json]
-metasystem system show <selector> [--json]
+assay system list [--status primary|active|superseded|archived] [--json]
+assay system show <selector> [--json]
 ```
 
 Selectors accept the full system name or a unique name prefix.
 
 ## Migration from layout v2
 
-Run `metasystem migrate-layout --dry-run` first. The plan generates `create-systems-registry`, `generate-contract`, `mark-user-deleted`, and `upgrade-manifest` steps. After `--apply`:
+Run `assay migrate-layout --dry-run` first. The plan generates `create-systems-registry`, `generate-contract`, `mark-user-deleted`, and `upgrade-manifest` steps. After `--apply`:
 
 1. The previous `manifest.project.core` becomes the `primary` system. Legacy `framework.yaml` (if present) is read for `status` and `supersedes` overrides.
 2. Each `systems/*` directory gets a `system.yaml` contract; `.git` presence determines `independent-git` vs `embedded`.
 3. Each `systems/archive/<date>/<name>` directory is registered as `archived`.
 4. Old `systems/<core>/**` template entries are removed from `manifest.managed_files` and listed in `user_deleted`.
 
-Run `metasystem check` afterwards. The previous error storm of "managed file missing" should be empty.
+Run `assay check` afterwards. The previous error storm of "managed file missing" should be empty.

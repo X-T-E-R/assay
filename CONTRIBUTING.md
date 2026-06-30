@@ -1,6 +1,6 @@
 # Contributing
 
-MetaSystem Kit is meant to stay reusable. Keep changes focused on the CLI, Skill, framework templates, architecture decisions, research notes, and synthetic examples.
+Assay is meant to stay reusable. Keep changes focused on the CLI, Skill, framework templates, architecture decisions, research notes, and synthetic examples.
 
 ## Public Boundary
 

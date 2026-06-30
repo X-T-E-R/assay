@@ -2,7 +2,7 @@
 
 ## Change classification
 
-When `metasystem update` runs, it compares each managed file's current on-disk hash against the manifest hash and classifies changes into one of six categories:
+When `assay update` runs, it compares each managed file's current on-disk hash against the manifest hash and classifies changes into one of six categories:
 
 | Category | Meaning | Default action |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ When `metasystem update` runs, it compares each managed file's current on-disk h
 | Untracked-existing | File exists on disk but not in manifest | Skip |
 | Force | Any of the above with `--force` flag | Overwrite regardless |
 
-`metasystem check` surfaces the same hash logic as warnings (`modified by user`) and errors (`managed file missing`), so check failures predict update conflicts before you run update.
+`assay check` surfaces the same hash logic as warnings (`modified by user`) and errors (`managed file missing`), so check failures predict update conflicts before you run update.
 
 ## Conflict resolution flags
 
@@ -37,7 +37,7 @@ System internals — `systems/<name>/README.md`, `CHANGELOG.md`, `docs/*`, sourc
 
 ## Layout migration
 
-Breaking directory-layout changes require `metasystem migrate-layout`. The default is `--dry-run` (plan only). Use `--apply` only after reviewing the plan. The migration uses a copy-first strategy: files are copied to new locations before the old paths are removed.
+Breaking directory-layout changes require `assay migrate-layout`. The default is `--dry-run` (plan only). Use `--apply` only after reviewing the plan. The migration uses a copy-first strategy: files are copied to new locations before the old paths are removed.
 
 ### v2 → v3 (systems registry)
 
@@ -48,7 +48,7 @@ Layout v3 introduces `.framework/systems-registry.json` and per-system `system.y
 - `mark-user-deleted` — remove legacy `systems/<core>/README.md`, `framework.yaml`, `CHANGELOG.md`, and `docs/*` template entries from `manifest.managed_files`. `systems/<core>/system.yaml` remains the framework-managed contract.
 - `upgrade-manifest` — bump `layout_version` and record the migration in `.framework/migrations/`.
 
-After v2→v3 migration, run `metasystem check`. Existing managed-file warnings for system internals should disappear, and the new `Systems` section in `status` should show the registered primary.
+After v2→v3 migration, run `assay check`. Existing managed-file warnings for system internals should disappear, and the new `Systems` section in `status` should show the registered primary.
 
 ## Backup
 
