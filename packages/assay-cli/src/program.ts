@@ -479,6 +479,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .addOption(new Option("--dry-run", "plan migration without applying writes").conflicts("apply"))
     .addOption(new Option("--apply", "apply copy-first migration steps").conflicts("dryRun"))
+    .option("--backup", "with --apply, back up pre-existing files overwritten by migration")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const shouldApply = commandOptions.apply === true;
@@ -486,6 +487,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         root,
         dryRun: !shouldApply,
         apply: shouldApply,
+        backup: commandOptions.backup === true,
       });
       writeLine(output, "stdout", formatMigrationResult(result));
     });

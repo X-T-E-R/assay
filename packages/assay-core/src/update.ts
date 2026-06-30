@@ -75,6 +75,7 @@ export interface BuildLayoutMigrationPlanOptions {
 }
 
 export interface MigrateLayoutOptions extends BuildLayoutMigrationPlanOptions {
+  readonly backup?: boolean;
   readonly now?: Date;
 }
 
@@ -364,6 +365,44 @@ export async function createBackup(
   };
 }
 
+async function createFileBackup(
+  rootInput: string,
+  relativePaths: readonly string[],
+  now = new Date(),
+): Promise<BackupResult | null> {
+  const root = path.resolve(rootInput);
+  const backup = path.join(root, BACKUPS_DIR, backupStamp(now));
+  const copied: string[] = [];
+  const candidates = [...new Set(relativePaths)];
+
+  for (const relativePath of candidates) {
+    const source = path.join(root, relativePath);
+    const stats = await pathStats(source);
+    if (!stats?.isFile()) {
+      continue;
+    }
+
+    if (copied.length === 0) {
+      await mkdir(backup, { recursive: true });
+    }
+
+    const destination = path.join(backup, relativePath);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await copyFile(source, destination);
+    copied.push(relativePath);
+  }
+
+  if (copied.length === 0) {
+    return null;
+  }
+
+  return {
+    path: backup,
+    relativePath: relativeDisplayPath(backup, root),
+    copied,
+  };
+}
+
 export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpdateResult> {
   const root = path.resolve(options.root);
   const action = options.action ?? "skip";
@@ -600,6 +639,32 @@ export async function buildLayoutMigrationPlan(
   });
 }
 
+async function migrationBackupPaths(root: string, plan: MigrationPlan): Promise<string[]> {
+  const candidates = new Set<string>();
+  if (
+    plan.steps.some((step) => step.type === "mark-user-deleted" || step.type === "upgrade-manifest")
+  ) {
+    candidates.add(MANIFEST_FILE);
+  }
+
+  for (const step of plan.steps) {
+    if (step.type === "generate-contract") {
+      candidates.add(step.to);
+    } else if (step.type === "create-systems-registry" && step.to === SYSTEMS_REGISTRY_FILE) {
+      candidates.add(SYSTEMS_REGISTRY_FILE);
+    }
+  }
+
+  const existingFiles: string[] = [];
+  for (const relativePath of candidates) {
+    const stats = await pathStats(path.join(root, relativePath));
+    if (stats?.isFile()) {
+      existingFiles.push(relativePath);
+    }
+  }
+  return existingFiles;
+}
+
 export async function migrateLayout(options: MigrateLayoutOptions): Promise<MigrateLayoutResult> {
   const root = path.resolve(options.root);
   const shouldApply = options.apply ?? false;
@@ -610,13 +675,9 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
     return { root, dryRun, apply: shouldApply, plan };
   }
 
-  const backup = await createBackup(
-    root,
-    plan.steps
-      .filter((step) => step.type !== "manual-review" && step.type !== "create-systems-registry")
-      .map((step) => step.from),
-    options.now,
-  );
+  const backup = options.backup
+    ? await createFileBackup(root, await migrationBackupPaths(root, plan), options.now)
+    : null;
 
   // --- Apply v2→v3 steps as a batch (registry + contracts + manifest upgrade) ---
   const v2v3Steps = plan.steps.filter(
@@ -664,7 +725,7 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
   }
 
   const eventFile = await appendEvent(root, {
-    backup: backup.relativePath,
+    ...(backup ? { backup: backup.relativePath } : {}),
     event: "layout.migrated",
     plan: plan.steps,
   });
@@ -673,8 +734,8 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
     root,
     dryRun,
     apply: shouldApply,
-    plan: migrationPlanSchema.parse({ ...plan, backup_dir: backup.relativePath }),
-    backup,
+    plan: backup ? migrationPlanSchema.parse({ ...plan, backup_dir: backup.relativePath }) : plan,
+    ...(backup ? { backup } : {}),
     eventFile: relativeDisplayPath(eventFile, root),
   };
 }

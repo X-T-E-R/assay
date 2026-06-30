@@ -52,4 +52,4 @@ After v2→v3 migration, run `assay check`. Existing managed-file warnings for s
 
 ## Backup
 
-Before any write operation during `update` or `migrate-layout --apply`, the CLI creates a timestamped backup under `.framework/backups/`. Backups are the safety net for rollback.
+`assay update` creates a timestamped backup under `.framework/backups/` before apply writes. `assay migrate-layout --apply` does **not** create a backup by default; pass `--backup` to save only the concrete pre-existing files that migration would overwrite. Copy-only steps that create new destinations do not back up whole directories.

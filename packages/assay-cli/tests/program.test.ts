@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -177,6 +177,18 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("--apply");
     expect(result.stdout).not.toContain("--core");
+    expect(result.stderr).toBe("");
+  });
+
+  it("prints migrate-layout help with explicit backup mode", async () => {
+    const result = await runCli(["migrate-layout", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: assay migrate-layout [options]");
+    expect(result.stdout).toContain("--dry-run");
+    expect(result.stdout).toContain("--apply");
+    expect(result.stdout).toContain("--backup");
+    expect(result.stdout).toContain("with --apply, back up pre-existing files");
     expect(result.stderr).toBe("");
   });
 
@@ -474,6 +486,25 @@ describe("assay CLI subprocess behavior", () => {
     expect(migration.exitCode).toBe(0);
     expect(migration.stdout).toContain("Layout migration: dry-run");
     expect(migration.stdout).toContain("Plan:");
+  });
+
+  it("applies migrate-layout without creating backups by default", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await runCli(["init", root, "--name", "Migration Apply"]);
+    await mkdir(path.join(root, "references", "202401"), { recursive: true });
+    await writeFile(path.join(root, "references", "202401", "source.md"), "# Source\n", "utf8");
+
+    const result = await runCli(["migrate-layout", "--root", root, "--apply"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Layout migration: applied");
+    expect(result.stdout).toContain("references/202401 -> references/frozen/202401");
+    expect(result.stdout).not.toContain("Backup:");
+    expect(result.stderr).toBe("");
+    expect(
+      await readFile(path.join(root, "references", "frozen", "202401", "source.md"), "utf8"),
+    ).toBe("# Source\n");
+    expect(await readdir(path.join(root, ".framework", "backups"))).toEqual([".gitkeep"]);
   });
 
   it("lists, shows, scans, forgets, and prunes project registry records", async () => {

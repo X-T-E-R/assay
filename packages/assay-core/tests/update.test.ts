@@ -268,13 +268,23 @@ describe("layout migration", () => {
       now: new Date("2026-06-14T08:09:10"),
     });
 
-    expect(result.backup?.relativePath).toBe(".framework/backups/20260614-080910");
+    expect(result.backup).toBeUndefined();
+    expect("backup_dir" in result.plan).toBe(false);
+    expect(await exists(path.join(root, ".framework", "backups", "20260614-080910"))).toBe(false);
     expect(await exists(path.join(root, "references", "202401", "source.md"))).toBe(true);
     expect(await exists(path.join(root, "references", "frozen", "202401", "source.md"))).toBe(true);
     expect(await exists(path.join(root, "experiments", "trial", "plan.md"))).toBe(true);
     expect(await exists(path.join(root, "iterations", "trial", "plan.md"))).toBe(true);
     expect(await exists(path.join(root, ".assay", "queue.json"))).toBe(true);
     expect(await exists(path.join(root, ".framework", "legacy-assay", "queue.json"))).toBe(true);
+    if (!result.eventFile) {
+      throw new Error("layout migration event missing");
+    }
+    const eventLines = (await readFile(path.join(root, result.eventFile), "utf8"))
+      .trim()
+      .split("\n");
+    const event = JSON.parse(eventLines[eventLines.length - 1] ?? "{}");
+    expect(event.backup).toBeUndefined();
   });
 });
 
@@ -383,13 +393,86 @@ describe("v2 to v3 layout migration", () => {
       ]),
     );
 
-    await migrateLayout({ root, apply: true, now: new Date("2026-06-17T10:00:00") });
+    const result = await migrateLayout({ root, apply: true, now: new Date("2026-06-17T10:00:00") });
     const upgradedManifest = await loadManifest(root);
     const registry = await loadSystemsRegistry(root);
 
+    expect(result.backup).toBeUndefined();
+    expect("backup_dir" in result.plan).toBe(false);
     expect(upgradedManifest?.layout_version).toBe(3);
     expect(registry?.primary).toBe("demo-core");
     expect(Object.keys(registry?.systems ?? {})).toEqual(["demo-core"]);
+  });
+
+  it("backs up only pre-existing files overwritten by explicit migration backup mode", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
+    await writeFile(
+      path.join(root, "systems", "demo-core", "framework.yaml"),
+      "system:\n  name: demo-core\n  status: primary\n  version: 0.2.0\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "systems", "demo-core", "system.yaml"),
+      "system:\n  name: user-owned-contract\n",
+      "utf8",
+    );
+    await addLegacySystemManagedFiles(root);
+
+    const result = await migrateLayout({
+      root,
+      apply: true,
+      backup: true,
+      now: new Date("2026-06-17T10:00:00"),
+    });
+
+    expect(result.backup?.relativePath).toBe(".framework/backups/20260617-100000");
+    expect(result.backup?.copied).toEqual([
+      ".framework/manifest.json",
+      "systems/demo-core/system.yaml",
+    ]);
+    expect(result.plan.backup_dir).toBe(".framework/backups/20260617-100000");
+    expect(
+      await readFile(
+        path.join(
+          root,
+          ".framework",
+          "backups",
+          "20260617-100000",
+          "systems",
+          "demo-core",
+          "system.yaml",
+        ),
+        "utf8",
+      ),
+    ).toBe("system:\n  name: user-owned-contract\n");
+    expect(
+      await exists(
+        path.join(
+          root,
+          ".framework",
+          "backups",
+          "20260617-100000",
+          "systems",
+          "demo-core",
+          "README.md",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      await exists(
+        path.join(root, ".framework", "backups", "20260617-100000", ".framework", "VERSION"),
+      ),
+    ).toBe(false);
+    if (!result.eventFile) {
+      throw new Error("layout migration event missing");
+    }
+    const eventLines = (await readFile(path.join(root, result.eventFile), "utf8"))
+      .trim()
+      .split("\n");
+    const event = JSON.parse(eventLines[eventLines.length - 1] ?? "{}");
+    expect(event.backup).toBe(".framework/backups/20260617-100000");
   });
 
   it("applies migration: creates registry, contracts, removes stale managed files", async () => {
