@@ -97,7 +97,7 @@ describe("hashing", () => {
 describe("manifest", () => {
   it("saves, parses, records, and projects manifest data", async () => {
     const root = await tempDir();
-    let manifest = defaultManifest("Demo", "demo-core");
+    let manifest = defaultManifest("Demo");
 
     recordManagedFile(manifest, {
       path: "README.md",
@@ -117,14 +117,14 @@ describe("manifest", () => {
 
     expect(loaded).toEqual(manifest);
     expect(loaded?.managed_files["README.md"]?.hash).toBe(computeHash("# Demo\n"));
-    expect(projectFromManifest(loaded, root)).toEqual(["Demo", "demo-core"]);
+    expect(projectFromManifest(loaded, root)).toBe("Demo");
     expect(manifestPath(root)).toBe(path.join(root, MANIFEST_FILE));
   });
 
   it("returns fallback project names when no manifest is available", async () => {
     const root = path.join(await tempDir(), "demo");
 
-    expect(projectFromManifest(null, root)).toEqual(["demo", "demo-core"]);
+    expect(projectFromManifest(null, root)).toBe("demo");
   });
 
   it("returns null when the manifest file does not exist", async () => {

@@ -9,9 +9,10 @@ Build and maintain a MetaSystem external-system-learning framework — a version
 
 ## Prerequisites
 
-- Node.js >= 18
-- `metasystem` CLI built from the `metasystem-kit` monorepo (`pnpm build`)
-- Read `references/cli-setup.md` for build, PATH, and invocation details
+- Node.js >= 18, `pnpm`
+- This skill lives inside the `metasystem-kit` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running `node scripts/install.mjs`, which builds the workspace and junctions this skill into your skills dir (default `~/.agents/skills`) so it resolves back to the repo.
+- Invoke via the skill-local launcher `scripts/metasystem.mjs`; it walks up to the repo and runs `packages/metasystem-framework-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — `install.mjs` builds it, or build manually with `pnpm install && pnpm build`.
+- Read `references/cli-setup.md` for install, build, and invocation details
 
 ## Core loop
 
@@ -23,7 +24,11 @@ Each transition has a CLI command and writes an event to `.framework/events/YYYY
 
 ## CLI quick reference
 
-Prefer the CLI for all workspace operations — it preserves user files, writes a manifest, and keeps updates auditable.
+Prefer the repo's CLI for all workspace operations — it preserves user files, writes a manifest, and keeps updates auditable. Invoke it from any working directory with the skill-local launcher (resolve `scripts/metasystem.mjs` relative to the skill root):
+
+```bash
+node <skill-root>/scripts/metasystem.mjs <command>
+```
 
 ```bash
 # Workspace lifecycle
@@ -122,7 +127,7 @@ absorb <source>                      # freeze + write case file + OPEN a pre-fil
 4. **Absorb a source with `absorb <source> [--name <name>]`** — this freezes the source, writes a case file (`reference.yaml` in learning mode, `source.yaml` in absorption mode), AND opens a pre-filled analysis in one step. Prefer `absorb` over `reference add` followed by a separate `analysis new`, because `absorb` guarantees the analysis is opened in the same step and cannot be forgotten.
 5. **Fill the analysis body**: complete `## Key observations`, `## Adopt`, `## Reject` with real content drawn from the source. `check` flags an analysis left at `Status: draft` with empty Key observations — an empty shell is incomplete work, not a finished step.
 6. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This flips the bound reference's `analyzed` flag to `true` and writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
-7. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against `systems/<core>/` with `iteration start`.
+7. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
 8. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate).
 9. Close every started iteration with `iteration close --result ...`. `check` flags `Status: open` plans as warnings.
 10. Run `update --dry-run` before applying framework upgrades.

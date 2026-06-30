@@ -24,6 +24,18 @@ function countLine(label: string, count: number): string {
   return `${label}: ${count}`;
 }
 
+type OptionalManifestSemantics = {
+  readonly archetype?: string;
+  readonly mode?: string;
+};
+
+function manifestSemanticsLines(value: OptionalManifestSemantics): string[] {
+  return [
+    ...(value.archetype ? [`Archetype: ${value.archetype}`] : []),
+    ...(value.mode ? [`Mode: ${value.mode}`] : []),
+  ];
+}
+
 export function formatReport(report: OperationReport): string {
   const lines = [
     ...section("Created directories", report.created_dirs),
@@ -40,10 +52,13 @@ export function formatReport(report: OperationReport): string {
 }
 
 export function formatInitResult(result: InitFrameworkResult): string {
+  const semantics = manifestSemanticsLines(
+    result as InitFrameworkResult & OptionalManifestSemantics,
+  );
   return [
     `Initialized framework: ${result.root}`,
     `Project: ${result.project}`,
-    `Core: ${result.core}`,
+    ...semantics,
     formatReport(result.report),
   ].join("\n");
 }
@@ -58,6 +73,9 @@ export function formatCheckResult(result: CheckFrameworkResult): string {
         "Manifest:",
         `  - schema: ${result.manifest.schema}`,
         `  - framework version: ${result.manifest.frameworkVersion}`,
+        ...manifestSemanticsLines(
+          result.manifest as typeof result.manifest & OptionalManifestSemantics,
+        ).map((line) => `  - ${line.charAt(0).toLowerCase()}${line.slice(1)}`),
         `  - managed files: ${result.manifest.managedFiles}`,
       ]
     : [];
@@ -72,12 +90,15 @@ export function formatCheckResult(result: CheckFrameworkResult): string {
 
 export function formatStatusResult(result: FrameworkStatusResult): string {
   const header = ["Framework status", `Root: ${result.root}`];
+  const semantics = manifestSemanticsLines(
+    result as FrameworkStatusResult & OptionalManifestSemantics,
+  );
   const manifest = result.hasManifest
     ? [
         `Installed version: ${result.installedVersion ?? "unknown"}`,
         `Layout version: ${result.layoutVersion ?? "unknown"}`,
         `Project: ${result.project ?? "unknown"}`,
-        `Core: ${result.core ?? "unknown"}`,
+        ...semantics,
         `Managed files: ${result.managedFiles}`,
       ]
     : ["Manifest: missing", "Managed files: 0"];
@@ -176,14 +197,19 @@ export function formatAdoptionResult(result: AdoptExistingProjectResult): string
     return `  - ${failure.source}${destination}: ${failure.message}`;
   });
   const scaffold = result.scaffold
-    ? [
-        "Scaffold:",
-        `  - project: ${result.scaffold.project}`,
-        `  - core: ${result.scaffold.core}`,
-        `  - created directories: ${result.scaffold.createdDirectories}`,
-        `  - created files: ${result.scaffold.createdFiles}`,
-        `  - skipped files: ${result.scaffold.skippedFiles}`,
-      ]
+    ? (() => {
+        const semantics = manifestSemanticsLines(
+          result.scaffold as typeof result.scaffold & OptionalManifestSemantics,
+        ).map((line) => `  - ${line.charAt(0).toLowerCase()}${line.slice(1)}`);
+        return [
+          "Scaffold:",
+          `  - project: ${result.scaffold.project}`,
+          ...semantics,
+          `  - created directories: ${result.scaffold.createdDirectories}`,
+          `  - created files: ${result.scaffold.createdFiles}`,
+          `  - skipped files: ${result.scaffold.skippedFiles}`,
+        ];
+      })()
     : [];
 
   return [
@@ -226,7 +252,6 @@ export function formatProjectRecord(record: MetaSystemProjectRecord): string {
     `  path:              ${record.path}`,
     `  realpath:          ${record.realpath}`,
     `  project:           ${record.name}`,
-    `  core:              ${record.core}`,
     `  created:           ${record.createdAt}`,
     `  last seen:         ${record.lastSeenAt}`,
     `  created by:        ${record.createdBy}`,
@@ -242,7 +267,7 @@ function formatProjectDate(iso: string): string {
 }
 
 function projectLabel(record: MetaSystemProjectRecord): string {
-  return `${record.name}/${record.core}`;
+  return record.name;
 }
 
 function supersedesLine(system: SystemRecord): string {

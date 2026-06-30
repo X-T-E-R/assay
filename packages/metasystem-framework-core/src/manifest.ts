@@ -7,6 +7,8 @@ import { computeHash } from "./hashing.js";
 import {
   type FrameworkManifest,
   type ManagedFileRecord,
+  type ProjectArchetype,
+  type ProjectMode,
   frameworkManifestSchema,
 } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
@@ -29,11 +31,19 @@ export interface RecordManagedFileInput {
   readonly protected?: boolean;
 }
 
+export interface DefaultManifestOptions {
+  readonly archetype?: ProjectArchetype;
+  readonly mode?: ProjectMode;
+}
+
 export function manifestPath(root: string): string {
   return path.join(root, MANIFEST_FILE);
 }
 
-export function defaultManifest(project: string, core: string): FrameworkManifest {
+export function defaultManifest(
+  project: string,
+  manifestOptions: DefaultManifestOptions = {},
+): FrameworkManifest {
   const createdAt = nowIso();
   return {
     __schema: 1,
@@ -41,7 +51,11 @@ export function defaultManifest(project: string, core: string): FrameworkManifes
     layout_version: LAYOUT_VERSION,
     created_at: createdAt,
     updated_at: createdAt,
-    project: { name: project, core },
+    project: {
+      name: project,
+      archetype: manifestOptions.archetype ?? "research",
+      mode: manifestOptions.mode ?? "learning",
+    },
     managed_files: {},
     user_deleted: [],
     applied_migrations: [],
@@ -129,10 +143,10 @@ export function recordTemplate(
 export function projectFromManifest(
   manifest: FrameworkManifest | null | undefined,
   fallbackRoot: string,
-): [string, string] {
+): string {
   const fallbackName = path.basename(path.resolve(fallbackRoot));
   if (manifest) {
-    return [manifest.project.name || fallbackName, manifest.project.core || `${fallbackName}-core`];
+    return manifest.project.name || fallbackName;
   }
-  return [fallbackName, `${fallbackName}-core`];
+  return fallbackName;
 }

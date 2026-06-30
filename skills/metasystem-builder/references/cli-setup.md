@@ -1,45 +1,56 @@
 # CLI setup and invocation
 
-## Building from source
+## How this skill finds the CLI
 
-The `metasystem` CLI ships as part of the `metasystem-kit` monorepo. Build once:
+This skill lives inside the `metasystem-kit` repo at `skills/metasystem-builder`. It runs the repo's CLI directly — there is **no bundled copy** of the kit inside the skill. `packages/` in the repo is the single source of truth.
+
+Install by cloning the repo and running the installer, which builds the workspace and junctions (Windows) / symlinks (POSIX) the skill into your skills directory:
 
 ```bash
-cd <path-to-metasystem-kit>
-pnpm install
+git clone <repo-url> metasystem-kit
+cd metasystem-kit
+node scripts/install.mjs            # build + link into ~/.agents/skills
+```
+
+Useful flags: `--target <dir>` (skills dir), `--name <skill-name>`, `--force` (replace existing), `--no-build` (relink only), `--dry-run` (preview).
+
+## Invoking the CLI
+
+Use the skill-local launcher. It resolves through the junction/symlink back to the repo, walks up to find the built CLI, and runs it:
+
+```bash
+node <skill-root>/scripts/metasystem.mjs <command>
+```
+
+`<skill-root>` is wherever the skill was installed (e.g. `~/.agents/skills/metasystem-builder`). The launcher needs no absolute paths — keep the cloned repo in place so the link resolves back to it.
+
+## Building (required once)
+
+`dist/` is a build artifact and is **not** committed to git. `scripts/install.mjs` builds it for you; to build manually:
+
+```bash
+cd <repo-root>
+pnpm install --frozen-lockfile
 pnpm build
 ```
 
-The compiled entry point is:
+The compiled entry point the launcher runs:
 
 ```text
 packages/metasystem-framework-cli/dist/cli.js
 ```
 
-## Making the CLI accessible
+The launcher fails clearly if the skill is not installed from inside the repo (cannot locate the repo) or if the repo is not yet built (`dist/` missing), with the build command in the message.
 
-Choose one of three approaches:
+## Direct invocation (debugging)
 
-1. **Global link** (recommended for daily use):
+To bypass the launcher, run the built CLI directly from the repo:
 
-   ```bash
-   cd packages/metasystem-framework-cli
-   npm link
-   ```
+```bash
+node <repo-root>/packages/metasystem-framework-cli/dist/cli.js <command>
+```
 
-   Then invoke as `metasystem <command>` from any directory.
-
-2. **Direct path** (no install needed):
-
-   ```bash
-   node <path-to-metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js <command>
-   ```
-
-3. **npx** (if published to a registry):
-
-   ```bash
-   npx metasystem-framework-cli <command>
-   ```
+A global `metasystem` command (via `npm link` in `packages/metasystem-framework-cli`) is optional and only meant for interactive human use, not agent workflows.
 
 ## Working directory conventions
 

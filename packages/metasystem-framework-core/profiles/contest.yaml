@@ -1,78 +1,34 @@
-# Contest profile v3 (post double-sided adaptation against Huawei3 real shape).
-#
-# v3 corrects two errors in v2:
-#   1. v2 framed contest profile as a "stripped-down" default profile (no
-#      analyses/, iterations/, releases). Real Huawei3 use proved that
-#      iterations/ and analyses/ are heavily used as metasystem governance
-#      artefacts in contest projects too. v3 restores them.
-#   2. v2 hardcoded systems/q1/<route> and current.json {q1, q2}. Real
-#      projects have a project-core layer (`systems/<core>/<question-id>/
-#      <route>/`) and variable problem counts. v3 changes current.json to
-#      a generic `questions: []` list with absolute base_paths.
-#
-# Three immutable objects (kept from v2): intake delivery, sealed route
-# (sealed only at submission time), submission package. Lazy rigor is still
-# the philosophy (see ADR-0006); the v3 revision is purely about widening the
-# scaffold to match real-project usage. See ADR-0007.
+# Contest archetype: external material is absorbed into project inputs and
+# submission work. It owns the contest object model and enables iteration by
+# default, without prebuilding a systems core.
 
-version: 3
 mode: absorption
 modules:
-  - knowledge
-  - events
-  - adr
-  - intake
-  - submissions
-  - analyses
-  - iterations
-  - tools
+  - iteration
 
 dirs:
-  - .framework/events
   - .framework/backups
   - .framework/migrations
-  - .framework/handoffs
   - systems
-  - systems/archive
-  - knowledge/guides
-  - knowledge/decisions
-  - knowledge/patterns
-  - knowledge/troubleshooting
-  - data
+  - knowledge
+  - problem
   - intake
   - benchmarks
   - submissions
   - tools
-  - analyses/references
-  - analyses/gaps
-  - analyses/patterns
-  - analyses/templates
-  - iterations/templates
-  - references/frozen
-  - references/intake
 
 dirs_learning: []
-dirs_absorption:
-  - problem
+dirs_absorption: []
 
 templates:
   - { path: "README.md", templateId: "root.readme" }
   - { path: ".gitignore", templateId: "root.gitignore" }
   - { path: ".framework/README.md", templateId: "framework.readme" }
   - { path: ".framework/VERSION", templateId: "framework.version" }
-  - { path: ".framework/config.yaml", templateId: "framework.config" }
   - { path: ".framework/migrations/README.md", templateId: "framework.migrations.readme" }
-  - { path: ".framework/events/.gitkeep", templateId: "framework.events.gitkeep" }
   - { path: ".framework/backups/.gitkeep", templateId: "framework.backups.gitkeep" }
   - { path: "systems/README.md", templateId: "systems.readme" }
-  - { path: "systems/{core}/system.yaml", templateId: "system.core.contract" }
   - { path: "knowledge/README.md", templateId: "knowledge.readme" }
-  - { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" }
-  - { path: "knowledge/decisions/ADR-TEMPLATE.md", templateId: "knowledge.decisions.adr_template" }
-  - { path: "knowledge/guides/README.md", templateId: "knowledge.guides.readme" }
-  - { path: "knowledge/patterns/README.md", templateId: "knowledge.patterns.readme" }
-  - { path: "knowledge/troubleshooting/README.md", templateId: "knowledge.troubleshooting.readme" }
-  - { path: "data/README.md", templateId: "data.readme" }
   - { path: "contest.json", templateId: "contest.manifest" }
   - { path: "systems/current.json", templateId: "contest.selection" }
   - { path: "runs.jsonl", templateId: "contest.runs.jsonl" }
@@ -80,10 +36,3 @@ templates:
   - { path: "benchmarks/README.md", templateId: "contest.benchmarks.readme" }
   - { path: "submissions/README.md", templateId: "contest.submissions.readme" }
   - { path: "tools/README.md", templateId: "contest.tools.readme" }
-  - { path: "analyses/README.md", templateId: "analyses.readme" }
-  - { path: "analyses/templates/reference-analysis-card.md", templateId: "analysis.template.reference" }
-  - { path: "analyses/templates/gap-analysis.md", templateId: "analysis.template.gap" }
-  - { path: "analyses/templates/pattern-card.md", templateId: "analysis.template.pattern" }
-  - { path: "iterations/README.md", templateId: "iterations.readme" }
-  - { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" }
-  - { path: "references/frozen/README.md", templateId: "references.frozen.readme" }

@@ -7,7 +7,7 @@ import {
   applyUpdate,
   buildLayoutMigrationPlan,
   computeHash,
-  desiredTemplates,
+  desiredRuntimeTemplates,
   initFramework,
   loadManifest,
   loadSystemsRegistry,
@@ -36,7 +36,7 @@ async function exists(target: string): Promise<boolean> {
 }
 
 async function readmeTemplate() {
-  const template = (await desiredTemplates("Demo", "demo-core")).find(
+  const template = (await desiredRuntimeTemplates("Demo", "research", "learning")).find(
     (candidate) => candidate.path === "README.md",
   );
   if (!template) {
@@ -78,6 +78,7 @@ async function addLegacySystemManagedFiles(root: string): Promise<void> {
       updated_at: "2026-06-17T00:00:00+08:00",
     };
   }
+  manifest.project.core = "demo-core";
   manifest.layout_version = 2;
   await saveManifest(root, manifest);
 }
@@ -282,7 +283,7 @@ describe("layout migration", () => {
 describe("v2 to v3 layout migration", () => {
   it("plans systems-registry creation from manifest core", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    await initFramework({ target: root, name: "Demo" });
     // Create a system directory with .git (independent-git)
     await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
     await writeFile(
@@ -319,7 +320,7 @@ describe("v2 to v3 layout migration", () => {
 
   it("does not plan v2-to-v3 steps when registry already exists", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    await initFramework({ target: root, name: "Demo" });
     // Create registry file to simulate v3 already applied
     await writeFile(
       path.join(root, ".framework", "systems-registry.json"),
@@ -340,7 +341,7 @@ describe("v2 to v3 layout migration", () => {
 
   it("upgrades an old layout_version without overwriting an existing systems registry", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    await initFramework({ target: root, name: "Demo" });
     await writeFile(
       path.join(root, ".framework", "systems-registry.json"),
       JSON.stringify({
@@ -395,7 +396,7 @@ describe("v2 to v3 layout migration", () => {
 
   it("applies migration: creates registry, contracts, removes stale managed files", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", core: "demo-core" });
+    await initFramework({ target: root, name: "Demo" });
     // Create system directory with .git and legacy framework.yaml
     await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
     await mkdir(path.join(root, "systems", "demo-core", ".git"), { recursive: true });

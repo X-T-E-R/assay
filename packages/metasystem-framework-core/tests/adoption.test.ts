@@ -88,7 +88,6 @@ describe("adoptExistingProject", () => {
     const result = await adoptExistingProject({
       root,
       name: "Adopted Project",
-      core: "chosen-core",
       apply: true,
       now: fixedNow(),
     });
@@ -108,7 +107,8 @@ describe("adoptExistingProject", () => {
     expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
     expect((await loadManifest(root))?.project).toMatchObject({
       name: "Adopted Project",
-      core: "chosen-core",
+      archetype: "research",
+      mode: "learning",
     });
 
     const manifest = await readAdoptionManifest(result);
@@ -118,7 +118,8 @@ describe("adoptExistingProject", () => {
       failures: [],
       scaffold: {
         project: "Adopted Project",
-        core: "chosen-core",
+        archetype: "research",
+        mode: "learning",
       },
     });
   });

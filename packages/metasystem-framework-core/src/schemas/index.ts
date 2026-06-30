@@ -11,10 +11,18 @@ export const managedFileRecordSchema = z
   })
   .strict();
 
+export const projectArchetypeSchema = z.enum(["research", "contest", "library"]);
+
+export const projectModeSchema = z.enum(["learning", "absorption"]);
+
 export const frameworkProjectSchema = z
   .object({
     name: z.string().min(1),
-    core: z.string().min(1),
+    // Legacy v2 manifests may still carry project.core. Layout v3 keeps it
+    // optional for migration reads only; fresh manifests must not materialize it.
+    core: z.string().min(1).optional(),
+    archetype: projectArchetypeSchema.default("research"),
+    mode: projectModeSchema.default("learning"),
   })
   .strict();
 
@@ -225,6 +233,8 @@ export const migrationPlanSchema = z
   .strict();
 
 export type ManagedFileRecord = z.infer<typeof managedFileRecordSchema>;
+export type ProjectArchetype = z.infer<typeof projectArchetypeSchema>;
+export type ProjectMode = z.infer<typeof projectModeSchema>;
 export type FrameworkProject = z.infer<typeof frameworkProjectSchema>;
 export type FrameworkManifest = z.infer<typeof frameworkManifestSchema>;
 export type SystemVcs = z.infer<typeof systemVcsSchema>;

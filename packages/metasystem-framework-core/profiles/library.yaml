@@ -1,48 +1,24 @@
-# Library profile: a project whose primary artifact is its own code/systems,
-# with knowledge capture as a side concern. No external-reference intake, no
-# iterations, no releases. Used by metasystem-kit itself (see ADR-0005).
-#
-# This profile is intentionally lean — it exists to prove that metasystem can
-# scaffold a real code project without forcing 5 empty governance directories.
+# Library archetype: shared core only. It does not scaffold absorb outlets,
+# governance directories, or optional capability modules by default.
 
-version: 1
 mode: learning
-modules:
-  - knowledge
-  - events
+modules: []
 
-# No external references, no analyses, no iterations, no releases.
 dirs:
-  - .framework/events
   - .framework/backups
   - .framework/migrations
   - systems
-  - systems/archive
-  - knowledge/guides
-  - knowledge/decisions
-  - knowledge/patterns
-  - knowledge/troubleshooting
-  - data
+  - knowledge
 
 dirs_learning: []
 dirs_absorption: []
 
-# Minimal templates: README, framework metadata, systems contract, knowledge.
 templates:
   - { path: "README.md", templateId: "root.readme" }
   - { path: ".gitignore", templateId: "root.gitignore" }
   - { path: ".framework/README.md", templateId: "framework.readme" }
   - { path: ".framework/VERSION", templateId: "framework.version" }
-  - { path: ".framework/config.yaml", templateId: "framework.config" }
   - { path: ".framework/migrations/README.md", templateId: "framework.migrations.readme" }
-  - { path: ".framework/events/.gitkeep", templateId: "framework.events.gitkeep" }
   - { path: ".framework/backups/.gitkeep", templateId: "framework.backups.gitkeep" }
   - { path: "systems/README.md", templateId: "systems.readme" }
-  - { path: "systems/{core}/system.yaml", templateId: "system.core.contract" }
   - { path: "knowledge/README.md", templateId: "knowledge.readme" }
-  - { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" }
-  - { path: "knowledge/decisions/ADR-TEMPLATE.md", templateId: "knowledge.decisions.adr_template" }
-  - { path: "knowledge/guides/README.md", templateId: "knowledge.guides.readme" }
-  - { path: "knowledge/patterns/README.md", templateId: "knowledge.patterns.readme" }
-  - { path: "knowledge/troubleshooting/README.md", templateId: "knowledge.troubleshooting.readme" }
-  - { path: "data/README.md", templateId: "data.readme" }

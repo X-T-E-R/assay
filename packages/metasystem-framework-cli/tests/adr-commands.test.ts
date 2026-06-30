@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -61,9 +61,12 @@ beforeEach(async () => {
   registryRoot = await tempDir();
 });
 
-async function initWorkspace(name: string): Promise<string> {
+async function initWorkspace(
+  name: string,
+  archetype: "research" | "contest" | "library" = "research",
+): Promise<string> {
   const root = path.join(await tempDir(), name);
-  const init = await runCli(["init", root, "--name", name]);
+  const init = await runCli(["init", root, "--name", name, "--archetype", archetype]);
   expect(init.exitCode).toBe(0);
   return root;
 }
@@ -184,5 +187,51 @@ describe("metasystem adr CLI", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("cannot supersede with replacement");
+  });
+
+  it("rejects ADR commands when the archetype does not enable the adr capability", async () => {
+    const root = await initWorkspace("AdrCliDisabled", "library");
+
+    const created = await runCli(["adr", "new", "Should Not Create", "--root", root]);
+    expect(created.exitCode).toBe(1);
+    expect(created.stderr).toContain("capability not enabled in archetype library: adr");
+
+    const listed = await runCli(["adr", "list", "--root", root]);
+    expect(listed.exitCode).toBe(1);
+    expect(listed.stderr).toContain("capability not enabled in archetype library: adr");
+
+    const shown = await runCli(["adr", "show", "1", "--root", root]);
+    expect(shown.exitCode).toBe(1);
+    expect(shown.stderr).toContain("capability not enabled in archetype library: adr");
+  });
+
+  it("defers ADR creation to trellis unless forced", async () => {
+    const root = await initWorkspace("AdrCliTrellisDefer");
+    await mkdir(path.join(root, ".trellis"), { recursive: true });
+
+    const deferred = await runCli(["adr", "new", "Should Defer", "--root", root]);
+    expect(deferred.exitCode).toBe(1);
+    expect(deferred.stderr).toContain("external governance detected (trellis at .trellis/)");
+    expect(deferred.stderr).toContain("Use --force");
+
+    const forced = await runCli(["adr", "new", "Forced", "--root", root, "--force"]);
+    expect(forced.exitCode).toBe(0);
+    expect(forced.stdout).toContain("Created ADR: ADR-0001-forced");
+  });
+
+  it("defers ADR creation to superpowers unless forced", async () => {
+    const root = await initWorkspace("AdrCliSuperpowersDefer");
+    await mkdir(path.join(root, ".superpowers"), { recursive: true });
+
+    const deferred = await runCli(["adr", "new", "Should Defer", "--root", root]);
+    expect(deferred.exitCode).toBe(1);
+    expect(deferred.stderr).toContain(
+      "external governance detected (superpowers at .superpowers/)",
+    );
+    expect(deferred.stderr).toContain("Use --force");
+
+    const forced = await runCli(["adr", "new", "Forced", "--root", root, "--force"]);
+    expect(forced.exitCode).toBe(0);
+    expect(forced.stdout).toContain("Created ADR: ADR-0001-forced");
   });
 });

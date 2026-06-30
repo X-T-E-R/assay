@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import {
   closeIteration,
   createAdr,
   createAnalysis,
-  desiredTemplates,
+  desiredRuntimeTemplates,
   dirsForMode,
   getFrameworkStatus,
   initFramework,
@@ -24,6 +24,7 @@ import {
   loadProfile,
   loadSystemsRegistry,
   readFrameworkMode,
+  readInstalledProfileName,
   registerSystem,
   saveAdrIndex,
   saveSystemsRegistry,
@@ -54,23 +55,24 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe("desiredTemplates", () => {
+describe("desiredRuntimeTemplates", () => {
   it("returns deterministic template paths and ids from the registry", async () => {
-    const first = await desiredTemplates("Demo", "demo-core");
-    const second = await desiredTemplates("Demo", "demo-core");
+    const first = await desiredRuntimeTemplates("Demo", "research", "learning");
+    const second = await desiredRuntimeTemplates("Demo", "research", "learning");
 
     expect(second).toEqual(first);
     expect(first.map((template) => [template.path, template.template_id])).toContainEqual([
       ".framework/VERSION",
       "framework.version",
     ]);
+    expect(first.map((template) => template.path)).toContain("systems/README.md");
+    expect(first.map((template) => template.path)).not.toContain("systems/demo-core/system.yaml");
+    expect(first.map((template) => template.template_id)).not.toContain("system.core.contract");
+    expect(first.map((template) => template.path)).not.toContain(".framework/config.yaml");
+    expect(first.map((template) => template.template_id)).not.toContain("framework.config");
     expect(first.map((template) => [template.path, template.template_id])).toContainEqual([
-      "systems/demo-core/system.yaml",
-      "system.core.contract",
-    ]);
-    expect(first.map((template) => [template.path, template.template_id])).toContainEqual([
-      "knowledge/decisions/ADR-TEMPLATE.md",
-      "knowledge.decisions.adr_template",
+      "knowledge/README.md",
+      "knowledge.readme",
     ]);
     expect(first.map((template) => template.path)).not.toContain("systems/demo-core/README.md");
     expect(first.map((template) => template.path)).not.toContain(
@@ -90,22 +92,37 @@ describe("initFramework", () => {
     const result = await initFramework({ target: root, name: "Demo" });
 
     expect(result.project).toBe("Demo");
-    expect(result.core).toBe("demo-core");
+    expect(result.archetype).toBe("research");
+    expect(result.mode).toBe("learning");
     expect(await exists(path.join(root, ".framework", "VERSION"))).toBe(true);
     expect(await exists(path.join(root, MANIFEST_FILE))).toBe(true);
     const profile = await loadProfile("metasystem");
     for (const directory of dirsForMode(profile, "learning")) {
       expect(await exists(path.join(root, directory))).toBe(true);
     }
-    expect(await exists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
-    expect(await exists(path.join(root, "systems", "demo-core", "docs"))).toBe(false);
+    expect(await exists(path.join(root, "systems", "demo-core"))).toBe(false);
+    expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
+    expect(await exists(path.join(root, "knowledge", "README.md"))).toBe(true);
     expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
+    expect(await exists(path.join(root, ".framework", "adrs.json"))).toBe(true);
+    expect(await exists(path.join(root, "iterations"))).toBe(false);
+    expect(result.report.created_dirs).not.toContain(".framework/events");
 
     const manifest = await loadManifest(root);
     expect(manifest).not.toBeNull();
+    expect(manifest?.project).toMatchObject({
+      name: "Demo",
+      archetype: "research",
+      mode: "learning",
+    });
+    expect(manifest?.project.core).toBeUndefined();
     expect(Object.keys(manifest?.managed_files ?? {})).toContain(".framework/VERSION");
+    expect(Object.keys(manifest?.managed_files ?? {})).not.toContain(".framework/config.yaml");
+    expect(Object.keys(manifest?.managed_files ?? {})).not.toContain(
+      "systems/demo-core/system.yaml",
+    );
     expect(Object.keys(manifest?.managed_files ?? {})).toHaveLength(
-      (await desiredTemplates("Demo", "demo-core")).length,
+      (await desiredRuntimeTemplates("Demo", "research", "learning")).length,
     );
   });
 
@@ -173,6 +190,7 @@ describe("checkFramework and getFrameworkStatus", () => {
   it("returns framework status counts", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
+    await mkdir(path.join(root, "knowledge", "guides"), { recursive: true });
     await writeFile(path.join(root, "knowledge", "guides", "extra.md"), "# Extra\n", "utf8");
 
     const status = await getFrameworkStatus({ root });
@@ -180,8 +198,10 @@ describe("checkFramework and getFrameworkStatus", () => {
     expect(status).toMatchObject({
       hasManifest: true,
       project: "Demo",
-      core: "demo-core",
-      managedFiles: (await desiredTemplates("Demo", "demo-core")).length,
+      archetype: "research",
+      mode: "learning",
+      manifestFormat: "schema 1; archetype research; mode learning",
+      managedFiles: (await desiredRuntimeTemplates("Demo", "research", "learning")).length,
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);
   });
@@ -193,7 +213,7 @@ describe("checkFramework semantic validation", () => {
     await initFramework({ target: root, name: "Demo" });
 
     // Delete a managed file
-    await rm(path.join(root, "systems", "demo-core", "system.yaml"), { force: true });
+    await rm(path.join(root, ".framework", "VERSION"), { force: true });
 
     const result = await checkFramework({ root });
 
@@ -201,7 +221,7 @@ describe("checkFramework semantic validation", () => {
     expect(
       result.rows.some(
         (row) =>
-          row.path === "systems/demo-core/system.yaml" &&
+          row.path === ".framework/VERSION" &&
           row.status === "error" &&
           row.message?.includes("managed file missing"),
       ),
@@ -279,7 +299,7 @@ describe("checkFramework semantic validation", () => {
 
   it("reports warning for open iterations", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
+    await initFramework({ target: root, name: "Demo", archetype: "contest" });
     await startIteration({ root, title: "Open Iteration" });
 
     const result = await checkFramework({ root });
@@ -569,7 +589,7 @@ describe("checkFramework semantic validation", () => {
 describe("getFrameworkStatus systems section", () => {
   it("includes systems, openIterations, and knowledgeEntries", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
+    await initFramework({ target: root, name: "Demo", archetype: "contest" });
     await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
     await registerSystem(root, {
       path: "systems/demo-core",
@@ -790,12 +810,12 @@ describe("workspace operations", () => {
     ).rejects.toThrow(/directory source/);
   });
 
-  it("init with absorption mode writes mode to config.yaml and readFrameworkMode reads it", async () => {
+  it("init with absorption mode writes mode to manifest and readFrameworkMode reads it", async () => {
     const root = path.join(await tempDir(), "absorb-mode");
     await initFramework({ target: root, name: "AbsorbProj", mode: "absorption" });
 
-    const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
-    expect(config).toContain("mode: absorption");
+    expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
+    expect((await loadManifest(root))?.project.mode).toBe("absorption");
 
     expect(await readFrameworkMode(root)).toBe("absorption");
 
@@ -842,34 +862,67 @@ describe("workspace operations", () => {
     expect(analysis).toContain("src/");
   });
 
-  it("library profile scaffolds only systems/knowledge/data, no references or analyses", async () => {
-    const root = path.join(await tempDir(), "lib-profile");
-    await initFramework({ target: root, name: "LibProj", profile: "library" });
+  it("absorbReference can route absorption mode to intake/ explicitly", async () => {
+    const root = path.join(await tempDir(), "absorb-intake-ws");
+    const source = path.join(await tempDir(), "intake-src");
+    await initFramework({ target: root, name: "AbsorbIntake", mode: "absorption" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Candidate\n\nNeeds triage.\n", "utf8");
+
+    const result = await absorbReference({
+      root,
+      source,
+      name: "Candidate Source",
+      outlet: "intake",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    expect(result.referencePath).toBe("intake/candidate-source");
+    expect(await exists(path.join(root, "intake", "candidate-source", "README.md"))).toBe(true);
+    expect(await exists(path.join(root, "intake", "candidate-source", "source.yaml"))).toBe(true);
+    expect(await exists(path.join(root, "problem", "candidate-source"))).toBe(false);
+    expect(
+      await exists(path.join(root, "references", "frozen", "202606", "candidate-source")),
+    ).toBe(false);
+
+    const sourceYaml = await readFile(
+      path.join(root, "intake", "candidate-source", "source.yaml"),
+      "utf8",
+    );
+    expect(sourceYaml).toContain("absorb_path: intake/candidate-source");
+  });
+
+  it("library archetype scaffolds only systems/knowledge, no references or analyses", async () => {
+    const root = path.join(await tempDir(), "lib-archetype");
+    await initFramework({ target: root, name: "LibProj", archetype: "library" });
 
     // Core dirs present
     expect(await exists(path.join(root, "systems"))).toBe(true);
     expect(await exists(path.join(root, "knowledge"))).toBe(true);
-    expect(await exists(path.join(root, "data"))).toBe(true);
 
-    // Governance dirs absent — library profile does not scaffold them
+    // Governance dirs absent — library archetype does not scaffold them
+    expect(await exists(path.join(root, "data"))).toBe(false);
     expect(await exists(path.join(root, "references"))).toBe(false);
     expect(await exists(path.join(root, "analyses"))).toBe(false);
     expect(await exists(path.join(root, "iterations"))).toBe(false);
+    expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(false);
+    expect(await exists(path.join(root, ".framework", "adrs.json"))).toBe(false);
     expect(await exists(path.join(root, "releases"))).toBe(false);
 
-    // config records the profile
-    const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
-    expect(config).toContain("profile: library");
+    // Manifest records the archetype.
+    expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
+    expect((await loadManifest(root))?.project.archetype).toBe("library");
+    expect(await readInstalledProfileName(root)).toBe("library");
   });
 
-  it("contest profile v3 scaffolds problem/ + intake/benchmarks/submissions + tools/iterations/analyses", async () => {
-    const root = path.join(await tempDir(), "contest-profile");
-    await initFramework({ target: root, name: "ConProj", profile: "contest" });
+  it("contest archetype scaffolds problem/ + intake/benchmarks/submissions + tools/iterations/analyses", async () => {
+    const root = path.join(await tempDir(), "contest-archetype");
+    await initFramework({ target: root, name: "ConProj", archetype: "contest" });
 
-    // Core contest dirs (v1 + v2)
+    // Core contest dirs
     expect(await exists(path.join(root, "problem"))).toBe(true);
     expect(await exists(path.join(root, "systems"))).toBe(true);
-    expect(await exists(path.join(root, "data"))).toBe(true);
+    expect(await exists(path.join(root, "data"))).toBe(false);
 
     // Three immutable-object layers (v2 ADR-0006 kept in v3)
     expect(await exists(path.join(root, "intake"))).toBe(true);
@@ -882,28 +935,22 @@ describe("workspace operations", () => {
     expect(await exists(path.join(root, "iterations", "templates"))).toBe(true);
     expect(await exists(path.join(root, "tools"))).toBe(true);
 
-    // analyses keeps the default 4-folder split (references/gaps/patterns/templates)
-    expect(await exists(path.join(root, "analyses", "references"))).toBe(true);
-    expect(await exists(path.join(root, "analyses", "gaps"))).toBe(true);
-    expect(await exists(path.join(root, "analyses", "patterns"))).toBe(true);
-    expect(await exists(path.join(root, "analyses", "templates"))).toBe(true);
+    // Contest does not inherit research analyses or frozen-reference outlets.
+    expect(await exists(path.join(root, "analyses"))).toBe(false);
+    expect(await exists(path.join(root, "references"))).toBe(false);
+    expect(await exists(path.join(root, ".framework", "handoffs"))).toBe(false);
 
-    // references/frozen for third-party side evidence
-    expect(await exists(path.join(root, "references", "frozen"))).toBe(true);
-
-    // handoffs becomes a governance-layer location under .framework/
-    expect(await exists(path.join(root, ".framework", "handoffs"))).toBe(true);
-
-    // Mode + profile_version
-    const config = await readFile(path.join(root, ".framework", "config.yaml"), "utf8");
-    expect(config).toContain("mode: absorption");
-    expect(config).toContain("profile: contest");
-    expect(config).toContain("profile_version: 3");
+    // Mode + archetype are manifest-owned.
+    expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
+    expect((await loadManifest(root))?.project).toMatchObject({
+      archetype: "contest",
+      mode: "absorption",
+    });
   });
 
-  it("contest profile v3 selection schema uses generic questions[] list", async () => {
+  it("contest archetype selection schema uses generic questions[] list", async () => {
     const root = path.join(await tempDir(), "contest-v3-manifests");
-    await initFramework({ target: root, name: "Huawei3 Demo", profile: "contest" });
+    await initFramework({ target: root, name: "Huawei3 Demo", archetype: "contest" });
 
     // contest.json manifest at root (unchanged from v2)
     const manifest = JSON.parse(await readFile(path.join(root, "contest.json"), "utf8"));
@@ -929,35 +976,131 @@ describe("workspace operations", () => {
 
   it("creates deterministic analysis and iteration artifacts for a supplied date", async () => {
     const root = path.join(await tempDir(), "demo");
+    const iterationRoot = path.join(await tempDir(), "demo-iteration");
     const now = new Date("2026-06-14T10:00:00");
     await initFramework({ target: root, name: "Demo" });
+    await initFramework({ target: iterationRoot, name: "Demo Iteration", archetype: "contest" });
 
     const analysis = await createAnalysis({ root, title: "Review Source", now });
-    const iteration = await startIteration({ root, title: "Try Pattern", now });
+    const iteration = await startIteration({ root: iterationRoot, title: "Try Pattern", now });
 
     expect(analysis.path).toBe("analyses/references/2026-06-14-review-source.md");
     expect(await readFile(analysis.absolutePath, "utf8")).toContain("# Review Source");
     expect(iteration.path).toBe("iterations/2026-06-14-try-pattern");
     expect(iteration.planPath).toBe("iterations/2026-06-14-try-pattern/plan.md");
-    expect(await readFile(path.join(root, iteration.planPath), "utf8")).toContain("# Try Pattern");
+    expect(await readFile(path.join(iterationRoot, iteration.planPath), "utf8")).toContain(
+      "# Try Pattern",
+    );
   });
 
-  it("captures event JSONL entries through the workspace operation", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
+  it("gates iteration operations by archetype capability modules", async () => {
+    const researchRoot = path.join(await tempDir(), "research-iteration-disabled");
+    const libraryRoot = path.join(await tempDir(), "library-iteration-disabled");
+    const contestRoot = path.join(await tempDir(), "contest-iteration-enabled");
+    await initFramework({ target: researchRoot, name: "Research" });
+    await initFramework({ target: libraryRoot, name: "Library", archetype: "library" });
+    await initFramework({ target: contestRoot, name: "Contest", archetype: "contest" });
 
-    const result = await captureEvent({
+    await expect(startIteration({ root: researchRoot, title: "Try Pattern" })).rejects.toThrow(
+      /capability not enabled in archetype research: iteration/,
+    );
+    await expect(startIteration({ root: libraryRoot, title: "Try Pattern" })).rejects.toThrow(
+      /capability not enabled in archetype library: iteration/,
+    );
+
+    const started = await startIteration({ root: contestRoot, title: "Try Pattern" });
+    await expect(
+      closeIteration({ root: researchRoot, selector: started.path, result: "rejected" }),
+    ).rejects.toThrow(/capability not enabled in archetype research: iteration/);
+    await expect(
+      closeIteration({ root: contestRoot, selector: started.path, result: "applied" }),
+    ).resolves.toMatchObject({ path: started.path });
+  });
+
+  it("keeps event capture and event scaffolding disabled by default for every archetype", async () => {
+    for (const archetype of ["research", "contest", "library"] as const) {
+      const root = path.join(await tempDir(), `${archetype}-events-default-off`);
+      const result = await initFramework({
+        target: root,
+        name: `${archetype} Events`,
+        archetype,
+      });
+
+      expect(result.report.created_dirs).not.toContain(".framework/events");
+      expect(result.report.created_files).not.toContain(".framework/events/.gitkeep");
+      expect(await exists(path.join(root, ".framework", "events", ".gitkeep"))).toBe(false);
+
+      const eventFiles = (await readdir(path.join(root, ".framework", "events"))).filter((file) =>
+        file.endsWith(".jsonl"),
+      );
+      expect(eventFiles.length).toBeGreaterThan(0);
+      const firstEventFile = eventFiles[0];
+      if (!firstEventFile) {
+        throw new Error("expected init audit event file");
+      }
+      const initAudit = await readFile(
+        path.join(root, ".framework", "events", firstEventFile),
+        "utf8",
+      );
+      expect(initAudit).toContain('"event":"framework.initialized"');
+
+      await expect(
+        captureEvent({
+          root,
+          kind: "note",
+          text: "Captured from test",
+          now: new Date("2026-06-14T10:00:00"),
+        }),
+      ).rejects.toThrow(new RegExp(`capability not enabled in archetype ${archetype}: events`));
+    }
+  });
+
+  it("keeps event capture disabled by default while internal audit events still write", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo", archetype: "library" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n\nUseful material.\n", "utf8");
+
+    await expect(
+      captureEvent({
+        root,
+        kind: "note",
+        text: "Captured from test",
+        now: new Date("2026-06-14T10:00:00"),
+      }),
+    ).rejects.toThrow(/capability not enabled in archetype library: events/);
+
+    const result = await absorbReference({
       root,
-      kind: "note",
-      text: "Captured from test",
+      source,
+      name: "Source",
       now: new Date("2026-06-14T10:00:00"),
     });
 
     const lines = (await readFile(path.join(root, result.eventFile), "utf8")).trim().split("\n");
     expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
-      event: "capture.created",
-      kind: "note",
-      text: "Captured from test",
+      event: "reference.absorbed",
+      name: "Source",
+    });
+  });
+
+  it("keeps ADR audit append enabled even when event capture is not scaffolded", async () => {
+    const root = path.join(await tempDir(), "adr-audit-events");
+    await initFramework({ target: root, name: "ADR Audit", archetype: "research" });
+
+    const created = await createAdr(
+      root,
+      { title: "Record Architecture Decision" },
+      { now: new Date("2026-06-14T10:00:00") },
+    );
+
+    expect(created.eventFile).toBe(".framework/events/2026-06.jsonl");
+    expect(await exists(path.join(root, ".framework", "events", ".gitkeep"))).toBe(false);
+    const lines = (await readFile(path.join(root, created.eventFile), "utf8")).trim().split("\n");
+    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
+      event: "adr.created",
+      title: "Record Architecture Decision",
     });
   });
 });
@@ -965,7 +1108,7 @@ describe("workspace operations", () => {
 describe("closeIteration", () => {
   it("closes an open iteration and writes an event", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
+    await initFramework({ target: root, name: "Demo", archetype: "contest" });
     const started = await startIteration({
       root,
       title: "Test Pattern",
@@ -994,7 +1137,7 @@ describe("closeIteration", () => {
 
   it("throws NotFound for unknown iteration selector", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
+    await initFramework({ target: root, name: "Demo", archetype: "contest" });
 
     await expect(
       closeIteration({ root, selector: "nonexistent", result: "rejected" }),

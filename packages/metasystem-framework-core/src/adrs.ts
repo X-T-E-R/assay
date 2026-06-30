@@ -7,6 +7,7 @@ import { appendEvent } from "./events.js";
 import { detectExternalGovernance } from "./governance.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
+import { requireCapability } from "./profile.js";
 import { type AdrIndex, type AdrRecord, type AdrStatus, adrIndexSchema } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
 import { nowIso } from "./time.js";
@@ -89,6 +90,7 @@ export async function saveAdrIndex(root: string, index: AdrIndex): Promise<AdrIn
 }
 
 export async function requireAdrIndex(root: string): Promise<AdrIndex> {
+  await requireCapability(root, "adr");
   const index = await loadAdrIndex(root);
   if (!index) {
     throw new FrameworkNotFoundError(
@@ -217,9 +219,11 @@ export async function createAdr(
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+  await requireCapability(root, "adr");
 
   // Governance deferral (ADR-0005): if an external governance system (trellis,
-  // docs/adr/) is detected, defer ADR creation to it unless --force.
+  // superpowers, docs/adr/) is detected, defer ADR creation to it unless
+  // --force.
   if (options.force !== true) {
     const governance = await detectExternalGovernance(root);
     if (governance.system !== "none") {
@@ -294,6 +298,7 @@ export async function acceptAdr(
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+  await requireCapability(root, "adr");
   const now = options.now ?? new Date();
   const index = await requireAdrIndex(root);
   const adr = findAdr(index, selector);
@@ -324,6 +329,7 @@ export async function supersedeAdr(
 ): Promise<SupersedeAdrResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+  await requireCapability(root, "adr");
   const now = options.now ?? new Date();
   const index = await requireAdrIndex(root);
   const oldAdr = findAdr(index, oldSelector);
@@ -381,6 +387,7 @@ export async function deprecateAdr(
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+  await requireCapability(root, "adr");
   const now = options.now ?? new Date();
   const index = await requireAdrIndex(root);
   const adr = findAdr(index, selector);

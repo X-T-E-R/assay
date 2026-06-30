@@ -7,15 +7,14 @@ import path from "node:path";
  * When one of these is detected, `adr new` warns and defers unless --force.
  */
 export interface GovernanceDetection {
-  readonly system: "trellis" | "docs-adr" | "git" | "none";
+  readonly system: "trellis" | "superpowers" | "docs-adr" | "git" | "none";
   readonly path: string;
   readonly message: string;
 }
 
-async function exists(target: string): Promise<boolean> {
+async function isDirectory(target: string): Promise<boolean> {
   try {
-    await stat(target);
-    return true;
+    return (await stat(target)).isDirectory();
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return false;
@@ -30,14 +29,16 @@ async function exists(target: string): Promise<boolean> {
  *
  * Detection order:
  * 1. trellis (.trellis/ directory) — full task/spec/governance system
- * 2. docs-adr (docs/adr/ directory) — common ADR convention
- * 3. git (.git/ directory) — baseline version control (informational only,
+ * 2. superpowers (.superpowers/ or superpowers/ directory) — external
+ *    workflow/governance system
+ * 3. docs-adr (docs/adr/ directory) — common ADR convention
+ * 4. git (.git/ directory) — baseline version control (informational only,
  *    does not block ADR creation since git alone is not a decision-recording
  *    system)
  */
 export async function detectExternalGovernance(root: string): Promise<GovernanceDetection> {
   const trellisPath = path.join(root, ".trellis");
-  if (await exists(trellisPath)) {
+  if (await isDirectory(trellisPath)) {
     return {
       system: "trellis",
       path: ".trellis/",
@@ -46,8 +47,19 @@ export async function detectExternalGovernance(root: string): Promise<Governance
     };
   }
 
+  for (const marker of [".superpowers", "superpowers"] as const) {
+    const superpowersPath = path.join(root, marker);
+    if (await isDirectory(superpowersPath)) {
+      return {
+        system: "superpowers",
+        path: `${marker}/`,
+        message: `detected superpowers governance (${marker}/). Decision records should go through superpowers; metasystem ADR is redundant. Use --force to create a metasystem ADR anyway.`,
+      };
+    }
+  }
+
   const docsAdrPath = path.join(root, "docs", "adr");
-  if (await exists(docsAdrPath)) {
+  if (await isDirectory(docsAdrPath)) {
     return {
       system: "docs-adr",
       path: "docs/adr/",

@@ -2,16 +2,22 @@ import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/pr
 import path from "node:path";
 import { execa } from "execa";
 
-import { loadAdrIndex } from "./adrs.js";
-import { ADRS_FILE, MANIFEST_FILE, PRIMARY_DIRS } from "./constants.js";
+import { defaultAdrIndex, loadAdrIndex, saveAdrIndex } from "./adrs.js";
+import { ADRS_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
-import { dirsForMode, loadProfile } from "./profile.js";
+import { dirsForMode, loadProfile, readInstalledArchetype, requireCapability } from "./profile.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
-import type { AdrIndex, AdrRecord, FrameworkManifest } from "./schemas/index.js";
+import type {
+  AdrIndex,
+  AdrRecord,
+  FrameworkManifest,
+  ProjectArchetype,
+  ProjectMode,
+} from "./schemas/index.js";
 import { toPosixPath } from "./serialization.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
 import { desiredTemplates } from "./templates.js";
@@ -26,23 +32,49 @@ const GENERATED_REFERENCE_DIRS = new Set([
   ".next",
 ]);
 
+function profileAliasToArchetype(profile: string | undefined): ProjectArchetype {
+  if (profile === "contest" || profile === "library") return profile;
+  return "research";
+}
+
+function profileNameForArchetype(archetype: ProjectArchetype): string {
+  return archetype;
+}
+
+function defaultModeForArchetype(archetype: ProjectArchetype): ProjectMode {
+  return archetype === "contest" ? "absorption" : "learning";
+}
+
+export async function desiredRuntimeTemplates(
+  project: string,
+  archetype: ProjectArchetype,
+  mode: ProjectMode,
+) {
+  const profileName = profileNameForArchetype(archetype);
+  return desiredTemplates(project, mode, profileName);
+}
+
 export interface InitFrameworkOptions {
   readonly target: string;
   readonly name?: string;
-  readonly core?: string;
   readonly git?: boolean;
   readonly force?: boolean;
   readonly createNew?: boolean;
-  /** Project mode: "learning" (default) treats external sources as references; "absorption" treats them as project-level sources. */
-  readonly mode?: "learning" | "absorption";
-  /** Profile name: "metasystem" (default), "library", "contest". Determines scaffold structure (ADR-0005). */
+  /** Project mode: "learning" treats external sources as references; "absorption" treats them as project-level sources. */
+  readonly mode?: ProjectMode;
+  /** Project archetype: research (default), contest, or library. */
+  readonly archetype?: ProjectArchetype;
+  /**
+   * @deprecated Legacy alias for archetype. "metasystem" maps to "research".
+   */
   readonly profile?: string;
 }
 
 export interface InitFrameworkResult {
   readonly root: string;
   readonly project: string;
-  readonly core: string;
+  readonly archetype: ProjectArchetype;
+  readonly mode: ProjectMode;
   readonly report: OperationReport;
 }
 
@@ -57,6 +89,9 @@ export interface CheckFrameworkResult {
   readonly manifest?: {
     readonly schema: number;
     readonly frameworkVersion: string;
+    readonly format: string;
+    readonly archetype: ProjectArchetype;
+    readonly mode: ProjectMode;
     readonly managedFiles: number;
   };
   readonly systems?: {
@@ -84,8 +119,10 @@ export interface FrameworkStatusResult {
   readonly hasManifest: boolean;
   readonly installedVersion?: string;
   readonly layoutVersion?: number;
+  readonly manifestFormat?: string;
   readonly project?: string;
-  readonly core?: string;
+  readonly archetype?: ProjectArchetype;
+  readonly mode?: ProjectMode;
   readonly managedFiles: number;
   readonly zones: FrameworkZoneCount[];
   readonly systems?: readonly FrameworkStatusSystem[];
@@ -112,6 +149,7 @@ export interface AbsorbReferenceOptions {
   readonly root: string;
   readonly source: string;
   readonly name?: string;
+  readonly outlet?: AbsorptionOutlet;
   readonly now?: Date;
 }
 
@@ -122,6 +160,9 @@ export interface AbsorbReferenceResult {
   readonly analysisPath: string;
   readonly eventFile: string;
 }
+
+export const ABSORPTION_OUTLETS = ["problem", "intake"] as const;
+export type AbsorptionOutlet = (typeof ABSORPTION_OUTLETS)[number];
 
 export interface CreateAnalysisOptions {
   readonly root: string;
@@ -283,6 +324,17 @@ async function countFiles(root: string): Promise<number> {
     }
   }
   return count;
+}
+
+async function countKnowledgeEntries(root: string): Promise<number> {
+  const knowledgeRoot = path.join(root, "knowledge");
+  if (!(await exists(knowledgeRoot))) return 0;
+  const files: string[] = [];
+  await collectMarkdownFiles(knowledgeRoot, files);
+  return files.filter((file) => {
+    const basename = path.basename(file);
+    return basename !== "README.md" && basename !== "ADR-TEMPLATE.md";
+  }).length;
 }
 
 const OPEN_STATUS_PATTERN = /(?<![a-z])Status:\s*open\b/i;
@@ -449,24 +501,38 @@ async function writeTemplateFile(
   return "written";
 }
 
+async function scaffoldAdrIndex(root: string, report: OperationReport): Promise<void> {
+  const file = path.join(root, ADRS_FILE);
+  if (await exists(file)) {
+    report.skipped_files.push(ADRS_FILE);
+    return;
+  }
+  await saveAdrIndex(root, defaultAdrIndex());
+  report.created_files.push(ADRS_FILE);
+}
+
 export async function initFramework(options: InitFrameworkOptions): Promise<InitFrameworkResult> {
   const root = path.resolve(options.target);
   const project = options.name ?? path.basename(root);
-  const core = options.core ?? `${slugify(project)}-core`;
   const report = createEmptyReport();
 
-  const profileName = options.profile ?? "metasystem";
+  const archetype = options.archetype ?? profileAliasToArchetype(options.profile);
+  const profileName = profileNameForArchetype(archetype);
   const profile = await loadProfile(profileName);
-  // Mode: explicit --mode wins; otherwise use the profile's default mode.
-  const mode = options.mode ?? profile.mode;
+  // Mode is manifest-owned. Explicit options win; otherwise use the archetype
+  // default (falling back to the legacy profile while profiles are being
+  // renamed in the adjacent partition).
+  const mode = options.mode ?? defaultModeForArchetype(archetype) ?? profile.mode;
 
   await ensureDir(root, root, report);
   for (const directory of dirsForMode(profile, mode)) {
     await ensureDir(path.join(root, directory), root, report);
   }
 
-  let manifest = (await loadManifest(root)) ?? defaultManifest(project, core);
-  for (const template of await desiredTemplates(project, core, mode, profileName)) {
+  let manifest = (await loadManifest(root)) ?? defaultManifest(project, { archetype, mode });
+  manifest.project.archetype = archetype;
+  manifest.project.mode = mode;
+  for (const template of await desiredRuntimeTemplates(project, archetype, mode)) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,
@@ -476,14 +542,18 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
       recordTemplate(manifest, template);
     }
   }
+  if (profile.modules.includes("adr")) {
+    await scaffoldAdrIndex(root, report);
+  }
 
   const manifestExisted = await exists(path.join(root, MANIFEST_FILE));
   manifest = await saveManifest(root, manifest);
   (manifestExisted ? report.updated_files : report.created_files).push(MANIFEST_FILE);
 
   await appendEvent(root, {
-    core,
+    archetype,
     event: "framework.initialized",
+    mode,
     project,
     version: manifest.framework_version,
   });
@@ -497,7 +567,7 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
     }
   }
 
-  return { root, project, core, report };
+  return { root, project, archetype, mode, report };
 }
 
 export async function checkFramework(
@@ -505,9 +575,9 @@ export async function checkFramework(
 ): Promise<CheckFrameworkResult> {
   const root = path.resolve(options.root);
   // Base structure check targets: always-required runtime files plus the
-  // *profile-declared* primary directories. Reading the profile here makes
-  // `check` aware of profile-trimmed shapes (e.g. contest v2 has no
-  // iterations/) without per-profile branching.
+  // archetype-declared primary directories. The profile loader remains only as
+  // a scaffold-data adapter until that partition renames profiles to
+  // archetypes.
   const checkTargets: Array<readonly [string, string]> = [
     [".framework directory", ".framework"],
     [".framework/VERSION", ".framework/VERSION"],
@@ -516,13 +586,13 @@ export async function checkFramework(
     ["knowledge directory", "knowledge"],
   ];
 
-  // If a workspace declares its profile, augment checks with that profile's
+  // If a workspace declares its archetype, augment checks with that archetype's
   // top-level dirs (intake/, problem/, references/, analyses/, iterations/,
   // benchmarks/, submissions/...). Default to a permissive check when the
-  // profile cannot be read.
+  // manifest/archetype cannot be read.
   try {
-    const installedProfile = await readInstalledProfileName(root);
-    const profile = await loadProfile(installedProfile ?? "metasystem");
+    const installedArchetype = await readInstalledProfileName(root);
+    const profile = await loadProfile(profileNameForArchetype(installedArchetype ?? "research"));
     const mode = await readFrameworkMode(root);
     const topLevels = new Set<string>();
     for (const d of dirsForMode(profile, mode)) {
@@ -535,7 +605,7 @@ export async function checkFramework(
       checkTargets.push([`${dir} directory`, dir]);
     }
   } catch {
-    // unreadable profile/config; fall back to base targets only
+    // unreadable manifest/archetype; fall back to base targets only
   }
   const rows: CheckRow[] = [];
 
@@ -559,7 +629,11 @@ export async function checkFramework(
   }
 
   if (manifest) {
-    rows.push({ path: MANIFEST_FILE, status: "ok", message: "manifest schema readable" });
+    rows.push({
+      path: MANIFEST_FILE,
+      status: "ok",
+      message: `manifest schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
+    });
 
     // Semantic check 1: managed file existence + hash consistency
     for (const [filePath, record] of Object.entries(manifest.managed_files)) {
@@ -868,6 +942,9 @@ export async function checkFramework(
           manifest: {
             schema: manifest.__schema,
             frameworkVersion: manifest.framework_version,
+            format: `schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
+            archetype: manifest.project.archetype,
+            mode: manifest.project.mode,
             managedFiles: Object.keys(manifest.managed_files).length,
           },
         }
@@ -1064,9 +1141,7 @@ export async function getFrameworkStatus(
     // iterations dir may not exist
   }
 
-  const knowledgeEntries = await countFiles(path.join(root, "knowledge"));
-  // subtract README stubs (4 subdirs + 1 root) and the ADR authoring template
-  const knowledgeCount = Math.max(0, knowledgeEntries - 6);
+  const knowledgeCount = await countKnowledgeEntries(root);
 
   if (!manifest) {
     return {
@@ -1085,8 +1160,10 @@ export async function getFrameworkStatus(
     hasManifest: true,
     installedVersion: manifest.framework_version,
     layoutVersion: manifest.layout_version,
+    manifestFormat: `schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
     project: manifest.project.name,
-    core: manifest.project.core,
+    archetype: manifest.project.archetype,
+    mode: manifest.project.mode,
     managedFiles: Object.keys(manifest.managed_files).length,
     zones,
     ...(systems ? { systems } : {}),
@@ -1254,33 +1331,23 @@ async function markReferenceAnalyzed(yamlPath: string): Promise<boolean> {
  *   a reference.
  */
 export async function readFrameworkMode(root: string): Promise<"learning" | "absorption"> {
-  const configPath = path.join(root, ".framework", "config.yaml");
-  if (!(await exists(configPath))) return "learning";
   try {
-    const content = await readFile(configPath, "utf8");
-    const match = content.match(/^\s*mode:\s*(\w+)/m);
-    if (match && match[1] === "absorption") return "absorption";
+    const manifest = await loadManifest(root);
+    return manifest?.project.mode ?? "learning";
   } catch {
-    // unreadable config; default
+    // unreadable/missing manifest; schema legacy default is learning
   }
   return "learning";
 }
 
 /**
- * Read the installed profile name from a workspace's `.framework/config.yaml`.
- * Returns null when no profile field is recorded (legacy v3 workspaces).
+ * Read the installed archetype from a workspace manifest.
+ *
+ * The legacy function name remains for source compatibility with CLI code that
+ * has not yet been renamed from profile→archetype.
  */
-export async function readInstalledProfileName(root: string): Promise<string | null> {
-  const configPath = path.join(root, ".framework", "config.yaml");
-  if (!(await exists(configPath))) return null;
-  try {
-    const content = await readFile(configPath, "utf8");
-    const match = content.match(/^\s*profile:\s*(\w+)/m);
-    if (match?.[1]) return match[1];
-  } catch {
-    // unreadable config
-  }
-  return null;
+export async function readInstalledProfileName(root: string): Promise<ProjectArchetype | null> {
+  return readInstalledArchetype(root);
 }
 
 export async function absorbReference(
@@ -1307,17 +1374,21 @@ export async function absorbReference(
   let sourcePath: string;
   let eventPayload: Record<string, unknown>;
   if (mode === "absorption") {
-    // Absorption mode: the source is project-level material, not a reference.
-    // Copy it under problem/<name>/ (creating problem/ if needed) and record a
-    // case file so the open work is still tracked.
-    sourcePath = await absorbAsProblem(root, source, name, now);
+    const outlet = normalizeAbsorptionOutlet(options.outlet);
+    sourcePath = await absorbAsProjectSource(root, source, name, now, outlet);
     eventPayload = {
       event: "source.absorbed",
       name,
-      problem_path: sourcePath,
+      absorb_path: sourcePath,
+      outlet,
       source,
     };
   } else {
+    if (options.outlet !== undefined) {
+      throw new FrameworkError(
+        `absorb outlet is only valid in absorption mode; manifest mode is ${mode}`,
+      );
+    }
     // Learning mode: freeze + reference.yaml case file.
     const frozen = await addReference({ root, source, name, now });
     sourcePath = frozen.path;
@@ -1366,22 +1437,32 @@ export async function absorbReference(
 }
 
 /**
- * Absorption-mode landing: copy the source under problem/<name>/ as
- * project-level material. Unlike a frozen reference, this is the project's own
- * source, so no reference.yaml is written. Returns the relative path.
+ * Absorption-mode landing: copy the source under problem/<name>/ or
+ * intake/<name>/ as project-level material. Unlike a frozen reference, this is
+ * the project's own source, so no reference.yaml is written. Returns the
+ * relative path.
  */
-async function absorbAsProblem(
+function normalizeAbsorptionOutlet(outlet: AbsorptionOutlet | undefined): AbsorptionOutlet {
+  const normalized = outlet ?? "problem";
+  if (!ABSORPTION_OUTLETS.includes(normalized)) {
+    throw new FrameworkError(`absorb outlet must be one of: ${ABSORPTION_OUTLETS.join(", ")}`);
+  }
+  return normalized;
+}
+
+async function absorbAsProjectSource(
   root: string,
   source: string,
   name: string,
   now: Date,
+  outlet: AbsorptionOutlet,
 ): Promise<string> {
-  const relativePath = `problem/${slugify(name)}`;
+  const relativePath = `${outlet}/${slugify(name)}`;
   const destination = path.join(root, relativePath);
   if (await exists(destination)) {
-    throw new FrameworkAlreadyExistsError(`problem source already exists: ${relativePath}`);
+    throw new FrameworkAlreadyExistsError(`${outlet} source already exists: ${relativePath}`);
   }
-  await mkdir(path.join(root, "problem"), { recursive: true });
+  await mkdir(path.join(root, outlet), { recursive: true });
   await cp(source, destination, {
     recursive: true,
     filter: (_src, dest) => shouldCopyReference(destination, dest),
@@ -1574,6 +1655,7 @@ export async function startIteration(
 ): Promise<StartIterationResult> {
   const root = path.resolve(options.root);
   requireManifest(await loadManifest(root), root);
+  await requireCapability(root, "iteration");
   const now = options.now ?? new Date();
   const date = dateStamp(now);
   const relativePath = `iterations/${date}-${slugify(options.title)}`;
@@ -1608,6 +1690,7 @@ export async function startIteration(
 export async function captureEvent(options: CaptureEventOptions): Promise<CaptureEventResult> {
   const root = path.resolve(options.root);
   requireManifest(await loadManifest(root), root);
+  await requireCapability(root, "events");
   const eventFile = await appendEvent(
     root,
     { event: "capture.created", kind: options.kind, text: options.text },
@@ -1622,6 +1705,7 @@ export async function closeIteration(
 ): Promise<CloseIterationResult> {
   const root = path.resolve(options.root);
   requireManifest(await loadManifest(root), root);
+  await requireCapability(root, "iteration");
   const now = options.now ?? new Date();
   const date = dateStamp(now);
 

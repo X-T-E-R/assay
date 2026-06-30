@@ -12,7 +12,7 @@ import {
 import { FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
-import { loadManifest, projectFromManifest, recordTemplate, saveManifest } from "./manifest.js";
+import { loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
   type OperationReport,
@@ -35,8 +35,8 @@ import {
   saveSystemsRegistry,
 } from "./systems-registry.js";
 import type { TemplateFile } from "./templates.js";
-import { desiredTemplates } from "./templates.js";
 import { nowIso } from "./time.js";
+import { desiredRuntimeTemplates } from "./workspace.js";
 
 export interface AnalyzeUpdateOptions {
   readonly root: string;
@@ -183,6 +183,20 @@ function requireManifest(manifest: FrameworkManifest | null, root: string): Fram
   return manifest;
 }
 
+function projectNameFromManifest(
+  manifest: FrameworkManifest | null | undefined,
+  fallbackRoot: string,
+): string {
+  return manifest?.project.name || path.basename(path.resolve(fallbackRoot));
+}
+
+function legacyCoreNameForV2Manifest(manifest: FrameworkManifest, root: string): string {
+  // Compatibility island for v2→v3 migration only. New runtime/update template
+  // analysis must read manifest.project.archetype/mode and must not use
+  // manifest.project.core.
+  return manifest.project.core ?? `${slugify(path.basename(path.resolve(root)))}-core`;
+}
+
 function isLegacySystemManagedFile(managedPath: string, coreName: string): boolean {
   if (!managedPath.startsWith(`systems/${coreName}/`)) {
     return false;
@@ -210,7 +224,7 @@ async function writeNewCopy(root: string, template: TemplateFile): Promise<strin
 export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<UpdateAnalysis> {
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
-  const [project, core] = projectFromManifest(manifest, root);
+  const project = projectNameFromManifest(manifest, root);
   const changes: UpdateAnalysis["changes"] = {
     new: [],
     auto_update: [],
@@ -220,7 +234,11 @@ export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<Upda
     unchanged: [],
   };
 
-  for (const template of await desiredTemplates(project, core)) {
+  for (const template of await desiredRuntimeTemplates(
+    project,
+    manifest.project.archetype,
+    manifest.project.mode,
+  )) {
     const target = path.join(root, template.path);
     const record = manifest.managed_files[template.path];
     const desiredHash = computeHash(template.content);
@@ -360,9 +378,11 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
   }
 
   const manifest = requireManifest(await loadManifest(root), root);
-  const [project, core] = projectFromManifest(manifest, root);
+  const project = projectNameFromManifest(manifest, root);
   const templatesByPath = new Map(
-    (await desiredTemplates(project, core)).map((template) => [template.path, template]),
+    (await desiredRuntimeTemplates(project, manifest.project.archetype, manifest.project.mode)).map(
+      (template) => [template.path, template],
+    ),
   );
   const backupPaths = [
     ...analysis.changes.auto_update,
@@ -439,8 +459,8 @@ export async function buildLayoutMigrationPlan(
   // --- v2 → v3 migration: systems registry creation ---
   const existingRegistry = await loadSystemsRegistry(root);
   const manifest = await loadManifest(root);
-  if (!existingRegistry && manifest) {
-    const coreName = manifest.project.core;
+  if (!existingRegistry && manifest && manifest.layout_version < LAYOUT_VERSION) {
+    const coreName = legacyCoreNameForV2Manifest(manifest, root);
     const systemsDir = path.join(root, "systems");
 
     // Step 1: create systems-registry.json from manifest core
@@ -728,7 +748,7 @@ async function applyV2ToV3Migration(root: string, steps: readonly MigrationStep[
   const manifest = await loadManifest(root);
   if (!manifest) return;
 
-  const coreName = manifest.project.core;
+  const coreName = legacyCoreNameForV2Manifest(manifest, root);
   const projectName = manifest.project.name;
   const needsRegistryWrite = steps.some(
     (step) =>

@@ -4,7 +4,7 @@ import path from "node:path";
 import { MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
-import { relativeDisplayPath, slugify } from "./paths.js";
+import { relativeDisplayPath } from "./paths.js";
 import { recordProjectLifecycleBestEffort } from "./project-registry.js";
 import { type InitFrameworkResult, createAnalysis, initFramework } from "./workspace.js";
 
@@ -16,7 +16,6 @@ const SKIPPED_ROOT_ENTRIES = new Set([".git", ADOPTION_ROOT]);
 export interface AdoptExistingProjectOptions {
   readonly root: string;
   readonly name?: string;
-  readonly core?: string;
   readonly dryRun?: boolean;
   readonly apply?: boolean;
   /** After a successful apply, generate an adoption inventory and open an adoption analysis so the archived content is tracked to completion. */
@@ -43,7 +42,8 @@ export interface AdoptionFailure {
 
 export interface AdoptionScaffoldMetadata {
   readonly project: string;
-  readonly core: string;
+  readonly archetype: string;
+  readonly mode: string;
   readonly createdDirectories: number;
   readonly existingDirectories: number;
   readonly createdFiles: number;
@@ -212,7 +212,8 @@ async function buildAdoptionPlan(rootInput: string, now: Date): Promise<Adoption
 function scaffoldMetadata(init: InitFrameworkResult): AdoptionScaffoldMetadata {
   return {
     project: init.project,
-    core: init.core,
+    archetype: init.archetype,
+    mode: init.mode,
     createdDirectories: init.report.created_dirs.length,
     existingDirectories: init.report.existing_dirs.length,
     createdFiles: init.report.created_files.length,
@@ -266,12 +267,12 @@ function suggestDestination(entryName: string): string {
   if (lower === "readme.md" || lower.startsWith("readme")) return "references/ or problem/";
   if (lower.endsWith(".md") || lower === "docs" || lower === "documentation")
     return "references/ or knowledge/guides/";
-  if (lower === "src" || lower === "source" || lower === "lib") return "systems/<core>/";
-  if (lower === "test" || lower === "tests" || lower === "spec") return "systems/<core>/tests/";
+  if (lower === "src" || lower === "source" || lower === "lib") return "systems/";
+  if (lower === "test" || lower === "tests" || lower === "spec") return "systems/ or tests/";
   if (lower === "data" || lower === "datasets") return "data/";
-  if (lower === "scripts" || lower === "tools") return "systems/<core>/ or releases/";
+  if (lower === "scripts" || lower === "tools") return "systems/ or releases/";
   if (lower === ".git") return "preserved at root";
-  return "systems/<core>/ or references/";
+  return "systems/ or references/";
 }
 
 /**
@@ -322,7 +323,6 @@ export async function adoptExistingProject(
   const now = options.now ?? new Date();
   const plan = await buildAdoptionPlan(options.root, now);
   const project = options.name ?? path.basename(plan.root);
-  const core = options.core ?? `${slugify(project)}-core`;
 
   if (dryRun || options.dryRun === true) {
     return {
@@ -371,13 +371,14 @@ export async function adoptExistingProject(
   let adoptionAnalysisPath: string | undefined;
   if (failures.length === 0) {
     try {
-      init = await initFramework({ target: plan.root, name: project, core });
+      init = await initFramework({ target: plan.root, name: project });
       const eventPath = await appendEvent(plan.root, {
         archive: plan.archiveDir,
+        archetype: init.archetype,
         event: "framework.adopted",
+        mode: init.mode,
         moved: moves.length,
         project,
-        core,
       });
       eventFile = relativeDisplayPath(eventPath, plan.root);
       await recordProjectLifecycleBestEffort(plan.root, "adopt");

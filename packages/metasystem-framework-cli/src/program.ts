@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { Command, Option } from "@commander-js/extra-typings";
 import {
   type AdrStatus,
@@ -32,7 +30,7 @@ import {
   listAdrs,
   listProjectRecords,
   listSystems,
-  loadProfile,
+  loadManifest,
   migrateLayout,
   promoteSystem,
   pruneProjects,
@@ -98,6 +96,23 @@ const PROJECT_STATUSES: readonly MetaSystemProjectRegistryStatus[] = [
 ];
 
 const ADR_STATUSES: readonly AdrStatus[] = ["proposed", "accepted", "superseded", "deprecated"];
+type ProjectArchetype = "research" | "contest" | "library";
+type ProjectMode = "learning" | "absorption";
+
+const PROJECT_ARCHETYPES: readonly ProjectArchetype[] = ["research", "contest", "library"];
+const PROJECT_MODES: readonly ProjectMode[] = ["learning", "absorption"];
+const ABSORPTION_OUTLETS: readonly AbsorptionOutlet[] = ["problem", "intake"];
+
+type LegacyProfile = "metasystem" | "contest" | "library";
+type AbsorptionOutlet = "problem" | "intake";
+
+function archetypeFromLegacyProfile(profile: LegacyProfile): ProjectArchetype {
+  return profile === "metasystem" ? "research" : profile;
+}
+
+function profileForCoreCompatibility(archetype: ProjectArchetype): ProjectArchetype {
+  return archetype;
+}
 
 function defaultOutput(): CliOutput {
   return {
@@ -154,6 +169,53 @@ function parseAdrStatusFilter(status?: string): AdrStatus | undefined {
   throw new Error(`--status must be one of: ${ADR_STATUSES.join(", ")}`);
 }
 
+function selectedArchetype(options: {
+  readonly archetype?: string;
+  readonly profile?: string;
+}): { readonly archetype: ProjectArchetype; readonly usedLegacyProfile?: LegacyProfile } {
+  if (options.profile) {
+    const profile = options.profile as LegacyProfile;
+    return {
+      archetype: archetypeFromLegacyProfile(profile),
+      usedLegacyProfile: profile,
+    };
+  }
+  return {
+    archetype: (options.archetype ?? "research") as ProjectArchetype,
+  };
+}
+
+async function writeArchetypeCommandResult(
+  output: Pick<CliOutput, "stdout" | "stderr">,
+  options: { readonly root: string; readonly json?: boolean },
+  commandName: "archetype" | "profile",
+): Promise<void> {
+  const root = await discoveredRoot(options.root);
+  const manifest = await loadManifest(root);
+  if (!manifest) {
+    throw new Error("No framework manifest found");
+  }
+  const payload = {
+    project: manifest.project.name,
+    archetype: manifest.project.archetype,
+    mode: manifest.project.mode,
+  };
+  if (options.json) {
+    writeJson(output, commandName === "profile" ? { ...payload, deprecated_alias: true } : payload);
+    return;
+  }
+  writeLine(output, "stdout", `Project: ${payload.project}`);
+  writeLine(output, "stdout", `Archetype: ${payload.archetype}`);
+  writeLine(output, "stdout", `Mode: ${payload.mode}`);
+  if (commandName === "profile") {
+    writeLine(
+      output,
+      "stdout",
+      "Note: `profile` is a deprecated compatibility alias; use manifest project.archetype/project.mode and `metasystem init --archetype ...`.",
+    );
+  }
+}
+
 export function createProgram(options: CreateProgramOptions = {}): Command {
   const output = createOutput(options);
   const program = new Command()
@@ -170,36 +232,51 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Initialize a versioned framework structure without overwriting by default")
     .argument("[target-dir]", "target framework directory", process.cwd())
     .option("--name <project-name>", "project name")
-    .option("--core <core-name>", "core system directory name")
     .option("--git", "initialize a git repository in the framework root")
     .option("--force", "overwrite existing files and track them as managed")
     .option("--create-new", "write .new copies when files already exist")
     .addOption(
       new Option(
         "--mode <mode>",
-        "project mode: learning (external refs) or absorption (source IS the project). Defaults to the profile's mode.",
-      ).choices(["learning", "absorption"]),
+        "project mode: learning (external refs) or absorption (source IS the project)",
+      ).choices([...PROJECT_MODES]),
     )
     .addOption(
-      new Option("--profile <name>", "structure profile: metasystem (default), library, contest")
+      new Option("--archetype <archetype>", "project archetype: research, contest, library")
+        .choices([...PROJECT_ARCHETYPES])
+        .conflicts("profile"),
+    )
+    .addOption(
+      new Option(
+        "--profile <name>",
+        "deprecated alias for --archetype (metasystem maps to research)",
+      )
         .choices(["metasystem", "library", "contest"])
-        .default("metasystem"),
+        .conflicts("archetype"),
     )
     .action(async (targetDir, commandOptions) => {
-      const result = await initFramework({
+      const { archetype, usedLegacyProfile } = selectedArchetype(commandOptions);
+      const coreCompatibilityProfile = profileForCoreCompatibility(archetype);
+      const initOptions = {
         target: targetDir,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
-        ...(commandOptions.core === undefined ? {} : { core: commandOptions.core }),
         git: commandOptions.git ?? false,
         force: commandOptions.force ?? false,
         createNew: commandOptions.createNew ?? false,
-        ...(commandOptions.mode === undefined
-          ? {}
-          : { mode: commandOptions.mode as "learning" | "absorption" }),
-        ...(commandOptions.profile === undefined ? {} : { profile: commandOptions.profile }),
-      });
+        ...(commandOptions.mode === undefined ? {} : { mode: commandOptions.mode as ProjectMode }),
+        archetype,
+        profile: coreCompatibilityProfile,
+      };
+      const result = await initFramework(initOptions);
       await recordProjectLifecycleBestEffort(result.root, "init");
       writeLine(output, "stdout", formatInitResult(result));
+      if (usedLegacyProfile) {
+        writeLine(
+          output,
+          "stdout",
+          `Deprecated: --profile ${usedLegacyProfile} maps to --archetype ${archetype}.`,
+        );
+      }
     });
 
   program
@@ -207,7 +284,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Archive an existing project into .old and initialize a clean MetaSystem scaffold")
     .option("--root <target-dir>", "existing project root to adopt", process.cwd())
     .option("--name <project-name>", "project name")
-    .option("--core <core-name>", "core system directory name")
     .addOption(new Option("--dry-run", "plan adoption without applying writes").conflicts("apply"))
     .addOption(
       new Option("--apply", "move existing root entries and initialize the scaffold").conflicts(
@@ -219,7 +295,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       const result = await adoptExistingProject({
         root: commandOptions.root,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
-        ...(commandOptions.core === undefined ? {} : { core: commandOptions.core }),
         dryRun: commandOptions.dryRun ?? false,
         apply: commandOptions.apply ?? false,
         analyze: commandOptions.analyze ?? false,
@@ -419,51 +494,21 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     });
 
   program
-    .command("profile")
-    .description("Show the current framework profile name and version")
+    .command("archetype")
+    .description("Show the current manifest archetype and mode")
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
-      // Prefer the workspace's installed profile name; fall back to metasystem.
-      let installedName: string | null = null;
-      let installedVersion: number | null = null;
-      try {
-        const root = await discoveredRoot(commandOptions.root);
-        const configPath = path.join(root, ".framework", "config.yaml");
-        const configContent = await readFile(configPath, "utf8");
-        const installedMatch = configContent.match(/profile_version:\s*(\d+)/);
-        const installedNameMatch = configContent.match(/^\s*profile:\s*(\w+)/m);
-        if (installedNameMatch?.[1]) installedName = installedNameMatch[1];
-        if (installedMatch?.[1]) installedVersion = Number.parseInt(installedMatch[1], 10);
-      } catch {
-        // not inside a workspace
-      }
+      await writeArchetypeCommandResult(output, commandOptions, "archetype");
+    });
 
-      const profile = await loadProfile(installedName ?? "metasystem");
-      if (commandOptions.json) {
-        writeJson(output, {
-          name: profile.name,
-          version: profile.version,
-          mode: profile.mode,
-          modules: profile.modules,
-          installed_version: installedVersion,
-        });
-        return;
-      }
-      writeLine(output, "stdout", `Profile: ${profile.name}`);
-      writeLine(output, "stdout", `Version: ${profile.version}`);
-      writeLine(output, "stdout", `Default mode: ${profile.mode}`);
-      writeLine(output, "stdout", `Modules: ${profile.modules.join(", ")}`);
-      if (installedVersion !== null && installedName) {
-        writeLine(output, "stdout", `Installed: ${installedName} v${installedVersion}`);
-        if (installedVersion !== profile.version) {
-          writeLine(
-            output,
-            "stdout",
-            `Note: installed profile v${installedVersion} differs from current v${profile.version}. Run \`metasystem update --dry-run\` to plan an upgrade.`,
-          );
-        }
-      }
+  program
+    .command("profile")
+    .description("Deprecated compatibility alias for `archetype`")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      await writeArchetypeCommandResult(output, commandOptions, "profile");
     });
 
   const reference = program.command("reference").description("Reference operations");
@@ -482,20 +527,24 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   program
     .command("absorb")
-    .description(
-      "Freeze a source as a reference AND open a pre-filled analysis for it (learning mode)",
-    )
+    .description("Absorb a source using the workspace manifest mode and open a pre-filled analysis")
     .argument("<source-dir>", "local source directory to absorb")
     .option("--name <name>", "reference name (defaults to source directory basename)")
     .option("--root <target-dir>", "target framework directory", process.cwd())
+    .addOption(
+      new Option("--as <outlet>", "absorption-mode outlet: problem (default) or intake").choices([
+        ...ABSORPTION_OUTLETS,
+      ]),
+    )
     .action(async (sourceDir, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await absorbReference({
         root,
         source: sourceDir,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
+        ...(commandOptions.as === undefined ? {} : { outlet: commandOptions.as }),
       });
-      writeLine(output, "stdout", `Absorbed reference: ${result.referencePath}`);
+      writeLine(output, "stdout", `Absorbed source: ${result.referencePath}`);
       writeLine(output, "stdout", `Opened analysis: ${result.analysisPath}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
       writeLine(
@@ -620,7 +669,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--from-iteration <path>", "originating iteration path")
     .option(
       "--force",
-      "create even if an external governance system (trellis, docs/adr/) is detected",
+      "create even if an external governance system (trellis, superpowers, docs/adr/) is detected",
     )
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .action(async (title, commandOptions) => {

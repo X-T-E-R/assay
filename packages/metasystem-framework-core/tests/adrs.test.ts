@@ -35,9 +35,12 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-async function initWorkspace(name: string): Promise<string> {
+async function initWorkspace(
+  name: string,
+  archetype: "research" | "contest" | "library" = "research",
+): Promise<string> {
   const root = path.join(await tempDir(), name);
-  await initFramework({ target: root, name });
+  await initFramework({ target: root, name, archetype });
   return root;
 }
 
@@ -74,6 +77,26 @@ describe("ADR index", () => {
 
     const second = await createAdr(root, { title: "Second Decision" });
     expect(second.adr.id).toBe("ADR-0002-second-decision");
+  });
+
+  it("rejects ADR mutations when the archetype does not enable the adr capability", async () => {
+    const root = await initWorkspace("AdrDisabled", "library");
+
+    await expect(createAdr(root, { title: "Should Not Create" })).rejects.toThrow(
+      /capability not enabled in archetype library: adr/,
+    );
+    await expect(acceptAdr(root, "ADR-0001-anything")).rejects.toThrow(
+      /capability not enabled in archetype library: adr/,
+    );
+    await expect(deprecateAdr(root, "ADR-0001-anything")).rejects.toThrow(
+      /capability not enabled in archetype library: adr/,
+    );
+    await expect(supersedeAdr(root, "ADR-0001-a", "ADR-0002-b")).rejects.toThrow(
+      /capability not enabled in archetype library: adr/,
+    );
+    await expect(listAdrs(root)).rejects.toThrow(
+      /capability not enabled in archetype library: adr/,
+    );
   });
 
   it("accepts a proposed ADR and updates markdown frontmatter", async () => {
@@ -146,15 +169,28 @@ describe("ADR index", () => {
 
   it("defers ADR creation when trellis is detected, unless --force", async () => {
     const root = await initWorkspace("AdrDefer");
-    // Simulate trellis presence
     await mkdir(path.join(root, ".trellis"), { recursive: true });
 
     await expect(createAdr(root, { title: "Should Defer" })).rejects.toThrow(
-      /external governance detected.*trellis/,
+      /external governance detected.*trellis.*Use --force/,
     );
 
-    // --force bypasses deferral
     const forced = await createAdr(root, { title: "Forced" }, { force: true });
     expect(forced.adr.status).toBe("proposed");
   });
+
+  it.each([".superpowers", "superpowers"])(
+    "defers ADR creation when %s governance is detected",
+    async (marker) => {
+      const root = await initWorkspace(`AdrDefer${marker.replace(".", "")}`);
+      await mkdir(path.join(root, marker), { recursive: true });
+
+      await expect(createAdr(root, { title: "Should Defer" })).rejects.toThrow(
+        /external governance detected.*superpowers.*Use --force/,
+      );
+
+      const forced = await createAdr(root, { title: "Forced" }, { force: true });
+      expect(forced.adr.status).toBe("proposed");
+    },
+  );
 });

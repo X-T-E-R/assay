@@ -8,6 +8,7 @@ import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
 import type { FrameworkManifest } from "./schemas/index.js";
+import { loadSystemsRegistry } from "./systems-registry.js";
 
 export type MetaSystemProjectRegistryCommand = "init" | "adopt" | "update" | "scan" | "uninstall";
 export type MetaSystemProjectRegistryStatus = "active" | "missing" | "uninstalled";
@@ -265,6 +266,8 @@ async function buildProjectRecord(
   const existing = await readProjectRecord(id, options);
   const now = (options.now ?? (() => new Date()))().toISOString();
   const manifest = command === "uninstall" ? null : await safeLoadManifest(absolutePath);
+  const systemsRegistry =
+    command === "uninstall" ? null : await safeLoadSystemsRegistry(absolutePath);
   const fallbackName = path.basename(absolutePath);
   const status = overrides.status ?? (manifest ? "active" : "missing");
 
@@ -274,7 +277,10 @@ async function buildProjectRecord(
     path: absolutePath,
     realpath,
     name: manifest?.project.name || existing?.name || fallbackName,
-    core: manifest?.project.core || existing?.core || `${fallbackName}-core`,
+    // Compatibility field for old project-registry records. Layout v3 must not
+    // read manifest.project.core; if a core identity is needed, use the systems
+    // registry primary.
+    core: systemsRegistry?.primary ?? existing?.core ?? `${fallbackName}-core`,
     createdAt: existing?.createdAt ?? now,
     lastSeenAt: now,
     createdBy: existing?.createdBy ?? command,
@@ -356,6 +362,16 @@ async function refreshProjectRecordStatus(
 async function safeLoadManifest(projectPath: string): Promise<FrameworkManifest | null> {
   try {
     return await loadManifest(projectPath);
+  } catch {
+    return null;
+  }
+}
+
+async function safeLoadSystemsRegistry(
+  projectPath: string,
+): Promise<Awaited<ReturnType<typeof loadSystemsRegistry>> | null> {
+  try {
+    return await loadSystemsRegistry(projectPath);
   } catch {
     return null;
   }

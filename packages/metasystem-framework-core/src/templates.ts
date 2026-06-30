@@ -1,5 +1,5 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
-import { type Profile, loadProfile } from "./profile.js";
+import { type Archetype, loadArchetype } from "./profile.js";
 
 export interface TemplateFile {
   readonly path: string;
@@ -39,67 +39,63 @@ function dedent(text: string): string {
 }
 
 /**
- * Generate the list of template files for a new workspace, driven by a profile.
- * The profile (profiles/<name>.yaml) declares which templates to write and at
+ * Generate the list of template files for a new workspace, driven by an archetype.
+ * The archetype YAML declares which templates to write and at
  * what path; this function resolves each templateId to its content generator.
- * Mode overrides the profile's default mode when supplied (e.g. `init --mode absorption`).
+ * Mode overrides the archetype's default mode when supplied (e.g. `init --mode absorption`).
  *
- * To evolve the default structure, edit profiles/metasystem.yaml — not this
+ * To evolve the default structure, edit profiles/research.yaml — not this
  * function (see ADR-0005).
  */
 export async function desiredTemplates(
   project: string,
-  core: string,
   mode: "learning" | "absorption" = "learning",
-  profileName = "metasystem",
+  archetypeName = "research",
 ): Promise<TemplateFile[]> {
-  const profile = await loadProfile(profileName);
-  return profileTemplates(project, core, mode, profile);
+  const archetype = await loadArchetype(archetypeName);
+  return archetypeTemplates(project, mode, archetype);
 }
 
 /**
- * Synchronous variant for tests/callers that already hold a Profile. Resolves
+ * Synchronous variant for tests/callers that already hold an Archetype. Resolves
  * template entries to content via the dispatcher.
  */
-export function profileTemplates(
+export function archetypeTemplates(
   project: string,
-  core: string,
   mode: "learning" | "absorption",
-  profile: Profile,
+  archetype: Archetype,
 ): TemplateFile[] {
   const result: TemplateFile[] = [];
-  for (const entry of profile.templates) {
-    const resolvedPath = entry.path.replace("{core}", core);
-    const content = templateContentById(entry.templateId, project, core, mode, profile);
-    if (content === null) continue; // unknown templateId: skip (profile can reference future templates)
-    result.push(templateFile({ path: resolvedPath, templateId: entry.templateId, content }));
+  for (const entry of archetype.templates) {
+    const content = templateContentById(entry.templateId, project, mode, archetype);
+    if (content === null) continue; // unknown templateId: skip (archetype can reference future templates)
+    result.push(templateFile({ path: entry.path, templateId: entry.templateId, content }));
   }
   return result;
 }
 
+export const profileTemplates = archetypeTemplates;
+
 /**
  * Dispatcher: map a templateId to its content generator. Content functions
- * remain in TS because of project/core/version interpolation. Adding a new
- * template means adding a case here AND an entry in the profile yaml.
+ * remain in TS because some templates interpolate project state. Adding a new
+ * template means adding a case here AND an entry in the archetype YAML.
  */
 function templateContentById(
   templateId: string,
   project: string,
-  core: string,
   mode: "learning" | "absorption",
-  profile: Profile,
+  _archetype: Archetype,
 ): string | null {
   switch (templateId) {
     case "root.readme":
-      return rootReadme(project, core);
+      return rootReadme(project);
     case "root.gitignore":
       return rootGitignore();
     case "framework.readme":
       return frameworkReadme();
     case "framework.version":
       return `${CURRENT_VERSION}\n`;
-    case "framework.config":
-      return configYaml(project, core, mode, profile.name, profile.version);
     case "framework.migrations.readme":
       return migrationsReadme();
     case "framework.events.gitkeep":
@@ -124,8 +120,6 @@ function templateContentById(
       return patternCardTemplate();
     case "systems.readme":
       return systemsReadme();
-    case "system.core.contract":
-      return systemContract(project, core);
     case "iterations.readme":
       return iterationsReadme();
     case "iterations.template.plan":
@@ -166,7 +160,7 @@ function templateContentById(
   }
 }
 
-export function rootReadme(project: string, core: string): string {
+export function rootReadme(project: string): string {
   return dedent(`
     # ${project}
 
@@ -175,28 +169,23 @@ export function rootReadme(project: string, core: string): string {
     Core loop:
 
     \`\`\`text
-    references → analyses → systems → iterations → knowledge
+    source material → analyses or implementation → systems → knowledge
     \`\`\`
 
     | Path | Purpose |
     | --- | --- |
     | \`.framework/\` | Runtime metadata: version, manifest, events, migrations, backups |
-    | \`references/\` | External systems and frozen snapshots |
-    | \`analyses/\` | Analysis layer that turns external systems into decisions |
-    | \`systems/\` | Our active framework implementation; \`${core}/\` is the current core |
-    | \`iterations/\` | Iterations against our own framework |
+    | \`references/\` | Frozen external snapshots when the archetype uses learning mode |
+    | \`analyses/\` | Analysis layer when research output is first-class |
+    | \`systems/\` | Registered active systems; use the systems registry for primary status |
+    | \`iterations/\` | Optional implementation experiments when enabled by the archetype |
     | \`knowledge/\` | Accepted reusable knowledge |
-    | \`data/\` | Research samples and evaluation data |
-    | \`releases/\` | Release notes and upgrade packages |
 
     ## First workflow
 
-    1. Freeze one external project under \`references/frozen/YYYYMM/<name>/\`.
-    2. Write a reference analysis in \`analyses/references/\`.
-    3. Convert a promising mechanism to \`analyses/patterns/\`.
-    4. Start an iteration in \`iterations/YYYY-MM-DD-<topic>/\`.
-    5. Land the validated change in \`systems/${core}/\`.
-    6. Promote durable learning to \`knowledge/\`.
+    1. Register active systems with \`system register\`.
+    2. Use the archetype-specific intake or reference outlet for source material.
+    3. Promote durable learning to \`knowledge/\`.
     `);
 }
 
@@ -226,41 +215,7 @@ export function frameworkReadme(): string {
     - \`migrations/\`: migration notes and plans.
     - \`backups/\`: timestamped backups before update/migration.
 
-    Current template version: ${CURRENT_VERSION}; layout version: ${LAYOUT_VERSION}.
-    `);
-}
-
-export function configYaml(
-  project: string,
-  core: string,
-  mode: "learning" | "absorption" = "learning",
-  profileName = "metasystem",
-  profileVersion = 3,
-): string {
-  return dedent(`
-    framework:
-      name: ${project}
-      core: ${core}
-      version: ${CURRENT_VERSION}
-      layout_version: ${LAYOUT_VERSION}
-      mode: ${mode}
-      profile: ${profileName}
-      profile_version: ${profileVersion}
-
-    paths:
-      runtime: .framework
-      references: references
-      analyses: analyses
-      systems: systems
-      iterations: iterations
-      knowledge: knowledge
-      data: data
-      releases: releases
-
-    update:
-      default_conflict_action: skip
-      backup_before_write: true
-      protect_user_data: true
+    Current template release is ${CURRENT_VERSION}; layout release is ${LAYOUT_VERSION}.
     `);
 }
 
@@ -379,36 +334,6 @@ export function systemsReadme(): string {
   return "# systems/\n\nOur active framework/system implementations. The framework manages only each system's `system.yaml` contract; system source, README files, changelogs, and docs belong to the system itself.\n";
 }
 
-export function coreReadme(core: string): string {
-  return dedent(`
-    # ${core}
-
-    This is our active framework core. External references inform this system only after analysis and iteration.
-
-    ## Docs
-
-    - \`docs/architecture.md\`
-    - \`docs/artifact-model.md\`
-    - \`docs/workflows.md\`
-    - \`docs/update-mechanism.md\`
-    - \`docs/roadmap.md\`
-    `);
-}
-
-export function systemContract(project: string, core: string): string {
-  return dedent(`
-    system:
-      project: ${project}
-      name: ${core}
-      version: 0.1.0
-      status: primary
-      vcs: embedded
-      vcs_ref: ""
-      supersedes: []
-    contract_managed_by: metasystem
-    `);
-}
-
 export function adrTemplate(): string {
   return dedent(`
     ---
@@ -436,7 +361,7 @@ export function changelog(): string {
   return dedent(`
     # Changelog
 
-    All notable changes to this framework core should be documented here.
+    All notable changes to this framework should be documented here.
 
     ## [${CURRENT_VERSION}] - 2026-06-13
 
@@ -445,29 +370,6 @@ export function changelog(): string {
     - Versioned framework layout.
     - Manifest-based managed file tracking.
     - Four-zone core workflow: references, analyses, systems, iterations.
-    `);
-}
-
-export function architectureDoc(project: string, core: string): string {
-  return dedent(`
-    # Architecture
-
-    \`${project}\` is an external-system-learning framework.
-
-    ## Core loop
-
-    \`\`\`text
-    references → analyses → systems/${core} → iterations → knowledge
-    \`\`\`
-
-    ## Boundaries
-
-    - \`references/\`: external evidence, read-only by default.
-    - \`analyses/\`: conversion from evidence to local decisions.
-    - \`systems/\`: our active implementation.
-    - \`iterations/\`: controlled changes to our implementation.
-    - \`knowledge/\`: accepted reusable knowledge.
-    - \`.framework/\`: runtime metadata, not content knowledge.
     `);
 }
 
@@ -483,7 +385,7 @@ export function artifactModelDoc(): string {
     | Gap analysis | \`analyses/gaps/\` | iteration / roadmap |
     | Candidate pattern | \`analyses/patterns/\` | iteration / reject |
     | Iteration | \`iterations/YYYY-MM-DD-<topic>/\` | adopt / reject / retest |
-    | System change | \`systems/<core>/\` | release / rollback |
+    | System change | registered \`systems/<name>/\` | release / rollback |
     | Knowledge entry | \`knowledge/\` | future reuse |
     `);
 }
@@ -679,7 +581,7 @@ export function contestSelection(): string {
  *       { "id": "q2", "base_path": "systems/wireless-solution-systems/question-2-scheduler", "route": "v6-o3-52-main" }
  *   ]}
  *
- * `base_path` is the absolute question directory under systems/<core>/,
+ * `base_path` is the absolute question directory under the registered system,
  * `route` is the folder name under that base_path. The sealed tree hash
  * is null by default; it gets stamped when a submission is assembled.
  */

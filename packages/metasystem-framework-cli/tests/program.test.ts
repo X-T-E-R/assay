@@ -84,6 +84,8 @@ describe("metasystem Commander registration", () => {
       "update",
       "projects",
       "migrate-layout",
+      "archetype",
+      "profile",
       "reference",
       "analysis",
       "iteration",
@@ -102,6 +104,18 @@ describe("metasystem Commander registration", () => {
       "Usage: metasystem reference add [options] <source-dir> <name>",
     );
     expect(result.stdout).toContain("--root <target-dir>");
+    expect(result.stderr).toBe("");
+  });
+
+  it("prints init help with archetype options and no core option", async () => {
+    const result = await runCli(["init", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: metasystem init [options] [target-dir]");
+    expect(result.stdout).toContain("--archetype <archetype>");
+    expect(result.stdout).toContain("--profile <name>");
+    expect(result.stdout).toContain("deprecated alias");
+    expect(result.stdout).not.toContain("--core");
     expect(result.stderr).toBe("");
   });
 });
@@ -164,7 +178,54 @@ describe("metasystem CLI subprocess behavior", () => {
     expect(result.stdout).toContain("--root <target-dir>");
     expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("--apply");
+    expect(result.stdout).not.toContain("--core");
     expect(result.stderr).toBe("");
+  });
+
+  it("accepts init archetype and profile compatibility options", async () => {
+    const contestRoot = path.join(await tempDir(), "contest");
+    const contest = await runCli([
+      "init",
+      contestRoot,
+      "--name",
+      "Contest CLI",
+      "--archetype",
+      "contest",
+    ]);
+
+    expect(contest.exitCode).toBe(0);
+    expect(contest.stdout).toContain("Initialized framework:");
+    expect(contest.stdout).toContain("Project: Contest CLI");
+    expect(contest.stdout).not.toContain("Core:");
+    expect(contest.stderr).toBe("");
+    expect(await exists(path.join(contestRoot, "problem"))).toBe(true);
+
+    const profileRoot = path.join(await tempDir(), "profile");
+    const profile = await runCli([
+      "init",
+      profileRoot,
+      "--name",
+      "Profile CLI",
+      "--profile",
+      "metasystem",
+    ]);
+
+    expect(profile.exitCode).toBe(0);
+    expect(profile.stdout).toContain(
+      "Deprecated: --profile metasystem maps to --archetype research.",
+    );
+    expect(profile.stderr).toBe("");
+
+    const conflict = await runCli([
+      "init",
+      path.join(await tempDir(), "conflict"),
+      "--archetype",
+      "research",
+      "--profile",
+      "metasystem",
+    ]);
+    expect(conflict.exitCode).toBe(1);
+    expect(conflict.stderr).toContain("cannot be used with option");
   });
 
   it("runs adopt as a dry-run by default without moving existing files", async () => {
@@ -192,22 +253,13 @@ describe("metasystem CLI subprocess behavior", () => {
     await writeFile(path.join(root, "src", "index.ts"), "export {};\n", "utf8");
     await writeFile(path.join(root, "README.md"), "# Existing\n", "utf8");
 
-    const result = await runCli([
-      "adopt",
-      "--root",
-      root,
-      "--name",
-      "Adopt CLI Apply",
-      "--core",
-      "cli-core",
-      "--apply",
-    ]);
+    const result = await runCli(["adopt", "--root", root, "--name", "Adopt CLI Apply", "--apply"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Existing project adoption: applied");
     expect(result.stdout).toContain("Archive: .old/");
     expect(result.stdout).toContain("Scaffold:");
-    expect(result.stdout).toContain("core: cli-core");
+    expect(result.stdout).not.toContain("core:");
     expect(result.stdout).toContain("Adoption manifest: .old/");
     expect(result.stderr).toBe("");
     expect(await exists(path.join(root, ".git"))).toBe(true);
@@ -219,9 +271,35 @@ describe("metasystem CLI subprocess behavior", () => {
     expect(JSON.parse(projects.stdout)).toMatchObject({
       path: path.resolve(root),
       name: "Adopt CLI Apply",
-      core: "cli-core",
       lastCommand: "adopt",
       status: "active",
+    });
+  });
+
+  it("shows manifest archetype and mode through the archetype command and profile alias", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await runCli(["init", root, "--name", "Archetype CLI"]);
+    await writeFile(
+      path.join(root, ".framework", "config.yaml"),
+      "profile: contest\nprofile_version: 99\nmode: absorption\n",
+      "utf8",
+    );
+
+    const archetype = await runCli(["archetype", "--root", root]);
+    expect(archetype.exitCode).toBe(0);
+    expect(archetype.stdout).toContain("Project: Archetype CLI");
+    expect(archetype.stdout).toContain("Archetype: research");
+    expect(archetype.stdout).toContain("Mode: learning");
+    expect(archetype.stdout).not.toContain("Version:");
+    expect(archetype.stderr).toBe("");
+
+    const profile = await runCli(["profile", "--root", root, "--json"]);
+    expect(profile.exitCode).toBe(0);
+    expect(JSON.parse(profile.stdout)).toMatchObject({
+      project: "Archetype CLI",
+      archetype: "research",
+      mode: "learning",
+      deprecated_alias: true,
     });
   });
 
@@ -270,8 +348,9 @@ describe("metasystem CLI subprocess behavior", () => {
     expect(analysis.stdout).toContain("Created analysis: analyses/references/");
 
     const iteration = await runCliIn(workspace, ["iteration", "start", "Try Pattern"]);
-    expect(iteration.exitCode).toBe(0);
-    expect(iteration.stdout).toContain("Started iteration: iterations/");
+    expect(iteration.exitCode).toBe(1);
+    expect(iteration.stdout).toBe("");
+    expect(iteration.stderr).toContain("capability not enabled in archetype research: iteration");
 
     const event = await runCliIn(workspace, [
       "event",
@@ -281,8 +360,9 @@ describe("metasystem CLI subprocess behavior", () => {
       "--text",
       "Captured from CLI test",
     ]);
-    expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.exitCode).toBe(1);
+    expect(event.stdout).toBe("");
+    expect(event.stderr).toContain("capability not enabled in archetype research: events");
   });
 
   it("returns non-zero for failed checks", async () => {
@@ -356,9 +436,29 @@ describe("metasystem CLI subprocess behavior", () => {
     expect(analysis.stdout).toContain("Created analysis: analyses/references/");
 
     const iteration = await runCli(["iteration", "start", "Try Pattern", "--root", root]);
-    expect(iteration.exitCode).toBe(0);
-    expect(iteration.stdout).toContain("Started iteration: iterations/");
-    expect(iteration.stdout).toContain("Plan:");
+    expect(iteration.exitCode).toBe(1);
+    expect(iteration.stdout).toBe("");
+    expect(iteration.stderr).toContain("capability not enabled in archetype research: iteration");
+
+    const contestRoot = path.join(await tempDir(), "contest");
+    await runCli([
+      "init",
+      contestRoot,
+      "--name",
+      "Compatibility Contest",
+      "--archetype",
+      "contest",
+    ]);
+    const contestIteration = await runCli([
+      "iteration",
+      "start",
+      "Try Pattern",
+      "--root",
+      contestRoot,
+    ]);
+    expect(contestIteration.exitCode).toBe(0);
+    expect(contestIteration.stdout).toContain("Started iteration: iterations/");
+    expect(contestIteration.stdout).toContain("Plan:");
 
     const event = await runCli([
       "event",
@@ -370,8 +470,9 @@ describe("metasystem CLI subprocess behavior", () => {
       "--root",
       root,
     ]);
-    expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.exitCode).toBe(1);
+    expect(event.stdout).toBe("");
+    expect(event.stderr).toContain("capability not enabled in archetype research: events");
 
     const migration = await runCli(["migrate-layout", "--root", root, "--dry-run"]);
     expect(migration.exitCode).toBe(0);
@@ -399,7 +500,6 @@ describe("metasystem CLI subprocess behavior", () => {
     );
     expect(record).toMatchObject({
       name: "Registry CLI",
-      core: "registry-cli-core",
       status: "active",
       lastCommand: "init",
     });

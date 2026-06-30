@@ -60,7 +60,7 @@ describe("project registry records", () => {
   it("registers, lists, and refreshes active records from .framework/manifest.json", async () => {
     const root = path.join(await tempDir(), "demo");
     const registryRoot = path.join(await tempDir(), "registry");
-    await initFramework({ target: root, name: "Registry Demo", core: "demo-core" });
+    await initFramework({ target: root, name: "Registry Demo" });
 
     const createdAt = new Date("2026-06-15T10:00:00Z");
     const record = await registerProject(root, "init", {
