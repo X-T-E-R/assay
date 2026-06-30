@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const tsCli = path.join(repoRoot, "packages", "metasystem-framework-cli", "dist", "cli.js");
+const tsCli = path.join(repoRoot, "packages", "assay-cli", "dist", "cli.js");
 
 function fail(message) {
   throw new Error(message);
@@ -48,21 +48,21 @@ function main() {
     fail("CLI help did not include the expected description.");
   }
 
-  const tempRoot = mkdtempSync(path.join(tmpdir(), "metasystem-kit-smoke-"));
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "assay-smoke-"));
   try {
     const demo = path.join(tempRoot, "demo");
     mkdirSync(demo);
     const smokeEnv = {
       ...process.env,
-      METASYSTEM_PROJECT_REGISTRY_ROOT: path.join(tempRoot, "registry"),
+      ASSAY_PROJECT_REGISTRY_ROOT: path.join(tempRoot, "registry"),
     };
     const smokeOptions = { env: smokeEnv, cwd: demo };
-    run("CLI init", ["init", "--name", "MetaSystem Smoke"], smokeOptions);
+    run("CLI init", ["init", "--name", "Assay Smoke"], smokeOptions);
     run("CLI check", ["check"], smokeOptions);
     run("CLI status", ["status"], smokeOptions);
     run("CLI update dry-run", ["update", "--dry-run"], smokeOptions);
     const projects = run("CLI projects list", ["projects", "list", "--json"], smokeOptions);
-    if (!projects.includes("MetaSystem Smoke")) {
+    if (!projects.includes("Assay Smoke")) {
       fail("CLI projects list did not include the initialized project.");
     }
     run("CLI migrate-layout dry-run", ["migrate-layout", "--dry-run"], smokeOptions);
@@ -87,7 +87,7 @@ function main() {
     rmSync(tempRoot, { recursive: true, force: true });
   }
 
-  console.log("MetaSystem Kit TypeScript CLI smoke checks passed.");
+  console.log("Assay TypeScript CLI smoke checks passed.");
 }
 
 main();

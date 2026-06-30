@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Install the metasystem-builder skill from this repo.
+// Install the assay-builder skill from this repo.
 //
 // Builds the workspace and junctions (Windows) or symlinks (POSIX) the skill
 // directory into a target skills dir, so an agent resolves it by relative path
@@ -9,27 +9,20 @@
 //   node scripts/install.mjs [--target <dir>] [--name <skill-name>]
 //                            [--force] [--no-build] [--dry-run]
 //
-// Defaults: --target ~/.agents/skills   --name metasystem-builder
+// Defaults: --target ~/.agents/skills   --name assay-builder
 import { execSync } from "node:child_process";
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-} from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(realpathSync(fileURLToPath(import.meta.url))));
-const skillSrc = join(repoRoot, "skills", "metasystem-builder");
+const skillSrc = join(repoRoot, "skills", "assay-builder");
 
 function parseArgs(argv) {
   const opts = {
     target: join(homedir(), ".agents", "skills"),
-    name: "metasystem-builder",
+    name: "assay-builder",
     force: false,
     build: true,
     dryRun: false,
@@ -47,13 +40,13 @@ function parseArgs(argv) {
   return opts;
 }
 
-const HELP = `metasystem-builder skill installer
+const HELP = `assay-builder skill installer
 
   node scripts/install.mjs [--target <dir>] [--name <skill-name>]
                            [--force] [--no-build] [--dry-run]
 
   --target   skills directory to install into (default ~/.agents/skills)
-  --name     installed skill directory name (default metasystem-builder)
+  --name     installed skill directory name (default assay-builder)
   --force    replace an existing link/dir at the destination
   --no-build skip pnpm install + build (only link)
   --dry-run  print the plan without changing anything
@@ -88,7 +81,7 @@ function main() {
 
   const dest = join(opts.target, opts.name);
   const linkType = process.platform === "win32" ? "junction" : "dir";
-  console.log(`metasystem-builder installer${opts.dryRun ? " (dry-run)" : ""}`);
+  console.log(`assay-builder installer${opts.dryRun ? " (dry-run)" : ""}`);
   console.log(`  repo:   ${repoRoot}`);
   console.log(`  source: ${skillSrc}`);
   console.log(`  dest:   ${dest}  [${linkType}]`);
@@ -109,9 +102,7 @@ function main() {
   const state = linkState(dest);
   if (state !== "absent") {
     if (!opts.force) {
-      throw new Error(
-        `destination exists (${state}): ${dest}\n  pass --force to replace it`,
-      );
+      throw new Error(`destination exists (${state}): ${dest}\n  pass --force to replace it`);
     }
     console.log(`  removing existing ${state}: ${dest}`);
     if (!opts.dryRun) rmSync(dest, { recursive: true, force: true });
@@ -123,10 +114,8 @@ function main() {
     symlinkSync(skillSrc, dest, linkType);
   }
 
-  console.log("\ndone." + (opts.dryRun ? " (nothing changed)" : ""));
-  console.log(
-    `invoke: node ${join(dest, "scripts", "metasystem.mjs")} --help`,
-  );
+  console.log(`\ndone.${opts.dryRun ? " (nothing changed)" : ""}`);
+  console.log(`invoke: node ${join(dest, "scripts", "assay.mjs")} --help`);
 }
 
 try {
@@ -135,4 +124,3 @@ try {
   process.stderr.write(`install failed: ${err.message}\n`);
   process.exit(1);
 }
-

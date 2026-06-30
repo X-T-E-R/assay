@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assay Builder"
+  short_description: "Build, adopt, and evolve Assay workspaces"
+  default_prompt: "Use $assay-builder to initialize, adopt, update, or iterate a Assay workspace in this folder."

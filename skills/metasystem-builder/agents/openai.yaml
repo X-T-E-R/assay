@@ -1,4 +1,0 @@
-interface:
-  display_name: "MetaSystem Builder"
-  short_description: "Build, adopt, and evolve MetaSystem workspaces"
-  default_prompt: "Use $metasystem-builder to initialize, adopt, update, or iterate a MetaSystem workspace in this folder."

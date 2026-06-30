@@ -10,14 +10,14 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 demo="$tmp/demo"
 registry="$tmp/registry"
-cli="$repo_root/packages/metasystem-framework-cli/dist/cli.js"
-export METASYSTEM_PROJECT_REGISTRY_ROOT="$registry"
+cli="$repo_root/packages/assay-cli/dist/cli.js"
+export ASSAY_PROJECT_REGISTRY_ROOT="$registry"
 
 node "$cli" --help >/dev/null
 mkdir -p "$demo"
 (
   cd "$demo"
-  node "$cli" init --name "MetaSystem Smoke"
+  node "$cli" init --name "Assay Smoke"
   node "$cli" check
   node "$cli" status >/dev/null
   node "$cli" update --dry-run >/dev/null
@@ -39,4 +39,4 @@ printf 'export const legacy = true;\n' >"$adopted/src/index.ts"
   test -f .old/*/src/index.ts
 )
 
-echo "MetaSystem Kit checks passed."
+echo "Assay checks passed."

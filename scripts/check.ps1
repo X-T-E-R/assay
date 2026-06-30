@@ -18,18 +18,18 @@ function Invoke-Checked {
 
 Invoke-Checked "pnpm" @("check")
 
-$tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "metasystem-kit-smoke-" + [System.Guid]::NewGuid().ToString("N")))
-$previousRegistryRoot = $env:METASYSTEM_PROJECT_REGISTRY_ROOT
+$tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "assay-smoke-" + [System.Guid]::NewGuid().ToString("N")))
+$previousRegistryRoot = $env:ASSAY_PROJECT_REGISTRY_ROOT
 try {
   $demo = Join-Path $tmp.FullName "demo"
   $registry = Join-Path $tmp.FullName "registry"
-  $cli = Join-Path $repoRoot "packages\metasystem-framework-cli\dist\cli.js"
-  $env:METASYSTEM_PROJECT_REGISTRY_ROOT = $registry
+  $cli = Join-Path $repoRoot "packages\assay-cli\dist\cli.js"
+  $env:ASSAY_PROJECT_REGISTRY_ROOT = $registry
   Invoke-Checked "node" @($cli, "--help")
   New-Item -ItemType Directory -Path $demo | Out-Null
   Push-Location $demo
   try {
-    Invoke-Checked "node" @($cli, "init", "--name", "MetaSystem Smoke")
+    Invoke-Checked "node" @($cli, "init", "--name", "Assay Smoke")
     Invoke-Checked "node" @($cli, "check")
     Invoke-Checked "node" @($cli, "status")
     Invoke-Checked "node" @($cli, "update", "--dry-run")
@@ -65,14 +65,14 @@ try {
 }
 finally {
   if ($null -eq $previousRegistryRoot) {
-    Remove-Item Env:\METASYSTEM_PROJECT_REGISTRY_ROOT -ErrorAction SilentlyContinue
+    Remove-Item Env:\ASSAY_PROJECT_REGISTRY_ROOT -ErrorAction SilentlyContinue
   }
   else {
-    $env:METASYSTEM_PROJECT_REGISTRY_ROOT = $previousRegistryRoot
+    $env:ASSAY_PROJECT_REGISTRY_ROOT = $previousRegistryRoot
   }
   if (Test-Path -LiteralPath $tmp.FullName) {
     Remove-Item -LiteralPath $tmp.FullName -Recurse -Force
   }
 }
 
-Write-Host "MetaSystem Kit checks passed."
+Write-Host "Assay checks passed."
