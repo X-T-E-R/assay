@@ -13,6 +13,7 @@ export * from "./profile.js";
 export * from "./project-registry.js";
 export * from "./results.js";
 export * from "./schemas/index.js";
+export * from "./sources.js";
 export * from "./systems-registry.js";
 export * from "./templates.js";
 export * from "./time.js";

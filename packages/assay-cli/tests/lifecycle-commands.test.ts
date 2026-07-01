@@ -69,6 +69,36 @@ async function initWorkspace(name: string, archetype: Archetype = "research"): P
   return root;
 }
 
+async function fillAnalysisSections(
+  root: string,
+  analysisPath: string,
+  sections: {
+    readonly key?: string;
+    readonly adopt?: string;
+    readonly reject?: string;
+    readonly next?: string;
+  },
+): Promise<void> {
+  const absolutePath = path.join(root, analysisPath);
+  let content = await readFile(absolutePath, "utf8");
+  if (sections.key) {
+    content = content.replace(
+      "## Key observations\n\n",
+      `## Key observations\n\n${sections.key}\n\n`,
+    );
+  }
+  if (sections.adopt) {
+    content = content.replace("## Adopt\n\n", `## Adopt\n\n${sections.adopt}\n\n`);
+  }
+  if (sections.reject) {
+    content = content.replace("## Reject\n\n", `## Reject\n\n${sections.reject}\n\n`);
+  }
+  if (sections.next) {
+    content = content.replace("## Next iteration\n\n", `## Next iteration\n\n${sections.next}\n\n`);
+  }
+  await writeFile(absolutePath, content, "utf8");
+}
+
 describe("assay iteration close CLI", () => {
   it("closes an iteration with --result", async () => {
     const root = await initWorkspace("IterClose", "contest");
@@ -161,6 +191,10 @@ describe("assay analysis close CLI", () => {
     const match = newRes.stdout.match(/analyses\/references\/[^\s]+\.md/);
     expect(match).not.toBeNull();
     const analysisPath = match?.[0] ?? "";
+    await fillAnalysisSections(root, analysisPath, {
+      key: "- The CLI close path was reviewed.",
+      adopt: "- Adopt the reviewed pattern.",
+    });
 
     const close = await runCli([
       "analysis",
@@ -179,6 +213,26 @@ describe("assay analysis close CLI", () => {
     const content = await readFile(path.join(root, analysisPath), "utf8");
     expect(content).toContain("Status: applied");
     expect(content).toContain("[x] adopt");
+  });
+
+  it("rejects empty analysis close by default", async () => {
+    const root = await initWorkspace("AnalCloseEmpty");
+    const newRes = await runCli(["analysis", "new", "Empty Review", "--root", root]);
+    const match = newRes.stdout.match(/analyses\/references\/[^\s]+\.md/);
+    const analysisPath = match?.[0] ?? "";
+
+    const close = await runCli([
+      "analysis",
+      "close",
+      analysisPath,
+      "--root",
+      root,
+      "--exit",
+      "adopt",
+    ]);
+
+    expect(close.exitCode).toBe(1);
+    expect(close.stderr).toContain("non-empty ## Key observations");
   });
 
   it("rejects invalid --exit values", async () => {
@@ -210,7 +264,9 @@ describe("assay analysis close CLI", () => {
     const freezeRes = await runCli(["reference", "add", source, "Source Project", "--root", root]);
     expect(freezeRes.exitCode).toBe(0);
 
-    const refPath = "references/frozen/202606/source-project";
+    const refPathMatch = freezeRes.stdout.match(/references\/frozen\/\d{6}\/source-project/);
+    expect(refPathMatch).not.toBeNull();
+    const refPath = refPathMatch?.[0] ?? "";
     expect(await exists(path.join(root, refPath, "reference.yaml"))).toBe(true);
 
     // Create an analysis bound to the reference and confirm pre-fill.
@@ -228,7 +284,11 @@ describe("assay analysis close CLI", () => {
     const match = newRes.stdout.match(/analyses\/references\/[^\s]+\.md/);
     const analysisPath = match?.[0] ?? "";
     const analysisContent = await readFile(path.join(root, analysisPath), "utf8");
-    expect(analysisContent).toContain("- Freeze path: references/frozen/202606/source-project");
+    expect(analysisContent).toContain(`- Freeze path: ${refPath}`);
+    await fillAnalysisSections(root, analysisPath, {
+      key: "- The frozen reference was reviewed.",
+      adopt: "- Adopt the useful reference detail.",
+    });
 
     // Closing the analysis must flip reference.yaml analyzed to true.
     const close = await runCli([
@@ -245,6 +305,67 @@ describe("assay analysis close CLI", () => {
     const yaml = await readFile(path.join(root, refPath, "reference.yaml"), "utf8");
     expect(yaml).toContain("analyzed: true");
   });
+
+  it("binds analysis to a living source observation and clears major check warning", async () => {
+    const root = await initWorkspace("AnalForSource");
+    const source = path.join(root, "..", "anal-for-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
+
+    const add = await runCli(["source", "add", source, "live-src", "--root", root]);
+    expect(add.exitCode).toBe(0);
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
+    const sync = await runCli(["source", "sync", "live-src", "--root", root, "--class", "major"]);
+    expect(sync.exitCode).toBe(0);
+    const observationMatch = sync.stdout.match(/observations\/([^/\\\s]+)\.yaml/);
+    expect(observationMatch).not.toBeNull();
+    const observationId = observationMatch?.[1] ?? "";
+
+    const checkBefore = await runCli(["check", "--root", root]);
+    expect(checkBefore.stdout).toContain("needs revalidation analysis");
+
+    const newRes = await runCli([
+      "analysis",
+      "new",
+      "Revalidate Source",
+      "--root",
+      root,
+      "--for-source",
+      "live-src",
+      "--observation",
+      observationId,
+    ]);
+    expect(newRes.exitCode).toBe(0);
+    const analysisPath = newRes.stdout.match(/analyses\/references\/[^\s]+\.md/)?.[0] ?? "";
+    const analysisContent = await readFile(path.join(root, analysisPath), "utf8");
+    expect(analysisContent).toContain("- Source alias: live-src");
+    expect(analysisContent).toContain(`- Source observation: ${observationId}`);
+
+    await fillAnalysisSections(root, analysisPath, {
+      key: "- The major source change was revalidated.",
+      adopt: "- Adopt the updated source assumption.",
+    });
+    const close = await runCli([
+      "analysis",
+      "close",
+      analysisPath,
+      "--root",
+      root,
+      "--exit",
+      "adopt",
+    ]);
+    expect(close.exitCode).toBe(0);
+
+    const observationYaml = await readFile(
+      path.join(root, "references", "live-src", ".assay", "observations", `${observationId}.yaml`),
+      "utf8",
+    );
+    expect(observationYaml).toContain("analysis_status: closed");
+    expect(observationYaml).toContain(`analysis_path: ${analysisPath}`);
+
+    const checkAfter = await runCli(["check", "--root", root]);
+    expect(checkAfter.stdout).not.toContain("needs revalidation analysis");
+  }, 30_000);
 });
 
 describe("assay absorb CLI", () => {
@@ -261,14 +382,14 @@ describe("assay absorb CLI", () => {
 
     const res = await runCli(["absorb", source, "--name", "Absorbed Proj", "--root", root]);
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toContain("Absorbed source: references/frozen/202606/absorbed-proj");
+    const referencePathMatch = res.stdout.match(/references\/frozen\/\d{6}\/absorbed-proj/);
+    expect(referencePathMatch).not.toBeNull();
+    const referencePath = referencePathMatch?.[0] ?? "";
+    expect(res.stdout).toContain(`Absorbed source: ${referencePath}`);
     expect(res.stdout).toContain("Opened analysis: analyses/references/");
 
     // reference.yaml case file present and unanalyzed.
-    const yaml = await readFile(
-      path.join(root, "references/frozen/202606/absorbed-proj", "reference.yaml"),
-      "utf8",
-    );
+    const yaml = await readFile(path.join(root, referencePath, "reference.yaml"), "utf8");
     expect(yaml).toContain("analyzed: false");
 
     // The opened analysis is pre-filled with the README lead.
@@ -300,9 +421,7 @@ describe("assay absorb CLI", () => {
     expect(res.stdout).toContain("Absorbed source: intake/contest-candidate");
     expect(await exists(path.join(root, "intake", "contest-candidate", "source.yaml"))).toBe(true);
     expect(await exists(path.join(root, "problem", "contest-candidate"))).toBe(false);
-    expect(
-      await exists(path.join(root, "references", "frozen", "202606", "contest-candidate")),
-    ).toBe(false);
+    expect(await exists(path.join(root, "references", "frozen"))).toBe(false);
   });
 });
 

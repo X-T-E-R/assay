@@ -2,7 +2,7 @@
 
 **Study many. Grow your own.**
 
-A CLI workbench for the systems, tools, and workflows you're tempted to borrow from — freeze them as references, assay them through evaluation lenses, then distill the patterns worth keeping into your own.
+A CLI workbench for the systems, tools, and workflows you're tempted to borrow from — observe them as living sources, assay them through evaluation lenses, then distill the patterns worth keeping into your own.
 
 > 中文版: [README.zh.md](README.zh.md)
 
@@ -14,12 +14,12 @@ Assay manages a project workspace where studying external things and building yo
 references -> analyses -> systems -> iterations -> knowledge
 ```
 
-You freeze a source, analyze it, fold the parts worth keeping into your own system, iterate on that system, and promote durable findings into knowledge. Each step is a CLI command that writes an event, so the workspace records what you studied and what you decided — not just what files exist.
+You add or absorb a source, analyze it, fold the parts worth keeping into your own system, iterate on that system, and promote durable findings into knowledge. Each step is a CLI command that writes an event, so the workspace records what you studied and what you decided — not just what files exist.
 
 Two settings shape how a workspace behaves:
 
 - **Archetype** — what kind of project this is: `research` (study many things), `contest` (work a single problem), or `library` (build a reusable system). It decides which capability packs are on.
-- **Mode** — where absorbed sources land: `learning` freezes them as external references under `references/frozen/`; `absorption` treats the source as *the* project and lands its materials in `problem/`. Use absorption when the whole workspace exists to rebuild or solve one specific thing.
+- **Mode** — where absorbed sources land: `learning` treats external sources as references; `absorption` treats the source as *the* project and lands its materials in `problem/`. Use absorption when the whole workspace exists to rebuild or solve one specific thing.
 
 You pick both at `init` and can read them back any time with `assay archetype`.
 
@@ -47,7 +47,30 @@ assay check
 assay status
 ```
 
-Then run the loop on a real source:
+Then add a living external source:
+
+```bash
+assay source add /path/to/some-project some-project
+assay source status some-project
+assay source sync some-project
+assay source diff some-project
+```
+
+`source add` creates `references/<alias>/` with a shallow human entrance: `source.yaml`, current `checkout/`, selected `materials/`, `history.md`, and an internal `.assay/` observation ledger. For Git-backed sources, `checkout/` is the repository root, so `references/<alias>/checkout/.git` is expected.
+
+Open and close an analysis for the source observation:
+
+```bash
+assay analysis new "Review some-project" --for-source some-project
+# fill ## Key observations and the decision section in the opened analysis
+assay analysis close analyses/references/<file>.md --exit adopt
+assay check
+assay status
+```
+
+`analysis close` refuses empty analysis shells by default. Closing a source-bound analysis marks the observation as reviewed, so `check` can clear stale-risk warnings for major changes.
+
+For the older full-capture freeze-and-open-analysis flow, use `absorb`:
 
 ```bash
 assay absorb /path/to/some-project --name some-project
@@ -70,10 +93,16 @@ assay update --dry-run                   # preview managed-file upgrades before 
 assay migrate-layout --dry-run           # plan an old-layout migration (v2 -> v3)
 
 # The loop
+assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|thin|metadata|archive]
+assay source sync [alias] [--branch <branch>] [--ref <ref>] [--class same|patch|normal|major|replacement]
+assay source switch <alias> <branch-or-ref> [--sync]
+assay source status [alias]
+assay source diff <alias> [--since <observation>]
+assay source log <alias>
 assay absorb <source-dir> [--name <name>] [--as problem|intake]
-assay reference add <source-dir> <name>  # freeze only, no analysis
-assay analysis new "Title" [--for-reference <path>]
-assay analysis close <path> --exit adopt|reject|experiment|adr
+assay reference add <source-dir> <name>  # legacy/full-capture freeze only, no analysis
+assay analysis new "Title" [--for-source <alias>] [--observation <id>] [--for-reference <path>]
+assay analysis close <path> --exit adopt|reject|experiment|adr [--allow-empty]
 assay iteration start "Title"
 assay iteration close <selector> --result applied|rejected|retest
 assay knowledge add <type> "Title"
@@ -103,7 +132,7 @@ assay adopt --apply --name ExistingProject --analyze
 
 ```text
 .framework/   version, manifest, events, migrations, backups, registries
-references/   external sources: intake and frozen snapshots (learning mode)
+references/   living external sources, intake notes, and legacy frozen snapshots
 problem/      the source being rebuilt or solved (absorption mode)
 analyses/     reference analyses, gap analyses, candidate patterns
 systems/      your own system implementations

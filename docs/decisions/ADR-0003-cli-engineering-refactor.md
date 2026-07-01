@@ -5,7 +5,7 @@
 
 ## 背景
 
-MetaSystem Kit 的 CLI 会创建、检查、更新并迁移用户工作区。把这些行为直接写在命令处理器里，会让未来 GUI、测试和更新预览都被迫依赖终端进程。
+Assay 的 CLI 会创建、检查、更新并迁移用户工作区。把这些行为直接写在命令处理器里，会让未来 GUI、测试和更新预览都被迫依赖终端进程。
 
 ## 决策
 
@@ -13,27 +13,27 @@ CLI 使用两个 TypeScript workspace package：
 
 ```text
 packages/
-├── metasystem-framework-core/
+├── assay-core/
 │   └── src/        # framework 行为、模板、manifest、事件、update/migration
-└── metasystem-framework-cli/
+└── assay-cli/
     └── src/        # Commander 命令、参数映射、格式化、退出码
 ```
 
-`metasystem-framework-core` 暴露可复用 API；`metasystem-framework-cli` 只负责把 argv 转成 core options，再把结构化结果格式化到 stdout/stderr。
+`assay-core` 暴露可复用 API；`assay-cli` 只负责把 argv 转成 core options，再把结构化结果格式化到 stdout/stderr。
 
 ## CLI 命令面
 
 ```bash
-metasystem init [target] --name <project> [--git]
-metasystem adopt --root <root> --name <project> [--dry-run|--apply]
-metasystem check --root <root>
-metasystem status --root <root>
-metasystem update --root <root> [--dry-run|--force|--skip-all|--create-new]
-metasystem migrate-layout --root <root> [--dry-run|--apply]
-metasystem reference add <source-dir> <name> --root <root>
-metasystem analysis new <title> --root <root>
-metasystem iteration start <title> --root <root>
-metasystem event capture --kind observation --text "..." --root <root>
+assay init [target] --name <project> [--git]
+assay adopt --root <root> --name <project> [--dry-run|--apply]
+assay check --root <root>
+assay status --root <root>
+assay update --root <root> [--dry-run|--force|--skip-all|--create-new]
+assay migrate-layout --root <root> [--dry-run|--apply]
+assay reference add <source-dir> <name> --root <root>
+assay analysis new <title> --root <root>
+assay iteration start <title> --root <root>
+assay event capture --kind observation --text "..." --root <root>
 ```
 
 `init` defaults to the current working directory. Other workspace commands also
@@ -56,10 +56,10 @@ default to the current framework root; `--root` is for out-of-tree operations.
 Skill 和仓库检查脚本直接调用构建后的 TypeScript CLI：
 
 ```bash
-node packages/metasystem-framework-cli/dist/cli.js --help
+node packages/assay-cli/dist/cli.js --help
 ```
 
-GUI 或其他自动化应导入 `metasystem-framework-core`，不要 shell out 到 `metasystem`。
+GUI 或其他自动化应导入 `assay-core`，不要 shell out 到 `assay`。
 
 ## 后果
 

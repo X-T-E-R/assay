@@ -9,6 +9,7 @@ import {
   acceptAdr,
   addKnowledge,
   addReference,
+  addSource,
   captureEvent,
   checkFramework,
   closeAnalysis,
@@ -29,6 +30,7 @@ import {
   saveAdrIndex,
   saveSystemsRegistry,
   startIteration,
+  syncSource,
 } from "../src/index.js";
 
 const tempRoots: string[] = [];
@@ -49,6 +51,34 @@ async function exists(target: string): Promise<boolean> {
     }
     throw error;
   }
+}
+
+async function fillAnalysisSections(
+  analysisPath: string,
+  sections: {
+    readonly key?: string;
+    readonly adopt?: string;
+    readonly reject?: string;
+    readonly next?: string;
+  },
+): Promise<void> {
+  let content = await readFile(analysisPath, "utf8");
+  if (sections.key) {
+    content = content.replace(
+      "## Key observations\n\n",
+      `## Key observations\n\n${sections.key}\n\n`,
+    );
+  }
+  if (sections.adopt) {
+    content = content.replace("## Adopt\n\n", `## Adopt\n\n${sections.adopt}\n\n`);
+  }
+  if (sections.reject) {
+    content = content.replace("## Reject\n\n", `## Reject\n\n${sections.reject}\n\n`);
+  }
+  if (sections.next) {
+    content = content.replace("## Next iteration\n\n", `## Next iteration\n\n${sections.next}\n\n`);
+  }
+  await writeFile(analysisPath, content, "utf8");
 }
 
 afterEach(async () => {
@@ -622,6 +652,45 @@ describe("getFrameworkStatus systems section", () => {
 
     expect(status.systems).toBeUndefined();
   });
+
+  it("summarizes living source observations", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
+
+    await addSource({
+      root,
+      source,
+      alias: "Source",
+      now: new Date("2026-07-01T08:00:00"),
+    });
+
+    let status = await getFrameworkStatus({ root });
+    expect(status.livingSources).toEqual({
+      total: 1,
+      openObservations: 1,
+      suggestedAnalyses: 0,
+      closedObservations: 0,
+      majorRevalidations: 0,
+    });
+
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
+    await syncSource({
+      root,
+      alias: "source",
+      changeClass: "major",
+      now: new Date("2026-07-01T09:00:00"),
+    });
+
+    status = await getFrameworkStatus({ root });
+    expect(status.livingSources).toMatchObject({
+      total: 1,
+      openObservations: 1,
+      majorRevalidations: 1,
+    });
+  });
 });
 
 describe("workspace operations", () => {
@@ -726,6 +795,10 @@ describe("workspace operations", () => {
       title: "Review Source Project",
       forReference: ref.path,
       now: new Date("2026-06-15T10:00:00"),
+    });
+    await fillAnalysisSections(analysis.absolutePath, {
+      key: "- Source Project keeps the useful pattern.",
+      adopt: "- Adopt the pattern.",
     });
 
     await closeAnalysis({
@@ -1146,6 +1219,25 @@ describe("closeIteration", () => {
 });
 
 describe("closeAnalysis", () => {
+  it("rejects empty analysis close by default", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const created = await createAnalysis({
+      root,
+      title: "Empty Review",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+
+    await expect(
+      closeAnalysis({
+        root,
+        path: created.path,
+        exit: "adopt",
+        now: new Date("2026-06-15T10:00:00"),
+      }),
+    ).rejects.toThrow("non-empty ## Key observations");
+  });
+
   it("closes an analysis with an adopt exit", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
@@ -1153,6 +1245,10 @@ describe("closeAnalysis", () => {
       root,
       title: "Review Source",
       now: new Date("2026-06-14T10:00:00"),
+    });
+    await fillAnalysisSections(created.absolutePath, {
+      key: "- Source exposes a useful review pattern.",
+      adopt: "- Adopt the review pattern.",
     });
 
     const result = await closeAnalysis({
@@ -1178,6 +1274,9 @@ describe("closeAnalysis", () => {
       title: "ADR Candidate",
       now: new Date("2026-06-14T10:00:00"),
     });
+    await fillAnalysisSections(created.absolutePath, {
+      key: "- The decision should become an ADR.",
+    });
 
     await closeAnalysis({
       root,
@@ -1188,6 +1287,76 @@ describe("closeAnalysis", () => {
 
     const content = await readFile(created.absolutePath, "utf8");
     expect(content).toContain("[x] ADR");
+  });
+
+  it("closes a living source observation through a bound analysis", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
+    await addSource({
+      root,
+      source,
+      alias: "Source",
+      now: new Date("2026-07-01T08:00:00"),
+    });
+
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
+    const synced = await syncSource({
+      root,
+      alias: "source",
+      changeClass: "major",
+      now: new Date("2026-07-01T09:00:00"),
+    });
+    expect(synced.observation).not.toBeNull();
+
+    const analysis = await createAnalysis({
+      root,
+      title: "Revalidate Source",
+      forSource: "source",
+      now: new Date("2026-07-01T10:00:00"),
+    });
+    let content = await readFile(analysis.absolutePath, "utf8");
+    expect(content).toContain("- Source alias: source");
+    expect(content).toContain(`- Source observation: ${synced.observation?.observation_id}`);
+    expect(content).toContain("- Source change class: major");
+
+    const before = await checkFramework({ root });
+    expect(before.rows.some((row) => row.message?.includes("needs revalidation analysis"))).toBe(
+      true,
+    );
+
+    await fillAnalysisSections(analysis.absolutePath, {
+      key: "- The major source change was reviewed.",
+      adopt: "- Adopt the updated source assumptions.",
+    });
+    await closeAnalysis({
+      root,
+      path: analysis.path,
+      exit: "adopt",
+      now: new Date("2026-07-01T11:00:00"),
+    });
+
+    content = await readFile(
+      path.join(
+        root,
+        "references",
+        "source",
+        ".assay",
+        "observations",
+        `${synced.observation?.observation_id}.yaml`,
+      ),
+      "utf8",
+    );
+    expect(content).toContain("analysis_status: closed");
+    expect(content).toContain(`analysis_path: ${analysis.path}`);
+    expect(content).toContain("analysis_exit: adopt");
+
+    const after = await checkFramework({ root });
+    expect(after.rows.some((row) => row.message?.includes("needs revalidation analysis"))).toBe(
+      false,
+    );
   });
 });
 

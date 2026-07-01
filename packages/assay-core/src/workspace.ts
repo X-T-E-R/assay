@@ -19,6 +19,12 @@ import type {
   ProjectMode,
 } from "./schemas/index.js";
 import { toPosixPath } from "./serialization.js";
+import {
+  closeSourceObservationAnalysis,
+  collectSourceHealthRows,
+  getSourceStatus,
+  resolveSourceObservation,
+} from "./sources.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
 import { desiredTemplates } from "./templates.js";
 import { nowIso } from "./time.js";
@@ -114,6 +120,14 @@ export interface FrameworkStatusSystem {
   readonly supersedes: readonly string[];
 }
 
+export interface FrameworkStatusLivingSources {
+  readonly total: number;
+  readonly openObservations: number;
+  readonly suggestedAnalyses: number;
+  readonly closedObservations: number;
+  readonly majorRevalidations: number;
+}
+
 export interface FrameworkStatusResult {
   readonly root: string;
   readonly hasManifest: boolean;
@@ -126,6 +140,7 @@ export interface FrameworkStatusResult {
   readonly managedFiles: number;
   readonly zones: FrameworkZoneCount[];
   readonly systems?: readonly FrameworkStatusSystem[];
+  readonly livingSources?: FrameworkStatusLivingSources;
   readonly openIterations?: number;
   readonly knowledgeEntries?: number;
 }
@@ -169,6 +184,10 @@ export interface CreateAnalysisOptions {
   readonly title: string;
   /** Path of a frozen reference this analysis is bound to (relative to root). */
   readonly forReference?: string;
+  /** Living source alias this analysis is bound to. */
+  readonly forSource?: string;
+  /** Observation id/path for a living source analysis. Defaults to latest. */
+  readonly observation?: string;
   readonly now?: Date;
 }
 
@@ -228,6 +247,7 @@ export interface CloseAnalysisOptions {
   readonly path: string;
   readonly exit: AnalysisExit;
   readonly note?: string;
+  readonly allowEmpty?: boolean;
   readonly now?: Date;
 }
 
@@ -933,6 +953,16 @@ export async function checkFramework(
     // queue may be missing or unreadable; skip
   }
 
+  // Semantic check 10: living source observation health
+  // New-style external sources live at references/<source>/ with source.yaml
+  // plus an observation ledger under .assay/. These warnings keep the new
+  // model from becoming another "blob exists, therefore done" escape hatch.
+  try {
+    rows.push(...(await collectSourceHealthRows(root)));
+  } catch {
+    // new-style references may not exist or may be legacy-only; skip
+  }
+
   return {
     root,
     ok: rows.every((row) => row.status === "ok" || row.status === "warning"),
@@ -1051,25 +1081,60 @@ async function findEmptyDraftAnalyses(analysesRoot: string): Promise<EmptyDraft[
  * it counts as empty if it contains no non-whitespace, non-list-marker lines.
  */
 function hasEmptyKeyObservations(content: string): boolean {
-  const headingMatch = content.match(/^##\s+Key observations\s*$/im);
+  return !sectionHasHumanContent(content, "Key observations");
+}
+
+function sectionBody(content: string, heading: string): string | null {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const headingMatch = content.match(new RegExp(`^##\\s+${escaped}\\s*$`, "im"));
   if (!headingMatch || headingMatch.index === undefined) {
-    // No Key observations heading at all in a draft → treat as empty.
-    return true;
+    return null;
   }
   const after = content.slice(headingMatch.index + headingMatch[0].length);
   // Stop at the next ## heading.
   const nextHeading = after.match(/\n##\s/);
-  const sectionBody =
-    nextHeading && nextHeading.index !== undefined ? after.slice(0, nextHeading.index) : after;
+  return nextHeading && nextHeading.index !== undefined ? after.slice(0, nextHeading.index) : after;
+}
+
+function sectionHasHumanContent(content: string, heading: string): boolean {
+  const body = sectionBody(content, heading);
+  if (body === null) return false;
   // Non-empty if there is any line with visible content that is not a bare
   // list marker or checkbox placeholder.
-  const hasContent = sectionBody.split("\n").some((line) => {
+  return body.split("\n").some((line) => {
     const trimmed = line.trim();
     if (trimmed === "") return false;
     if (/^[-*]\s*(\[[ xX]\])?\s*$/.test(trimmed)) return false; // empty list item
+    if (/^- \[[ xX]\]\s+(adopt|reject|experiment|ADR)$/i.test(trimmed)) return false;
     return true;
   });
-  return !hasContent;
+}
+
+function assertAnalysisCloseContent(
+  content: string,
+  exit: AnalysisExit,
+  allowEmpty: boolean,
+): void {
+  if (allowEmpty) return;
+  if (hasEmptyKeyObservations(content)) {
+    throw new FrameworkError(
+      "analysis close requires non-empty ## Key observations; use --allow-empty to override",
+    );
+  }
+
+  const requiredSection =
+    exit === "adopt"
+      ? "Adopt"
+      : exit === "reject"
+        ? "Reject"
+        : exit === "experiment"
+          ? "Next iteration"
+          : null;
+  if (requiredSection && !sectionHasHumanContent(content, requiredSection)) {
+    throw new FrameworkError(
+      `analysis close --exit ${exit} requires non-empty ## ${requiredSection}; use --allow-empty to override`,
+    );
+  }
 }
 
 /**
@@ -1141,6 +1206,23 @@ export async function getFrameworkStatus(
     // iterations dir may not exist
   }
 
+  let livingSources: FrameworkStatusLivingSources | undefined;
+  try {
+    const status = await getSourceStatus({ root });
+    const sources = status.sources;
+    livingSources = {
+      total: sources.length,
+      openObservations: sources.filter((source) => source.analysisStatus === "open").length,
+      suggestedAnalyses: sources.filter((source) => source.analysisStatus === "suggested").length,
+      closedObservations: sources.filter((source) => source.analysisStatus === "closed").length,
+      majorRevalidations: sources.filter(
+        (source) => source.latestChangeClass === "major" && source.analysisStatus !== "closed",
+      ).length,
+    };
+  } catch {
+    // sources may not exist or may be mid-migration; status omits the summary
+  }
+
   const knowledgeCount = await countKnowledgeEntries(root);
 
   if (!manifest) {
@@ -1150,6 +1232,7 @@ export async function getFrameworkStatus(
       managedFiles: 0,
       zones,
       ...(systems ? { systems } : {}),
+      ...(livingSources ? { livingSources } : {}),
       ...(openIterations !== undefined ? { openIterations } : {}),
       knowledgeEntries: knowledgeCount,
     };
@@ -1167,6 +1250,7 @@ export async function getFrameworkStatus(
     managedFiles: Object.keys(manifest.managed_files).length,
     zones,
     ...(systems ? { systems } : {}),
+    ...(livingSources ? { livingSources } : {}),
     ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
   };
@@ -1598,6 +1682,10 @@ export async function createAnalysis(
     throw new FrameworkAlreadyExistsError(`analysis already exists: ${relativePath}`);
   }
 
+  if (options.forReference && options.forSource) {
+    throw new FrameworkError("analysis can bind either --for-reference or --for-source, not both");
+  }
+
   // When bound to a frozen reference, pre-fill the provenance fields from its
   // reference.yaml instead of leaving an empty shell. This is what makes the
   // analysis "carry content forward" rather than being a blank template the AI
@@ -1605,6 +1693,7 @@ export async function createAnalysis(
   let refName = "";
   let refSource = "";
   let refFreezePath = "";
+  let sourceBlock = "";
   if (options.forReference) {
     const refPath = options.forReference.replace(/\\/g, "/");
     const refAbsolute = path.join(root, refPath);
@@ -1623,12 +1712,33 @@ export async function createAnalysis(
       refFreezePath = refPath;
     }
   }
+  if (options.forSource) {
+    const source = await resolveSourceObservation({
+      root,
+      alias: options.forSource,
+      ...(options.observation === undefined ? {} : { observation: options.observation }),
+    });
+    refName = source.alias;
+    sourceBlock = [
+      `- Source alias: ${source.alias}`,
+      `- Source path: ${source.sourcePath}`,
+      `- Source observation: ${source.observation.observation_id}`,
+      `- Source observation path: ${source.observationFile}`,
+      `- Source change class: ${source.observation.change_class}`,
+      `- Source analysis status: ${source.observation.analysis_status}`,
+      `- Source manifest: ${source.manifestFile}`,
+      `- Source materials: ${source.materialsPath}`,
+      ...(source.checkoutPath ? [`- Source checkout: ${source.checkoutPath}`] : []),
+      ...(source.diffFile ? [`- Source diff: ${source.diffFile}`] : []),
+      "",
+    ].join("\n");
+  }
 
   const referenceBlock =
-    refFreezePath || refName
+    options.forReference && (refFreezePath || refName)
       ? `- Reference: ${refName}\n- Source: ${refSource}\n- Freeze path: ${refFreezePath}\n`
       : "";
-  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n${referenceBlock}\n## Reference\n\n${refName || ""}\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n- [ ] ADR\n`;
+  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n${referenceBlock}${sourceBlock}\n## Reference\n\n${refName || ""}\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n- [ ] ADR\n`;
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, content, "utf8");
   const eventFile = await appendEvent(
@@ -1638,6 +1748,8 @@ export async function createAnalysis(
       path: relativePath,
       title: options.title,
       ...(options.forReference ? { for_reference: options.forReference.replace(/\\/g, "/") } : {}),
+      ...(options.forSource ? { for_source: options.forSource } : {}),
+      ...(options.observation ? { source_observation: options.observation } : {}),
     },
     now,
   );
@@ -1783,6 +1895,20 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   }
 
   let content = await readFile(absolutePath, "utf8");
+  assertAnalysisCloseContent(content, options.exit, options.allowEmpty ?? false);
+  const sourceAliasMatch = content.match(/^- Source alias:\s*(\S+)/m);
+  const sourceObservationMatch = content.match(/^- Source observation:\s*(\S+)/m);
+  const sourceBinding =
+    sourceAliasMatch?.[1] && sourceObservationMatch?.[1]
+      ? { alias: sourceAliasMatch[1], observation: sourceObservationMatch[1] }
+      : null;
+  if (sourceBinding) {
+    await resolveSourceObservation({
+      root,
+      alias: sourceBinding.alias,
+      observation: sourceBinding.observation,
+    });
+  }
   // Set status
   const statusMap: Record<AnalysisExit, string> = {
     adopt: "applied",
@@ -1819,6 +1945,19 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
     }
   }
 
+  let closedSourceObservation: string | null = null;
+  if (sourceBinding) {
+    const closed = await closeSourceObservationAnalysis({
+      root,
+      alias: sourceBinding.alias,
+      observation: sourceBinding.observation,
+      analysisPath,
+      analysisExit: options.exit,
+      now,
+    });
+    closedSourceObservation = closed.observationFile;
+  }
+
   const eventFile = await appendEvent(
     root,
     {
@@ -1826,7 +1965,11 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
       path: analysisPath,
       exit: options.exit,
       note: options.note ?? null,
+      ...(options.allowEmpty ? { allow_empty: true } : {}),
       ...(analyzedReference ? { marked_reference_analyzed: analyzedReference } : {}),
+      ...(closedSourceObservation
+        ? { marked_source_observation_closed: closedSourceObservation }
+        : {}),
     },
     now,
   );

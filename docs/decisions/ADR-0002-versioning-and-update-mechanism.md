@@ -64,17 +64,17 @@ Trellis 的经验表明，安全更新的关键不是“覆盖”，而是“识
 | `experiments/<date>-<name>/` | `iterations/<date>-<name>/` | copy-first；保留旧 experiments 一个 minor 周期 |
 | `knowledge/evaluations/` | `analyses/references/` 或 `analyses/gaps/` | 不自动分类；生成迁移 TODO |
 | `.metasystem/` | `.framework/` | 只迁移 config/events/queue 的可识别部分；保留原目录 |
-| `systems/<core>/docs/*` | `systems/<core>/docs/*` | 路径保留，但纳入 manifest 分类 |
+| `systems/<name>/system.yaml` | `systems/<name>/system.yaml` | 只迁移/生成系统契约；系统 README、CHANGELOG 和 docs 属于系统自身 |
 
 ## update 命令设计
 
 ```bash
-metasystem update --root . --dry-run
-metasystem update --root . --create-new
-metasystem update --root . --force
-metasystem update --root . --migrate
-metasystem migrate-layout --root . --dry-run
-metasystem migrate-layout --root . --apply --mode copy
+assay update --root . --dry-run
+assay update --root . --create-new
+assay update --root . --force
+assay update --root . --migrate
+assay migrate-layout --root . --dry-run
+assay migrate-layout --root . --apply --mode copy
 ```
 
 ## 备份策略

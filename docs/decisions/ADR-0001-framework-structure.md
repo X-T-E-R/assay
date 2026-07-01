@@ -52,7 +52,7 @@ reference_candidate
 
 ## 为什么不是继续五区模型
 
-五区模型的问题不是错，而是太“资源分类”。MetaSystem Kit 更需要“工作流分类”。`analyses/` 和 `iterations/` 一旦成为一等目录，AI 与人都更容易知道当前工作处于哪一环。
+五区模型的问题不是错，而是太“资源分类”。Assay 更需要“工作流分类”。`analyses/` 和 `iterations/` 一旦成为一等目录，AI 与人都更容易知道当前工作处于哪一环。
 
 ## 后果
 

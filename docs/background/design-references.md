@@ -1,21 +1,21 @@
 # Design References
 
-MetaSystem Kit uses a small set of public references to guide CLI design, versioning, update policy, and repository governance.
+Assay uses a small set of public references to guide CLI design, versioning, update policy, and repository governance.
 
 ## CLI Behavior
 
 - [Command Line Interface Guidelines](https://clig.dev/) — guidance for human-friendly command behavior, composability, help output, stdout/stderr separation, exit codes, dry-run modes, and confirmations.
 - [Commander](https://github.com/tj/commander.js) — command definitions, options, subcommands, help text, and usage errors for the TypeScript CLI adapter.
-- [npm `bin` field](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bin) — the package metadata mechanism used to expose installed console commands such as `metasystem`.
+- [npm `bin` field](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bin) — the package metadata mechanism used to expose installed console commands such as `assay`.
 
-MetaSystem Kit uses a TypeScript core package plus a Commander CLI adapter. Framework behavior belongs in `metasystem-framework-core`; command parsing and terminal formatting belong in `metasystem-framework-cli`.
+Assay uses a TypeScript core package plus a Commander CLI adapter. Framework behavior belongs in `assay-core`; command parsing and terminal formatting belong in `assay-cli`.
 
 ## Versioning And Updates
 
 - [Semantic Versioning](https://semver.org/) — a useful convention for separating incompatible changes, compatible feature additions, and bug fixes.
 - [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — guidance for human-readable release notes rather than raw commit dumps.
 
-MetaSystem Kit distinguishes three version layers:
+Assay distinguishes three version layers:
 
 | Layer | Location | Meaning |
 | --- | --- | --- |
@@ -32,4 +32,4 @@ Updates should compare the installed workspace version, not just the currently i
 - [The Turing Way: Project Documentation](https://book.the-turing-way.org/reproducible-research/code-documentation/code-documentation-project/) — emphasizes documentation for software project management and reproducible work.
 - [OpenSSF Scorecard](https://scorecard.dev/) — useful for thinking about dependency and project-health risk when evaluating external references.
 
-These references support the repository-level choices in MetaSystem Kit: a clear README, explicit contribution boundaries, a license, check scripts, and a framework workflow that records where external material came from and how it was evaluated.
+These references support Assay's repository-level choices: a clear README, explicit contribution boundaries, a license, check scripts, and a framework workflow that records where external material came from and how it was evaluated.

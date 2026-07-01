@@ -1,6 +1,6 @@
 # Trellis-Inspired Design Notes
 
-MetaSystem Kit treats a framework workspace as local project infrastructure, not as a loose collection of prompts or notes. This direction was influenced by workflow systems that keep project rules, task state, update metadata, and assistant-facing instructions inside the repository.
+Assay treats a framework workspace as local project infrastructure, not as a loose collection of prompts or notes. This direction was influenced by workflow systems that keep project rules, task state, update metadata, and assistant-facing instructions inside the repository.
 
 The useful pattern is not any specific upstream implementation. The useful pattern is the separation of responsibilities:
 
@@ -13,7 +13,7 @@ human-facing workspace
 
 ## Project Infrastructure, Not a Prompt Pack
 
-A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. MetaSystem Kit therefore gives each managed workspace a `.framework/` directory that stores version state, a manifest, events, migrations, and backups.
+A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. Assay therefore gives each managed workspace a `.framework/` directory that stores version state, a manifest, events, migrations, and backups.
 
 That managed layer sits beside the visible workspace:
 
@@ -25,7 +25,7 @@ The visible folders hold user artifacts. The hidden `.framework/` layer holds li
 
 ## Indexes Should Be Discovery Surfaces
 
-Large context files become hard to maintain and expensive for assistants to load. MetaSystem Kit favors small index files and scoped documents. A top-level README or index should tell readers what exists and when to open it; detailed reasoning belongs in specific analysis, decision, or iteration documents.
+Large context files become hard to maintain and expensive for assistants to load. Assay favors small index files and scoped documents. A top-level README or index should tell readers what exists and when to open it; detailed reasoning belongs in specific analysis, decision, or iteration documents.
 
 This is why the framework separates:
 
@@ -37,7 +37,7 @@ This is why the framework separates:
 
 ## Updates Need File Ownership
 
-Safe updates require the framework to know which files it owns. MetaSystem Kit uses `.framework/manifest.json` to record managed files, template identifiers, installed versions, and hashes.
+Safe updates require the framework to know which files it owns. Assay uses `.framework/manifest.json` to record managed files, template identifiers, installed versions, and hashes.
 
 That enables update behavior such as:
 
@@ -52,19 +52,19 @@ The important rule is simple: **framework templates can be updated; user knowled
 
 ## Platform Adapters Come After the Core Model
 
-Assistant-specific integrations are useful, but they should not decide the core workspace shape. MetaSystem Kit keeps the core artifact model independent first, then exposes assistant-facing Skills or agent metadata as adapters.
+Assistant-specific integrations are useful, but they should not decide the core workspace shape. Assay keeps the core artifact model independent first, then exposes assistant-facing Skills or agent metadata as adapters.
 
 That keeps the framework useful even when the active assistant, editor, or automation surface changes.
 
 ## CLI Logic Should Be Testable
 
-Repository-mutating commands are risky if they live in one large script or a process-only adapter. MetaSystem Kit splits reusable framework behavior from terminal concerns:
+Repository-mutating commands are risky if they live in one large script or a process-only adapter. Assay splits reusable framework behavior from terminal concerns:
 
 ```text
 packages/
-├── metasystem-framework-core/
+├── assay-core/
 │   └── src/        # templates, manifests, events, workspace operations, updates
-└── metasystem-framework-cli/
+└── assay-cli/
     └── src/        # Commander command definitions, formatting, exit-code mapping
 ```
 

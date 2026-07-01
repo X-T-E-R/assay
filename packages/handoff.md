@@ -1,38 +1,37 @@
-# MetaSystem Kit package handoff
+# Assay package boundary notes
 
-## Current package boundary
+This note preserves durable package-boundary facts for maintainers of Assay
+itself. Keep release-facing docs aligned with the current Assay package names
+and CLI entrypoints; do not reintroduce older project or package names here.
 
-MetaSystem Kit now uses TypeScript packages as the active implementation:
+## Active package split
 
 ```text
 packages/
-├── metasystem-framework-core/  # reusable framework behavior
-└── metasystem-framework-cli/   # Commander CLI adapter
+├── assay-core/  # reusable framework behavior
+└── assay-cli/   # Commander CLI adapter
 ```
 
-`metasystem-framework-core` owns templates, manifests, events, workspace operations, update planning/apply behavior, migration planning/apply behavior, typed errors, and structured results.
+- `assay-core` owns templates, manifests, events, workspace operations,
+  update/migration planning, typed errors, and structured results.
+- `assay-cli` owns process-facing behavior only: command definitions,
+  argv/options mapping, terminal formatting, and exit-code mapping.
 
-`metasystem-framework-cli` owns process-facing behavior only: command definitions, argv/options mapping, formatting, and exit-code mapping.
+## Invocation and checks
 
-## Reference package removal gate
-
-The previous reference package removal gate has been approved. The reference package is no longer part of the workspace, and helper entrypoints should use the built TypeScript CLI:
+Use the built TypeScript CLI:
 
 ```bash
-node packages/metasystem-framework-cli/dist/cli.js --help
-cd <target-dir>
-node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js init --name <project-name>
-node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js adopt --dry-run
-node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js adopt --apply --name <project-name>
-node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js check
-node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js status
-node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js update --dry-run
-node <metasystem-kit>/packages/metasystem-framework-cli/dist/cli.js migrate-layout --dry-run
+node packages/assay-cli/dist/cli.js --help
+node packages/assay-cli/dist/cli.js init --name <project-name>
+node packages/assay-cli/dist/cli.js source add <repo-or-dir> [alias]
+node packages/assay-cli/dist/cli.js check
+node packages/assay-cli/dist/cli.js status
+node packages/assay-cli/dist/cli.js update --dry-run
+node packages/assay-cli/dist/cli.js migrate-layout --dry-run
 ```
 
-## Development checks
-
-Run from the repository root:
+Run repository verification from the Assay root:
 
 ```bash
 pnpm build
@@ -43,11 +42,11 @@ pnpm smoke
 pnpm check
 ```
 
-`pnpm smoke` validates the built CLI help/check path and a temporary framework workspace flow.
-
 ## Boundary rules
 
-- Keep core free of `console.log`, `process.exit`, and raw argv parsing.
-- Keep CLI handlers as parse/options → core call → formatter.
-- Future GUI code should import `metasystem-framework-core` directly.
-- Do not reintroduce runtime checks or skill commands that depend on the removed reference package.
+- Keep `assay-core` free of `console.log`, `process.exit`, and raw argv
+  parsing.
+- Keep CLI handlers as `parse/options -> core call -> formatter`.
+- Future GUI code should import `assay-core` directly.
+- Do not publish release-facing docs that mention stale package names, private
+  handoff prompts, or local machine paths.

@@ -227,10 +227,11 @@ export function referencesReadme(): string {
   return dedent(`
     # references/
 
-    Store external systems here. References are inputs, not local implementations.
+    Store external systems here. References are evidence inputs, not local implementations.
 
     - \`intake/\`: candidate lists and search coverage notes.
-    - \`frozen/YYYYMM/<name>/\`: frozen snapshots, default read-only.
+    - \`<source>/\`: living source card with \`source.yaml\`, current \`checkout/\`, bounded \`materials/\`, \`history.md\`, and the internal \`.assay/\` observation ledger.
+    - \`frozen/YYYYMM/<name>/\`: legacy or explicit full-capture snapshots, default read-only.
     `);
 }
 
@@ -239,7 +240,7 @@ export function referencesIntakeReadme(): string {
 }
 
 export function referencesFrozenReadme(): string {
-  return "# references/frozen/\n\nFrozen external systems by month. Treat these as read-only evidence.\n";
+  return "# references/frozen/\n\nLegacy and explicit full-capture external systems by month. Prefer `assay source add` for living sources that should be synced over time.\n";
 }
 
 export function monthReferenceIndex(month: string): string {
@@ -380,7 +381,8 @@ export function artifactModelDoc(): string {
     | Artifact | Path | Exit |
     | --- | --- | --- |
     | Reference candidate | \`references/intake/\` | freeze / reject |
-    | Frozen reference | \`references/frozen/YYYYMM/<name>/\` | analyze |
+    | Living source | \`references/<source>/\` | sync / delta analysis / revalidation |
+    | Frozen reference | \`references/frozen/YYYYMM/<name>/\` | legacy/full-capture analysis |
     | Reference analysis | \`analyses/references/\` | reject / pattern / ADR |
     | Gap analysis | \`analyses/gaps/\` | iteration / roadmap |
     | Candidate pattern | \`analyses/patterns/\` | iteration / reject |
@@ -398,8 +400,10 @@ export function workflowsDoc(): string {
 
     1. Define the search theme and acceptance criteria.
     2. Capture candidate links and coverage notes in \`references/intake/\`.
-    3. Freeze useful references under \`references/frozen/YYYYMM/\`.
-    4. Write a reference analysis; do not stop at collecting source code.
+    3. Add living sources with \`assay source add <repo-or-dir> [alias]\`; use \`checkout/\` for the current source and \`.assay/\` for observations.
+    4. Use \`assay source sync\` when the external source changes; classify major changes as revalidation work instead of silently invalidating knowledge.
+    5. Use \`references/frozen/YYYYMM/\` only for legacy or explicit full captures.
+    6. Write a reference analysis; do not stop at collecting source code.
 
     ## Analysis to pattern
 

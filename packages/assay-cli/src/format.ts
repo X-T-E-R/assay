@@ -8,6 +8,10 @@ import type {
   InitFrameworkResult,
   MigrateLayoutResult,
   OperationReport,
+  SourceDiffResult,
+  SourceLogResult,
+  SourceStatusResult,
+  SourceSyncResult,
   SystemRecord,
   UpdateAnalysis,
   UpdatePlan,
@@ -117,6 +121,18 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
         ]
       : [];
 
+  const livingSources = result.livingSources
+    ? [
+        "Living sources",
+        `  - total: ${result.livingSources.total}`,
+        `  - open observations: ${result.livingSources.openObservations}`,
+        `  - suggested analyses: ${result.livingSources.suggestedAnalyses}`,
+        `  - closed observations: ${result.livingSources.closedObservations}`,
+        `  - major revalidations: ${result.livingSources.majorRevalidations}`,
+        "  - details: assay source status",
+      ]
+    : [];
+
   const summary: string[] = [];
   if (result.openIterations !== undefined) {
     summary.push(`Open iterations: ${result.openIterations}`);
@@ -125,7 +141,70 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     summary.push(`Knowledge entries: ${result.knowledgeEntries}`);
   }
 
-  return [...header, ...manifest, ...zones, ...systems, ...summary].join("\n");
+  return [...header, ...manifest, ...zones, ...systems, ...livingSources, ...summary].join("\n");
+}
+
+export function formatSourceStatusResult(result: SourceStatusResult): string {
+  if (result.sources.length === 0) {
+    return ["Sources", `Root: ${result.root}`, "(none)"].join("\n");
+  }
+  return [
+    "Sources",
+    `Root: ${result.root}`,
+    ...result.sources.map((source) => {
+      const commit = source.vcs?.commit ? ` ${source.vcs.commit.slice(0, 12)}` : "";
+      const latest = source.latestObservation ?? "-";
+      const change = source.latestChangeClass ?? "-";
+      return `${source.alias.padEnd(24)} ${source.kind.padEnd(9)} ${source.captureMode.padEnd(8)} ${change.padEnd(11)} ${latest}${commit}`;
+    }),
+  ].join("\n");
+}
+
+export function formatSourceLogResult(result: SourceLogResult): string {
+  if (result.entries.length === 0) {
+    return [`Source log: ${result.alias}`, "(none)"].join("\n");
+  }
+  return [
+    `Source log: ${result.alias}`,
+    ...result.entries.map(({ observation }) => {
+      const commit = observation.vcs?.commit ? ` ${observation.vcs.commit.slice(0, 12)}` : "";
+      return `${observation.observed_on} ${observation.change_class.padEnd(11)} ${observation.observation_id}${commit}`;
+    }),
+  ].join("\n");
+}
+
+export function formatSourceSyncResult(result: SourceSyncResult): string {
+  if (!result.observation) {
+    return [
+      `Source sync: ${result.alias}`,
+      `Path: ${result.path}`,
+      `Change: ${result.changeClass}`,
+      "Observation: unchanged",
+      `Event: ${result.eventFile}`,
+    ].join("\n");
+  }
+  return [
+    `Source sync: ${result.alias}`,
+    `Path: ${result.path}`,
+    `Change: ${result.changeClass}`,
+    `Observation: ${result.observationFile ?? result.observation.observation_id}`,
+    `Manifest: ${result.manifestFile ?? result.observation.manifest}`,
+    `Event: ${result.eventFile}`,
+  ].join("\n");
+}
+
+export function formatSourceDiffResult(result: SourceDiffResult): string {
+  return [
+    `Source diff: ${result.alias}`,
+    `From: ${result.from ?? "none"}`,
+    `To: ${result.to ?? "none"}`,
+    `Added: ${result.added.length}`,
+    ...result.added.map((file) => `  + ${file}`),
+    `Removed: ${result.removed.length}`,
+    ...result.removed.map((file) => `  - ${file}`),
+    `Changed: ${result.changed.length}`,
+    ...result.changed.map((file) => `  * ${file}`),
+  ].join("\n");
 }
 
 function updateCounts(analysis: UpdateAnalysis): string[] {

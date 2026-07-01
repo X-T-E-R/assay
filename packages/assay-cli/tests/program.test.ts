@@ -131,6 +131,7 @@ describe("assay CLI subprocess behavior", () => {
 
   it("runs init, check, status, and update dry-run against a temporary workspace", async () => {
     const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
 
     const init = await runCli(["init", root, "--name", "Assay Smoke"]);
     expect(init.exitCode).toBe(0);
@@ -145,11 +146,20 @@ describe("assay CLI subprocess behavior", () => {
     expect(check.stdout).toContain("[ok] .framework/VERSION");
     expect(check.stderr).toBe("");
 
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
+    const addSourceResult = await runCli(["source", "add", source, "Smoke Source", "--root", root]);
+    expect(addSourceResult.exitCode).toBe(0);
+
     const status = await runCli(["status", "--root", root]);
     expect(status.exitCode).toBe(0);
     expect(status.stdout).toContain("Framework status");
     expect(status.stdout).toContain("Project: Assay Smoke");
     expect(status.stdout).toContain("Managed files:");
+    expect(status.stdout).toContain("Living sources");
+    expect(status.stdout).toContain("total: 1");
+    expect(status.stdout).toContain("open observations: 1");
+    expect(status.stdout).toContain("details: assay source status");
     expect(status.stderr).toBe("");
 
     const update = await runCli(["update", "--root", root, "--dry-run"]);

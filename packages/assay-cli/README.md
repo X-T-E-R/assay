@@ -24,6 +24,16 @@ node ..\assay\packages\assay-cli\dist\cli.js init --name Assay
 node ..\assay\packages\assay-cli\dist\cli.js check
 ```
 
+Add a living external source with a shallow checkout-backed entry:
+
+```powershell
+node ..\assay\packages\assay-cli\dist\cli.js source add <repo-or-dir> repo-name
+node ..\assay\packages\assay-cli\dist\cli.js source status repo-name
+node ..\assay\packages\assay-cli\dist\cli.js source sync repo-name
+```
+
+`references/<alias>/checkout/` is the current materialized source; for Git sources it is the repository root. Observation metadata lives under `references/<alias>/.assay/`.
+
 To convert an existing project into a clean Assay workspace, run from that
 project root:
 

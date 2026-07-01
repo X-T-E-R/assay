@@ -5,11 +5,16 @@ import {
   type AssayProjectRegistryStatus,
   type IterationResult,
   type KnowledgeType,
+  SOURCE_CAPTURE_MODES,
+  SOURCE_CHANGE_CLASSES,
+  type SourceCaptureMode,
+  type SourceChangeClass,
   type SystemVcs,
   absorbReference,
   acceptAdr,
   addKnowledge,
   addReference,
+  addSource,
   adoptExistingProject,
   applyUpdate,
   archiveSystem,
@@ -20,12 +25,15 @@ import {
   createAdr,
   createAnalysis,
   deprecateAdr,
+  diffSource,
   discoverFrameworkRoot,
   findAdr,
   findProjectRecord,
   findSystem,
   forgetProject,
   getFrameworkStatus,
+  getSourceLog,
+  getSourceStatus,
   initFramework,
   listAdrs,
   listProjectRecords,
@@ -41,6 +49,8 @@ import {
   scanForProjects,
   startIteration,
   supersedeAdr,
+  switchSource,
+  syncSource,
 } from "assay-core";
 
 import { mapCliError } from "./errors.js";
@@ -53,6 +63,10 @@ import {
   formatMigrationResult,
   formatProjectList,
   formatProjectRecord,
+  formatSourceDiffResult,
+  formatSourceLogResult,
+  formatSourceStatusResult,
+  formatSourceSyncResult,
   formatStatusResult,
   formatSystemList,
   formatSystemRecord,
@@ -524,6 +538,135 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 
+  const source = program.command("source").description("Living external source operations");
+  source
+    .command("add")
+    .description("Add a living external source under references/<alias>/")
+    .argument("<repo-or-dir>", "local source directory or git repository URL")
+    .argument("[alias]", "short filesystem-safe source alias")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--branch <branch>", "branch to check out for Git-backed sources")
+    .addOption(
+      new Option("--capture <mode>", "capture mode")
+        .choices([...SOURCE_CAPTURE_MODES])
+        .default("checkout"),
+    )
+    .action(async (repoOrDir, alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await addSource({
+        root,
+        source: repoOrDir,
+        ...(alias === undefined ? {} : { alias }),
+        ...(commandOptions.branch === undefined ? {} : { branch: commandOptions.branch }),
+        capture: commandOptions.capture as SourceCaptureMode,
+      });
+      writeLine(output, "stdout", `Added source: ${result.path}`);
+      writeLine(output, "stdout", `Observation: ${result.observationFile}`);
+      writeLine(output, "stdout", `Manifest: ${result.manifestFile}`);
+      if (result.checkoutPath) {
+        writeLine(output, "stdout", `Checkout: ${result.checkoutPath}`);
+      }
+      writeLine(output, "stdout", `Materials: ${result.materialsPath}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  source
+    .command("sync")
+    .description("Observe an existing source again and update current materials")
+    .argument("[alias]", "source alias; optional when exactly one source exists")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--branch <branch>", "Git branch to check out before observing")
+    .option("--ref <ref>", "Git ref to check out before observing")
+    .addOption(
+      new Option("--class <change-class>", "override advisory change class").choices([
+        ...SOURCE_CHANGE_CLASSES,
+      ]),
+    )
+    .action(async (alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await syncSource({
+        root,
+        ...(alias === undefined ? {} : { alias }),
+        ...(commandOptions.branch === undefined ? {} : { branch: commandOptions.branch }),
+        ...(commandOptions.ref === undefined ? {} : { ref: commandOptions.ref }),
+        ...(commandOptions.class === undefined
+          ? {}
+          : { changeClass: commandOptions.class as SourceChangeClass }),
+      });
+      writeLine(output, "stdout", formatSourceSyncResult(result));
+    });
+
+  source
+    .command("switch")
+    .description("Switch a Git-backed source checkout to a branch or ref")
+    .argument("<alias>", "source alias")
+    .argument("<branch-or-ref>", "branch, tag, or commit")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--sync", "record an observation after switching")
+    .action(async (alias, target, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await switchSource({
+        root,
+        alias,
+        target,
+        sync: commandOptions.sync ?? false,
+      });
+      writeLine(output, "stdout", `Switched source: ${result.path}`);
+      writeLine(output, "stdout", `Ref: ${result.vcs.ref}`);
+      writeLine(output, "stdout", `Commit: ${result.vcs.commit}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      if (result.sync) {
+        writeLine(output, "stdout", formatSourceSyncResult(result.sync));
+      }
+    });
+
+  source
+    .command("status")
+    .description("Show living source status")
+    .argument("[alias]", "source alias")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      writeLine(
+        output,
+        "stdout",
+        formatSourceStatusResult(
+          await getSourceStatus({ root, ...(alias === undefined ? {} : { alias }) }),
+        ),
+      );
+    });
+
+  source
+    .command("log")
+    .description("Show a source observation log")
+    .argument("<alias>", "source alias")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .action(async (alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      writeLine(output, "stdout", formatSourceLogResult(await getSourceLog({ root, alias })));
+    });
+
+  source
+    .command("diff")
+    .description("Show file-level differences for the latest source observation")
+    .argument("<alias>", "source alias")
+    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--since <observation>", "observation id or .assay/observations path")
+    .action(async (alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      writeLine(
+        output,
+        "stdout",
+        formatSourceDiffResult(
+          await diffSource({
+            root,
+            alias,
+            ...(commandOptions.since === undefined ? {} : { since: commandOptions.since }),
+          }),
+        ),
+      );
+    });
+
   program
     .command("absorb")
     .description("Absorb a source using the workspace manifest mode and open a pre-filled analysis")
@@ -563,6 +706,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       "--for-reference <path>",
       "frozen reference path to bind (pre-fills Reference/Source/Freeze path)",
     )
+    .option("--for-source <alias>", "living source alias to bind")
+    .option("--observation <id-or-path>", "source observation id/path; defaults to latest")
     .action(async (title, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await createAnalysis({
@@ -571,6 +716,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.forReference === undefined
           ? {}
           : { forReference: commandOptions.forReference }),
+        ...(commandOptions.forSource === undefined ? {} : { forSource: commandOptions.forSource }),
+        ...(commandOptions.observation === undefined
+          ? {}
+          : { observation: commandOptions.observation }),
       });
       writeLine(output, "stdout", `Created analysis: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
@@ -586,6 +735,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         .makeOptionMandatory(),
     )
     .option("--note <note>", "closing note")
+    .option("--allow-empty", "allow closing an analysis without required content gates")
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .action(async (analysisPath, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -594,6 +744,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         path: analysisPath,
         exit: commandOptions.exit as AnalysisExit,
         ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
+        ...(commandOptions.allowEmpty === undefined
+          ? {}
+          : { allowEmpty: commandOptions.allowEmpty }),
       });
       writeLine(output, "stdout", `Closed analysis: ${result.path}`);
       writeLine(output, "stdout", `Exit: ${commandOptions.exit}`);

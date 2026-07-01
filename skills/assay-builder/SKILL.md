@@ -10,9 +10,9 @@ Build and maintain an Assay external-system-learning framework — a versioned p
 ## Prerequisites
 
 - Node.js >= 18, `pnpm`
-- This skill lives inside the `assay` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running `node scripts/install.mjs`, which builds the workspace and junctions this skill into your skills dir (default `~/.agents/skills`) so it resolves back to the repo.
-- Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — `install.mjs` builds it, or build manually with `pnpm install && pnpm build`.
-- Read `references/cli-setup.md` for install, build, and invocation details
+- This skill lives inside the `assay` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running the repo-root installer from the cloned repository; it builds the workspace and links this skill into the selected skills directory so it resolves back to the repo.
+- Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
+- Read `references/cli-setup.md` for install, build, and invocation details. Use `references/cli-setup.zh.md` when Chinese setup instructions are needed.
 
 ## Core loop
 
@@ -36,15 +36,21 @@ assay init [target-dir] --name <project-name> [--mode learning|absorption]
 assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # semantic + structural + content-health validation
-assay status                                 # systems + open iterations + knowledge counts
+assay status                                 # systems + living source summary + open iterations + knowledge counts
 assay update --dry-run                       # always dry-run first
 assay migrate-layout --dry-run               # always dry-run first; v2→v3 included
 
-# Reference / analysis / iteration / knowledge
-assay absorb <source-dir> [--name <name>]        # freeze + open a pre-filled analysis in ONE step
-assay reference add <source-dir> <name>           # freeze only (writes reference.yaml, analyzed: false)
-assay analysis new "Title" [--for-reference <path>]  # open an analysis; bind it to a frozen reference
-assay analysis close <path> --exit adopt|reject|experiment|adr  # closes analysis; flips reference.yaml analyzed
+# Living sources / reference analysis / iteration / knowledge
+assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|thin|metadata|archive]
+assay source sync [alias] [--branch <branch>] [--ref <ref>] [--class same|patch|normal|major|replacement]
+assay source switch <alias> <branch-or-ref> [--sync]
+assay source status [alias]
+assay source diff <alias> [--since <observation>]
+assay source log <alias>
+assay absorb <source-dir> [--name <name>]        # legacy freeze + open a pre-filled analysis in ONE step
+assay reference add <source-dir> <name>           # legacy/full-capture freeze only (writes reference.yaml, analyzed: false)
+assay analysis new "Title" [--for-source <alias>] [--observation <id>] [--for-reference <path>]
+assay analysis close <path> --exit adopt|reject|experiment|adr [--allow-empty]
 assay iteration start "Title"
 assay iteration close <selector> --result applied|rejected|retest [--note ...]
 assay knowledge add <type> "Title" [--from-analysis <path>] [--from-iteration <path>]
@@ -110,7 +116,7 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.
-2. Run `init` if empty (use `--mode absorption` when the whole project exists to absorb a specific external thing — e.g. a contest, a paper, a repo you are rebuilding — so its official materials land in `problem/` instead of `references/frozen/`). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
+2. Run `init` if empty (use `--mode absorption` when the whole project exists to absorb a specific external thing — e.g. a contest, a paper, a repo you are rebuilding — so its official materials land in `problem/` instead of the frozen-reference area). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
 3. Use `projects list` or `projects scan <parent-dir>` to locate existing workspaces.
 
 ### Absorption pipeline (the core loop, made executable)
@@ -124,13 +130,16 @@ absorb <source>                      # freeze + write case file + OPEN a pre-fil
   → (adr | knowledge | iteration against systems/)              # the decision lands somewhere durable
 ```
 
-4. **Absorb a source with `absorb <source> [--name <name>]`** — this freezes the source, writes a case file (`reference.yaml` in learning mode, `source.yaml` in absorption mode), AND opens a pre-filled analysis in one step. Prefer `absorb` over `reference add` followed by a separate `analysis new`, because `absorb` guarantees the analysis is opened in the same step and cannot be forgotten.
-5. **Fill the analysis body**: complete `## Key observations`, `## Adopt`, `## Reject` with real content drawn from the source. `check` flags an analysis left at `Status: draft` with empty Key observations — an empty shell is incomplete work, not a finished step.
-6. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This flips the bound reference's `analyzed` flag to `true` and writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
-7. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
-8. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate).
-9. Close every started iteration with `iteration close --result ...`. `check` flags `Status: open` plans as warnings.
-10. Run `update --dry-run` before applying framework upgrades.
+4. **Add a living external source with `source add <repo-or-dir> [alias]`** when the source may change over time. The preferred human entrance is `references/<alias>/` with `source.yaml`, current `checkout/`, selected `materials/`, `history.md`, and the internal `.assay/` observation ledger. For Git-backed sources, `checkout/` itself is the repository root (`checkout/.git`), not `checkout/<repo-name>/`.
+5. **Sync living sources with `source sync [alias]`** when the external system changes. For Git-backed sources, sync refreshes the managed checkout before observing. Use change classes as workflow gates: `same` writes an event only, `patch`/`normal` need delta analysis, `major` needs revalidation/stale-risk review, and `replacement` should become a new lineage instead of pretending it is a refresh.
+6. **Use `absorb <source> [--name <name>]`** when you intentionally want the old freeze-and-open-analysis flow. This freezes the source, writes a case file (`reference.yaml` in learning mode, `source.yaml` in absorption mode), AND opens a pre-filled analysis in one step. Prefer `absorb` over `reference add` followed by a separate `analysis new`, because `absorb` guarantees the analysis is opened in the same step and cannot be forgotten.
+7. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]` for living source observations, or `analysis new "Title" --for-reference <path>` for frozen references. When `--observation` is omitted, the latest observation for that source is used.
+8. **Fill the analysis body**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next iteration`) with real content drawn from the source. `check` flags draft analyses with empty Key observations, and `analysis close` rejects empty shells by default.
+9. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This flips the bound frozen reference's `analyzed` flag to `true` or marks the bound source observation `analysis_status: closed`, then writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
+10. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
+11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate).
+12. Close every started iteration with `iteration close --result ...`. `check` flags `Status: open` plans as warnings.
+13. Run `update --dry-run` before applying framework upgrades.
 
 ### Adoption with direction
 
@@ -140,7 +149,7 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 
 - Do not overwrite existing user files by default.
 - Do not adopt an already initialized Assay workspace; use `update` or `migrate-layout` instead.
-- Do not put external project source under `systems/`; in learning mode freeze it under the workspace's `frozen/` references area; in absorption mode land it under `problem/` via `absorb`.
+- Do not put external project source under `systems/`; in learning mode add it as a living source under `references/<alias>/` with `source add`, or use frozen references only for explicit full-capture/legacy evidence. In absorption mode land project-owned material under `problem/` via `absorb`.
 - Do not hand-edit `.framework/manifest.json`, `.framework/systems-registry.json`, or `.framework/adrs.json`; use the CLI.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
@@ -153,8 +162,9 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 ## Positive rules (what "absorbed" actually means)
 
 - A frozen reference MUST be followed by an analysis with non-empty `Key observations` within the same session. Use `absorb` so this is automatic; if you used `reference add` alone, immediately run `analysis new --for-reference <path>` and fill it.
+- A living source MUST keep provenance and observation metadata. Use `source status`, `source log`, `source diff`, and `analysis new --for-source` instead of browsing `.assay/` manually; `major` source changes require revalidation before old conclusions are treated as fresh.
 - An analysis is not "done" because the file exists. `## Key observations` must contain real observations drawn from the source; `## Adopt`/`## Reject` must state a decision. `check` enforces this.
-- Closing an analysis (`analysis close --exit …`) is the action that marks a reference `analyzed: true`. Until then the reference is open work.
+- Closing an analysis (`analysis close --exit …`) is the action that marks a frozen reference `analyzed: true` or a living source observation `analysis_status: closed`. Until then the source/referenced material is open work.
 - In absorption mode, the source IS the project — do not treat official materials as external references. Land them in `problem/`.
 - For adoption and absorption, propose the concrete destination first, then apply on confirmation. Do not stop after archiving.
 
@@ -170,13 +180,13 @@ assay status
 `check` reports four severity levels:
 
 - `[ok]` — directory or managed file present and unchanged.
-- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, independent-git system without `.git`, open iterations remain, **or a content-health issue**: unanalyzed frozen reference, empty draft analysis, stale `.old/` adoption archive, or pending queue entries. Does not fail the check.
+- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, independent-git system without `.git`, open iterations remain, **or a content-health issue**: unanalyzed frozen reference, major source observation needing revalidation, empty draft analysis, stale `.old/` adoption archive, or pending queue entries. Does not fail the check.
 - `[missing]` — required directory or manifest absent.
 - `[error]` — managed file missing from disk, registered system path missing, two primary systems, or inconsistent ADR supersede links. **Exits non-zero.**
 
 The content-health warnings are the framework's defense against "freeze then forget": a frozen reference with no analysis, an analysis left as an empty draft, a lingering `.old/`, or a pending queue are all surfaced so they cannot hide behind an `[ok]`.
 
-`status` shows `Systems` (with primary marker, vcs, version, supersedes chain), `Open iterations`, and `Knowledge entries`. For update and migrate, always run `--dry-run` first and review the plan before `--apply`.
+`status` shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, `Open iterations`, and `Knowledge entries`. For update and migrate, always run `--dry-run` first and review the plan before `--apply`.
 
 ## Final response checklist
 
@@ -189,6 +199,6 @@ Report:
 - Which reference/analysis/iteration/knowledge artifacts were produced.
 - Which ADRs were created, accepted, superseded, deprecated, or left proposed.
 - Registered systems and the current `primary`.
-- **Content-completeness**: count of frozen references analyzed vs unanalyzed; count of open draft analyses and whether their `Key observations` are non-empty; whether `.old/` still contains un-migrated stamps. This is what distinguishes "files were created" from "content was actually absorbed".
+- **Content-completeness**: count of living sources and whether latest observations have provenance/fingerprints/manifests; count of frozen references analyzed vs unanalyzed; count of open draft analyses and whether their `Key observations` are non-empty; whether `.old/` still contains un-migrated stamps. This is what distinguishes "files were created" from "content was actually absorbed".
 - Any open iterations or unresolved warnings reported by `check`.
 - Next recommended absorption, analysis close, iteration, or close step.

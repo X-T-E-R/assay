@@ -56,7 +56,7 @@ node <repo-root>/packages/assay-cli/dist/cli.js <command>
 
 ## 工作目录约定
 
-所有工作区命令(`init`、`adopt`、`check`、`status`、`update`、`migrate-layout`、`reference add`、`analysis new`、`analysis close`、`iteration start`、`iteration close`、`knowledge add`、`adr new|accept|supersede|deprecate|list|show`、`system register|promote|archive|list|show`)默认用 `process.cwd()`,并向上查找 `.framework/manifest.json`。
+所有工作区命令(`init`、`adopt`、`check`、`status`、`update`、`migrate-layout`、`source add|sync|switch|status|diff|log`、`reference add`、`analysis new`、`analysis close`、`iteration start`、`iteration close`、`knowledge add`、`adr new|accept|supersede|deprecate|list|show`、`system register|promote|archive|list|show`)默认用 `process.cwd()`,并向上查找 `.framework/manifest.json`。
 
 运行命令前先 `cd <target-dir>`;只有要操作别处的工作区时,才传 `--root <path>` / `[target-dir]`。
 
