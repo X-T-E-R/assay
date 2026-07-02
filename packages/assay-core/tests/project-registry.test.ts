@@ -14,6 +14,7 @@ import {
   projectRecordPath,
   projectRegistryRoot,
   pruneProjects,
+  recordProjectLifecycleBestEffort,
   registerProject,
   scanForProjects,
 } from "../src/index.js";
@@ -110,6 +111,44 @@ describe("project registry records", () => {
     expect(second.createdBy).toBe("init");
     expect(second.lastSeenAt).toBe("2026-06-15T11:00:00.000Z");
     expect(second.lastCommand).toBe("update");
+  });
+
+  it("skips best-effort lifecycle writes when tracking is disabled", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const registryRoot = path.join(await tempDir(), "registry");
+    await initFramework({ target: root, name: "No Track Demo" });
+
+    await recordProjectLifecycleBestEffort(root, "init", { registryRoot, noTrack: true });
+
+    expect(await exists(registryRoot)).toBe(false);
+    await recordProjectLifecycleBestEffort(root, "init", { registryRoot });
+    expect(await exists(projectRecordPath(projectIdForPath(root), { registryRoot }))).toBe(true);
+  });
+
+  it("honors ASSAY_NO_TRACK for best-effort lifecycle writes", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const registryRoot = path.join(await tempDir(), "registry");
+    await initFramework({ target: root, name: "No Track Env Demo" });
+    const previousRegistryRoot = process.env.ASSAY_PROJECT_REGISTRY_ROOT;
+    const previousNoTrack = process.env.ASSAY_NO_TRACK;
+
+    try {
+      process.env.ASSAY_PROJECT_REGISTRY_ROOT = registryRoot;
+      process.env.ASSAY_NO_TRACK = "1";
+      await recordProjectLifecycleBestEffort(root, "init");
+      expect(await exists(registryRoot)).toBe(false);
+    } finally {
+      if (previousRegistryRoot === undefined) {
+        Reflect.deleteProperty(process.env, "ASSAY_PROJECT_REGISTRY_ROOT");
+      } else {
+        process.env.ASSAY_PROJECT_REGISTRY_ROOT = previousRegistryRoot;
+      }
+      if (previousNoTrack === undefined) {
+        Reflect.deleteProperty(process.env, "ASSAY_NO_TRACK");
+      } else {
+        process.env.ASSAY_NO_TRACK = previousNoTrack;
+      }
+    }
   });
 
   it("finds records by id, id prefix, and path selector", async () => {

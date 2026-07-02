@@ -16,6 +16,8 @@ export interface AdrIndexOptions {
   readonly now?: Date;
   /** Skip external-governance deferral (e.g. trellis detected). */
   readonly force?: boolean;
+  /** Receive non-blocking governance warnings without letting core write to stderr. */
+  readonly onWarning?: (message: string) => void;
 }
 
 export interface CreateAdrInput {
@@ -221,16 +223,19 @@ export async function createAdr(
   await requireFrameworkManifest(root);
   await requireCapability(root, "adr");
 
-  // Governance deferral (ADR-0005): if an external governance system (trellis,
-  // superpowers, docs/adr/) is detected, defer ADR creation to it unless
-  // --force.
+  // Governance deferral (ADR-0005): if a blocking external governance system
+  // (trellis or .superpowers/) is detected, defer ADR creation unless --force.
+  // Common docs/adr/ directories only emit a warning.
   if (options.force !== true) {
     const governance = await detectExternalGovernance(root);
     if (governance.system !== "none") {
-      throw new FrameworkError(
-        `external governance detected (${governance.system} at ${governance.path}): ${governance.message}`,
-        { code: "GOVERNANCE_DEFERRED" },
-      );
+      const message = `external governance detected (${governance.system} at ${governance.path}): ${governance.message}`;
+      if (governance.action === "block") {
+        throw new FrameworkError(message, { code: "GOVERNANCE_DEFERRED" });
+      }
+      if (governance.action === "warn") {
+        options.onWarning?.(`Warning: ${message}`);
+      }
     }
   }
 

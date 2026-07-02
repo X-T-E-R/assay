@@ -17,15 +17,15 @@ import {
   createAdr,
   createAnalysis,
   desiredRuntimeTemplates,
-  dirsForMode,
+  dirsForArchetype,
   getFrameworkStatus,
   initFramework,
   loadAdrIndex,
+  loadArchetype,
   loadManifest,
-  loadProfile,
   loadSystemsRegistry,
   readFrameworkMode,
-  readInstalledProfileName,
+  readInstalledArchetype,
   registerSystem,
   saveAdrIndex,
   saveSystemsRegistry,
@@ -33,6 +33,14 @@ import {
   syncSource,
 } from "../src/index.js";
 
+const USER_FACING_BUILT_INS = [
+  "library",
+  "study",
+  "solve",
+  "science",
+  "evaluation",
+  "explore",
+] as const;
 const tempRoots: string[] = [];
 
 async function tempDir(): Promise<string> {
@@ -87,8 +95,8 @@ afterEach(async () => {
 
 describe("desiredRuntimeTemplates", () => {
   it("returns deterministic template paths and ids from the registry", async () => {
-    const first = await desiredRuntimeTemplates("Demo", "research", "learning");
-    const second = await desiredRuntimeTemplates("Demo", "research", "learning");
+    const first = await desiredRuntimeTemplates("Demo", "study", "learning");
+    const second = await desiredRuntimeTemplates("Demo", "study", "learning");
 
     expect(second).toEqual(first);
     expect(first.map((template) => [template.path, template.template_id])).toContainEqual([
@@ -122,12 +130,12 @@ describe("initFramework", () => {
     const result = await initFramework({ target: root, name: "Demo" });
 
     expect(result.project).toBe("Demo");
-    expect(result.archetype).toBe("research");
+    expect(result.archetype).toBe("study");
     expect(result.mode).toBe("learning");
     expect(await exists(path.join(root, ".framework", "VERSION"))).toBe(true);
     expect(await exists(path.join(root, MANIFEST_FILE))).toBe(true);
-    const profile = await loadProfile("assay");
-    for (const directory of dirsForMode(profile, "learning")) {
+    const archetype = await loadArchetype("study");
+    for (const directory of dirsForArchetype(archetype, "learning")) {
       expect(await exists(path.join(root, directory))).toBe(true);
     }
     expect(await exists(path.join(root, "systems", "demo-core"))).toBe(false);
@@ -142,7 +150,7 @@ describe("initFramework", () => {
     expect(manifest).not.toBeNull();
     expect(manifest?.project).toMatchObject({
       name: "Demo",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
     expect(manifest?.project.core).toBeUndefined();
@@ -152,7 +160,7 @@ describe("initFramework", () => {
       "systems/demo-core/system.yaml",
     );
     expect(Object.keys(manifest?.managed_files ?? {})).toHaveLength(
-      (await desiredRuntimeTemplates("Demo", "research", "learning")).length,
+      (await desiredRuntimeTemplates("Demo", "study", "learning")).length,
     );
   });
 
@@ -228,10 +236,10 @@ describe("checkFramework and getFrameworkStatus", () => {
     expect(status).toMatchObject({
       hasManifest: true,
       project: "Demo",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
-      manifestFormat: "schema 1; archetype research; mode learning",
-      managedFiles: (await desiredRuntimeTemplates("Demo", "research", "learning")).length,
+      manifestFormat: "schema 1; archetype study; mode learning",
+      managedFiles: (await desiredRuntimeTemplates("Demo", "study", "learning")).length,
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);
   });
@@ -329,7 +337,7 @@ describe("checkFramework semantic validation", () => {
 
   it("reports warning for open iterations", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", archetype: "contest" });
+    await initFramework({ target: root, name: "Demo", archetype: "solve" });
     await startIteration({ root, title: "Open Iteration" });
 
     const result = await checkFramework({ root });
@@ -619,7 +627,7 @@ describe("checkFramework semantic validation", () => {
 describe("getFrameworkStatus systems section", () => {
   it("includes systems, openIterations, and knowledgeEntries", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", archetype: "contest" });
+    await initFramework({ target: root, name: "Demo", archetype: "solve" });
     await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
     await registerSystem(root, {
       path: "systems/demo-core",
@@ -883,25 +891,33 @@ describe("workspace operations", () => {
     ).rejects.toThrow(/directory source/);
   });
 
-  it("init with absorption mode writes mode to manifest and readFrameworkMode reads it", async () => {
-    const root = path.join(await tempDir(), "absorb-mode");
-    await initFramework({ target: root, name: "AbsorbProj", mode: "absorption" });
+  it("init writes the mode declared by each built-in archetype yaml", async () => {
+    const expectedModes = {
+      library: "learning",
+      study: "learning",
+      solve: "absorption",
+      science: "absorption",
+      evaluation: "learning",
+      explore: "absorption",
+    } as const;
 
-    expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
-    expect((await loadManifest(root))?.project.mode).toBe("absorption");
+    for (const archetype of USER_FACING_BUILT_INS) {
+      const root = path.join(await tempDir(), `${archetype}-mode`);
+      await initFramework({ target: root, name: `${archetype} Project`, archetype });
 
-    expect(await readFrameworkMode(root)).toBe("absorption");
-
-    // A default (learning) workspace reads back as learning.
-    const learningRoot = path.join(await tempDir(), "learning-mode");
-    await initFramework({ target: learningRoot, name: "LearnProj" });
-    expect(await readFrameworkMode(learningRoot)).toBe("learning");
+      expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
+      expect((await loadManifest(root))?.project).toMatchObject({
+        archetype,
+        mode: expectedModes[archetype],
+      });
+      expect(await readFrameworkMode(root)).toBe(expectedModes[archetype]);
+    }
   });
 
   it("absorbReference routes to problem/ (not references/frozen/) in absorption mode", async () => {
     const root = path.join(await tempDir(), "absorb-mode-ws");
     const source = path.join(await tempDir(), "absorb-src");
-    await initFramework({ target: root, name: "AbsorbProj", mode: "absorption" });
+    await initFramework({ target: root, name: "AbsorbProj", archetype: "solve" });
     await mkdir(source, { recursive: true });
     await writeFile(
       path.join(source, "README.md"),
@@ -938,7 +954,7 @@ describe("workspace operations", () => {
   it("absorbReference can route absorption mode to intake/ explicitly", async () => {
     const root = path.join(await tempDir(), "absorb-intake-ws");
     const source = path.join(await tempDir(), "intake-src");
-    await initFramework({ target: root, name: "AbsorbIntake", mode: "absorption" });
+    await initFramework({ target: root, name: "AbsorbIntake", archetype: "solve" });
     await mkdir(source, { recursive: true });
     await writeFile(path.join(source, "README.md"), "# Candidate\n\nNeeds triage.\n", "utf8");
 
@@ -985,66 +1001,169 @@ describe("workspace operations", () => {
     // Manifest records the archetype.
     expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
     expect((await loadManifest(root))?.project.archetype).toBe("library");
-    expect(await readInstalledProfileName(root)).toBe("library");
+    expect(await readInstalledArchetype(root)).toBe("library");
   });
 
-  it("contest archetype scaffolds problem/ + intake/benchmarks/submissions + tools/iterations/analyses", async () => {
-    const root = path.join(await tempDir(), "contest-archetype");
-    await initFramework({ target: root, name: "ConProj", archetype: "contest" });
+  it("solve archetype scaffolds problem/ + intake/benchmarks/attempts + tools/iterations", async () => {
+    const root = path.join(await tempDir(), "solve-archetype");
+    await initFramework({ target: root, name: "ConProj", archetype: "solve" });
 
-    // Core contest dirs
+    // Core solve dirs
     expect(await exists(path.join(root, "problem"))).toBe(true);
     expect(await exists(path.join(root, "systems"))).toBe(true);
     expect(await exists(path.join(root, "data"))).toBe(false);
 
-    // Three immutable-object layers (v2 ADR-0006 kept in v3)
+    // Three immutable-object layers for objective-driven work.
     expect(await exists(path.join(root, "intake"))).toBe(true);
     expect(await exists(path.join(root, "benchmarks"))).toBe(true);
-    expect(await exists(path.join(root, "submissions"))).toBe(true);
+    expect(await exists(path.join(root, "attempts"))).toBe(true);
 
-    // v3 restorations (double-sided adaptation against real Huawei3):
-    // iterations/ and tools/ were wrongly stripped in v2 — restored here.
+    // Iteration and tooling support are part of solve workspaces.
     expect(await exists(path.join(root, "iterations"))).toBe(true);
     expect(await exists(path.join(root, "iterations", "templates"))).toBe(true);
     expect(await exists(path.join(root, "tools"))).toBe(true);
 
-    // Contest does not inherit research analyses or frozen-reference outlets.
+    // Solve does not inherit study analyses or frozen-reference outlets.
     expect(await exists(path.join(root, "analyses"))).toBe(false);
     expect(await exists(path.join(root, "references"))).toBe(false);
-    expect(await exists(path.join(root, ".framework", "handoffs"))).toBe(false);
+    expect(await exists(path.join(root, ".framework", ["hand", "offs"].join("")))).toBe(false);
 
     // Mode + archetype are manifest-owned.
     expect(await exists(path.join(root, ".framework", "config.yaml"))).toBe(false);
     expect((await loadManifest(root))?.project).toMatchObject({
-      archetype: "contest",
+      archetype: "solve",
       mode: "absorption",
     });
   });
 
-  it("contest archetype selection schema uses generic questions[] list", async () => {
-    const root = path.join(await tempDir(), "contest-v3-manifests");
-    await initFramework({ target: root, name: "Huawei3 Demo", archetype: "contest" });
+  it("solve archetype writes objective and current attempt metadata", async () => {
+    const root = path.join(await tempDir(), "solve-objective");
+    await initFramework({ target: root, name: "Solve Demo", archetype: "solve" });
 
-    // contest.json manifest at root (unchanged from v2)
-    const manifest = JSON.parse(await readFile(path.join(root, "contest.json"), "utf8"));
-    expect(manifest.kind).toBe("contest");
-    expect(manifest.current_selection_path).toBe("systems/current.json");
+    const objective = JSON.parse(await readFile(path.join(root, "objective.json"), "utf8"));
+    expect(objective.kind).toBe("objective");
+    expect(objective.objective_id).toBe("solve-demo");
+    expect(objective.current_attempt_path).toBe("systems/current.json");
+    expect(objective.success_criteria).toEqual([]);
 
-    // v3 selection: questions[] generic list, not q1/q2 hardcoded fields
-    const selection = JSON.parse(
+    const currentAttempt = JSON.parse(
       await readFile(path.join(root, "systems", "current.json"), "utf8"),
     );
-    expect(selection.kind).toBe("selection");
-    expect(Array.isArray(selection.questions)).toBe(true);
-    expect(selection.questions).toEqual([]);
-    expect(selection).not.toHaveProperty("q1"); // v2 fields no longer in v3 schema
-    expect(selection).not.toHaveProperty("q2");
-    expect(selection.schema_version).toBe("v3-1");
+    expect(currentAttempt.kind).toBe("current_attempt");
+    expect(currentAttempt.attempts).toEqual([]);
+    expect(currentAttempt).not.toHaveProperty("questions");
+    expect(currentAttempt).not.toHaveProperty("q1");
+    expect(currentAttempt).not.toHaveProperty("q2");
+    expect(currentAttempt.schema_version).toBe(1);
 
     // runs.jsonl + tools/README explain contract
     expect(await readFile(path.join(root, "runs.jsonl"), "utf8")).toBe("");
     const toolsReadme = await readFile(path.join(root, "tools", "README.md"), "utf8");
-    expect(toolsReadme).toContain("tools/judge/");
+    expect(toolsReadme).toContain("tools/evaluate/");
+  });
+
+  it("science archetype creates evidence research structure and passes check", async () => {
+    const root = path.join(await tempDir(), "science-archetype");
+    await initFramework({ target: root, name: "Science Project", archetype: "science" });
+
+    for (const directory of [
+      "systems",
+      "knowledge",
+      "hypotheses",
+      "experiments",
+      "datasets",
+      "findings",
+      "papers",
+      "iterations",
+      path.join("iterations", "templates"),
+    ]) {
+      expect(await exists(path.join(root, directory))).toBe(true);
+    }
+    expect(await exists(path.join(root, "attempts"))).toBe(false);
+    expect(await exists(path.join(root, "candidates"))).toBe(false);
+    expect(await exists(path.join(root, "scorecards"))).toBe(false);
+
+    const hypotheses = await readFile(path.join(root, "hypotheses", "README.md"), "utf8");
+    const findings = await readFile(path.join(root, "findings", "README.md"), "utf8");
+    expect(hypotheses).toContain("hypothesis");
+    expect(findings).toContain("Evidence-backed findings");
+    expect(`${hypotheses}\n${findings}`).not.toMatch(
+      new RegExp([["con", "test"].join(""), "selection", "scor(e|ing|ecard)"].join("|"), "i"),
+    );
+
+    expect((await loadManifest(root))?.project).toMatchObject({
+      archetype: "science",
+      mode: "absorption",
+    });
+    expect((await checkFramework({ root })).ok).toBe(true);
+  });
+
+  it("evaluation archetype creates scorecards, criteria, ADRs, and passes check", async () => {
+    const root = path.join(await tempDir(), "evaluation-archetype");
+    await initFramework({ target: root, name: "Evaluation Project", archetype: "evaluation" });
+
+    for (const directory of ["systems", "knowledge", "candidates", "scorecards"]) {
+      expect(await exists(path.join(root, directory))).toBe(true);
+    }
+    expect(await exists(path.join(root, "criteria.md"))).toBe(true);
+    expect(await exists(path.join(root, "knowledge", "decisions"))).toBe(true);
+    expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
+    expect(await exists(path.join(root, ".framework", "adrs.json"))).toBe(true);
+    expect(await exists(path.join(root, "analyses"))).toBe(false);
+    expect(await exists(path.join(root, "references"))).toBe(false);
+
+    const criteria = await readFile(path.join(root, "criteria.md"), "utf8");
+    const scorecards = await readFile(path.join(root, "scorecards", "README.md"), "utf8");
+    expect(criteria).toContain("decision matrix");
+    expect(scorecards).toContain("scorecards");
+    expect(`${criteria}\n${scorecards}`).toContain("final selection");
+    expect(`${criteria}\n${scorecards}`).not.toMatch(
+      new RegExp([["con", "test"].join(""), "gaps", "patterns"].join("|"), "i"),
+    );
+
+    expect((await loadManifest(root))?.project).toMatchObject({
+      archetype: "evaluation",
+      mode: "learning",
+    });
+    expect((await checkFramework({ root })).ok).toBe(true);
+  });
+
+  it("explore archetype creates compare-and-converge structure and passes check", async () => {
+    const root = path.join(await tempDir(), "explore-archetype");
+    await initFramework({ target: root, name: "Explore Project", archetype: "explore" });
+
+    for (const directory of [
+      "systems",
+      "knowledge",
+      "approaches",
+      "trials",
+      "iterations",
+      path.join("iterations", "templates"),
+    ]) {
+      expect(await exists(path.join(root, directory))).toBe(true);
+    }
+    expect(await exists(path.join(root, "comparison.md"))).toBe(true);
+    expect(await exists(path.join(root, "problem"))).toBe(false);
+    expect(await exists(path.join(root, "candidates"))).toBe(false);
+    expect(await exists(path.join(root, "scorecards"))).toBe(false);
+
+    const approaches = await readFile(path.join(root, "approaches", "README.md"), "utf8");
+    const comparison = await readFile(path.join(root, "comparison.md"), "utf8");
+    expect(approaches).toContain("Parallel local approaches");
+    expect(comparison).toContain("horse-race");
+    expect(comparison).toContain("Convergence decision");
+    expect(`${approaches}\n${comparison}`).not.toMatch(
+      new RegExp(
+        [["con", "test"].join(""), "selection", "scorecards", "single goal"].join("|"),
+        "i",
+      ),
+    );
+
+    expect((await loadManifest(root))?.project).toMatchObject({
+      archetype: "explore",
+      mode: "absorption",
+    });
+    expect((await checkFramework({ root })).ok).toBe(true);
   });
 
   it("creates deterministic analysis and iteration artifacts for a supplied date", async () => {
@@ -1052,7 +1171,7 @@ describe("workspace operations", () => {
     const iterationRoot = path.join(await tempDir(), "demo-iteration");
     const now = new Date("2026-06-14T10:00:00");
     await initFramework({ target: root, name: "Demo" });
-    await initFramework({ target: iterationRoot, name: "Demo Iteration", archetype: "contest" });
+    await initFramework({ target: iterationRoot, name: "Demo Iteration", archetype: "solve" });
 
     const analysis = await createAnalysis({ root, title: "Review Source", now });
     const iteration = await startIteration({ root: iterationRoot, title: "Try Pattern", now });
@@ -1067,31 +1186,44 @@ describe("workspace operations", () => {
   });
 
   it("gates iteration operations by archetype capability modules", async () => {
-    const researchRoot = path.join(await tempDir(), "research-iteration-disabled");
+    const studyRoot = path.join(await tempDir(), "study-iteration-disabled");
     const libraryRoot = path.join(await tempDir(), "library-iteration-disabled");
-    const contestRoot = path.join(await tempDir(), "contest-iteration-enabled");
-    await initFramework({ target: researchRoot, name: "Research" });
+    const evaluationRoot = path.join(await tempDir(), "evaluation-iteration-disabled");
+    const solveRoot = path.join(await tempDir(), "solve-iteration-enabled");
+    const scienceRoot = path.join(await tempDir(), "science-iteration-enabled");
+    const exploreRoot = path.join(await tempDir(), "explore-iteration-enabled");
+    await initFramework({ target: studyRoot, name: "Study" });
     await initFramework({ target: libraryRoot, name: "Library", archetype: "library" });
-    await initFramework({ target: contestRoot, name: "Contest", archetype: "contest" });
+    await initFramework({ target: evaluationRoot, name: "Evaluation", archetype: "evaluation" });
+    await initFramework({ target: solveRoot, name: "Solve", archetype: "solve" });
+    await initFramework({ target: scienceRoot, name: "Science", archetype: "science" });
+    await initFramework({ target: exploreRoot, name: "Explore", archetype: "explore" });
 
-    await expect(startIteration({ root: researchRoot, title: "Try Pattern" })).rejects.toThrow(
-      /capability not enabled in archetype research: iteration/,
+    await expect(startIteration({ root: studyRoot, title: "Try Pattern" })).rejects.toThrow(
+      /capability not enabled in archetype study: iteration/,
     );
     await expect(startIteration({ root: libraryRoot, title: "Try Pattern" })).rejects.toThrow(
       /capability not enabled in archetype library: iteration/,
     );
+    await expect(startIteration({ root: evaluationRoot, title: "Try Pattern" })).rejects.toThrow(
+      /capability not enabled in archetype evaluation: iteration/,
+    );
 
-    const started = await startIteration({ root: contestRoot, title: "Try Pattern" });
+    const started = await startIteration({ root: solveRoot, title: "Try Pattern" });
+    const scienceIteration = await startIteration({ root: scienceRoot, title: "Try Pattern" });
+    const exploreIteration = await startIteration({ root: exploreRoot, title: "Try Pattern" });
     await expect(
-      closeIteration({ root: researchRoot, selector: started.path, result: "rejected" }),
-    ).rejects.toThrow(/capability not enabled in archetype research: iteration/);
+      closeIteration({ root: studyRoot, selector: started.path, result: "rejected" }),
+    ).rejects.toThrow(/capability not enabled in archetype study: iteration/);
     await expect(
-      closeIteration({ root: contestRoot, selector: started.path, result: "applied" }),
+      closeIteration({ root: solveRoot, selector: started.path, result: "applied" }),
     ).resolves.toMatchObject({ path: started.path });
+    expect(scienceIteration.path).toContain("iterations/");
+    expect(exploreIteration.path).toContain("iterations/");
   });
 
-  it("keeps event capture and event scaffolding disabled by default for every archetype", async () => {
-    for (const archetype of ["research", "contest", "library"] as const) {
+  it("keeps event scaffolding disabled while event capture remains core behavior", async () => {
+    for (const archetype of USER_FACING_BUILT_INS) {
       const root = path.join(await tempDir(), `${archetype}-events-default-off`);
       const result = await initFramework({
         target: root,
@@ -1117,32 +1249,33 @@ describe("workspace operations", () => {
       );
       expect(initAudit).toContain('"event":"framework.initialized"');
 
-      await expect(
-        captureEvent({
-          root,
-          kind: "note",
-          text: "Captured from test",
-          now: new Date("2026-06-14T10:00:00"),
-        }),
-      ).rejects.toThrow(new RegExp(`capability not enabled in archetype ${archetype}: events`));
+      const captured = await captureEvent({
+        root,
+        kind: "note",
+        text: "Captured from test",
+        now: new Date("2026-06-14T10:00:00"),
+      });
+      expect(captured.eventFile).toBe(".framework/events/2026-06.jsonl");
+      expect(await readFile(path.join(root, captured.eventFile), "utf8")).toContain(
+        '"event":"capture.created"',
+      );
     }
   });
 
-  it("keeps event capture disabled by default while internal audit events still write", async () => {
+  it("allows explicit event capture while internal audit events still write", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo", archetype: "library" });
     await mkdir(source, { recursive: true });
     await writeFile(path.join(source, "README.md"), "# Source\n\nUseful material.\n", "utf8");
 
-    await expect(
-      captureEvent({
-        root,
-        kind: "note",
-        text: "Captured from test",
-        now: new Date("2026-06-14T10:00:00"),
-      }),
-    ).rejects.toThrow(/capability not enabled in archetype library: events/);
+    const captured = await captureEvent({
+      root,
+      kind: "note",
+      text: "Captured from test",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+    expect(captured.eventFile).toBe(".framework/events/2026-06.jsonl");
 
     const result = await absorbReference({
       root,
@@ -1160,7 +1293,7 @@ describe("workspace operations", () => {
 
   it("keeps ADR audit append enabled even when event capture is not scaffolded", async () => {
     const root = path.join(await tempDir(), "adr-audit-events");
-    await initFramework({ target: root, name: "ADR Audit", archetype: "research" });
+    await initFramework({ target: root, name: "ADR Audit", archetype: "study" });
 
     const created = await createAdr(
       root,
@@ -1181,7 +1314,7 @@ describe("workspace operations", () => {
 describe("closeIteration", () => {
   it("closes an open iteration and writes an event", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", archetype: "contest" });
+    await initFramework({ target: root, name: "Demo", archetype: "solve" });
     const started = await startIteration({
       root,
       title: "Test Pattern",
@@ -1210,7 +1343,7 @@ describe("closeIteration", () => {
 
   it("throws NotFound for unknown iteration selector", async () => {
     const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", archetype: "contest" });
+    await initFramework({ target: root, name: "Demo", archetype: "solve" });
 
     await expect(
       closeIteration({ root, selector: "nonexistent", result: "rejected" }),

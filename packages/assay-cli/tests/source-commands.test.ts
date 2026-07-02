@@ -117,6 +117,31 @@ describe("assay source CLI", () => {
     expect(log.stdout).toContain("Source log: demo-source");
   });
 
+  it("rejects removed source capture modes", async () => {
+    const root = await initWorkspace("SourceCaptureCli");
+    const source = path.join(await tempDir(), "demo-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Demo\n\nv1\n", "utf8");
+
+    const result = await runCli([
+      "source",
+      "add",
+      source,
+      "Demo Source",
+      "--root",
+      root,
+      "--capture",
+      "metadata",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Allowed choices are");
+    expect(result.stderr).toContain("checkout");
+    expect(result.stderr).toContain("archive");
+    expect(result.stderr).not.toContain("thin");
+  });
+
   it(
     "syncs a local Git source after the source repository receives a new commit",
     async () => {

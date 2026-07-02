@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Command, Option } from "@commander-js/extra-typings";
 import {
   type AdrStatus,
@@ -36,6 +37,7 @@ import {
   getSourceStatus,
   initFramework,
   listAdrs,
+  listAvailableArchetypes,
   listProjectRecords,
   listSystems,
   loadManifest,
@@ -110,23 +112,9 @@ const PROJECT_STATUSES: readonly AssayProjectRegistryStatus[] = [
 ];
 
 const ADR_STATUSES: readonly AdrStatus[] = ["proposed", "accepted", "superseded", "deprecated"];
-type ProjectArchetype = "research" | "contest" | "library";
-type ProjectMode = "learning" | "absorption";
-
-const PROJECT_ARCHETYPES: readonly ProjectArchetype[] = ["research", "contest", "library"];
-const PROJECT_MODES: readonly ProjectMode[] = ["learning", "absorption"];
 const ABSORPTION_OUTLETS: readonly AbsorptionOutlet[] = ["problem", "intake"];
 
-type LegacyProfile = "assay" | "contest" | "library";
 type AbsorptionOutlet = "problem" | "intake";
-
-function archetypeFromLegacyProfile(profile: LegacyProfile): ProjectArchetype {
-  return profile === "assay" ? "research" : profile;
-}
-
-function profileForCoreCompatibility(archetype: ProjectArchetype): ProjectArchetype {
-  return archetype;
-}
 
 function defaultOutput(): CliOutput {
   return {
@@ -159,6 +147,14 @@ async function discoveredRoot(root: string): Promise<string> {
   return discoverFrameworkRoot(root);
 }
 
+async function archetypeListRoot(root: string): Promise<string> {
+  try {
+    return await discoverFrameworkRoot(root);
+  } catch {
+    return path.resolve(root);
+  }
+}
+
 function writeJson(output: { readonly stdout: CliOutput["stdout"] }, value: unknown): void {
   output.stdout(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -183,26 +179,9 @@ function parseAdrStatusFilter(status?: string): AdrStatus | undefined {
   throw new Error(`--status must be one of: ${ADR_STATUSES.join(", ")}`);
 }
 
-function selectedArchetype(options: {
-  readonly archetype?: string;
-  readonly profile?: string;
-}): { readonly archetype: ProjectArchetype; readonly usedLegacyProfile?: LegacyProfile } {
-  if (options.profile) {
-    const profile = options.profile as LegacyProfile;
-    return {
-      archetype: archetypeFromLegacyProfile(profile),
-      usedLegacyProfile: profile,
-    };
-  }
-  return {
-    archetype: (options.archetype ?? "research") as ProjectArchetype,
-  };
-}
-
 async function writeArchetypeCommandResult(
   output: Pick<CliOutput, "stdout" | "stderr">,
   options: { readonly root: string; readonly json?: boolean },
-  commandName: "archetype" | "profile",
 ): Promise<void> {
   const root = await discoveredRoot(options.root);
   const manifest = await loadManifest(root);
@@ -215,19 +194,12 @@ async function writeArchetypeCommandResult(
     mode: manifest.project.mode,
   };
   if (options.json) {
-    writeJson(output, commandName === "profile" ? { ...payload, deprecated_alias: true } : payload);
+    writeJson(output, payload);
     return;
   }
   writeLine(output, "stdout", `Project: ${payload.project}`);
   writeLine(output, "stdout", `Archetype: ${payload.archetype}`);
   writeLine(output, "stdout", `Mode: ${payload.mode}`);
-  if (commandName === "profile") {
-    writeLine(
-      output,
-      "stdout",
-      "Note: `profile` is a deprecated compatibility alias; use manifest project.archetype/project.mode and `assay init --archetype ...`.",
-    );
-  }
 }
 
 export function createProgram(options: CreateProgramOptions = {}): Command {
@@ -249,45 +221,27 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--git", "initialize a git repository in the framework root")
     .option("--force", "overwrite existing files and track them as managed")
     .option("--create-new", "write .new copies when files already exist")
+    .option("--no-track", "do not update the Assay project registry")
+    .option("--no-agents", "do not write the Assay managed block to root AGENTS.md")
     .addOption(
-      new Option(
-        "--mode <mode>",
-        "project mode: learning (external refs) or absorption (source IS the project)",
-      ).choices([...PROJECT_MODES]),
-    )
-    .addOption(
-      new Option("--archetype <archetype>", "project archetype: research, contest, library")
-        .choices([...PROJECT_ARCHETYPES])
-        .conflicts("profile"),
-    )
-    .addOption(
-      new Option("--profile <name>", "deprecated alias for --archetype (assay maps to research)")
-        .choices(["assay", "library", "contest"])
-        .conflicts("archetype"),
+      new Option("--archetype <archetype>", "project archetype name (run `assay archetype list`)"),
     )
     .action(async (targetDir, commandOptions) => {
-      const { archetype, usedLegacyProfile } = selectedArchetype(commandOptions);
-      const coreCompatibilityProfile = profileForCoreCompatibility(archetype);
+      const archetype = commandOptions.archetype ?? "study";
       const initOptions = {
         target: targetDir,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
         git: commandOptions.git ?? false,
         force: commandOptions.force ?? false,
         createNew: commandOptions.createNew ?? false,
-        ...(commandOptions.mode === undefined ? {} : { mode: commandOptions.mode as ProjectMode }),
+        agents: commandOptions.agents !== false,
         archetype,
-        profile: coreCompatibilityProfile,
       };
       const result = await initFramework(initOptions);
-      await recordProjectLifecycleBestEffort(result.root, "init");
+      await recordProjectLifecycleBestEffort(result.root, "init", {
+        noTrack: commandOptions.track === false,
+      });
       writeLine(output, "stdout", formatInitResult(result));
-      if (usedLegacyProfile) {
-        writeLine(
-          output,
-          "stdout",
-          `Deprecated: --profile ${usedLegacyProfile} maps to --archetype ${archetype}.`,
-        );
-      }
     });
 
   program
@@ -301,6 +255,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "dryRun",
       ),
     )
+    .option("--no-track", "do not update the Assay project registry")
+    .option("--no-agents", "do not write the Assay managed block to root AGENTS.md")
     .option("--analyze", "after apply, generate an adoption inventory and open an analysis for it")
     .action(async (commandOptions) => {
       const result = await adoptExistingProject({
@@ -308,6 +264,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
         dryRun: commandOptions.dryRun ?? false,
         apply: commandOptions.apply ?? false,
+        agents: commandOptions.agents !== false,
+        noTrack: commandOptions.track === false,
         analyze: commandOptions.analyze ?? false,
       });
       writeLine(output, "stdout", formatAdoptionResult(result));
@@ -351,6 +309,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Update managed framework files using manifest hashes")
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .option("--dry-run", "plan update without applying writes")
+    .option("--agents", "install or refresh the Assay managed block in root AGENTS.md")
+    .option("--no-track", "do not update the Assay project registry")
     .addOption(
       new Option("--force", "overwrite modified/conflicting files").conflicts([
         "skipAll",
@@ -377,8 +337,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         root,
         dryRun: commandOptions.dryRun ?? false,
         action,
+        ...(commandOptions.agents === true ? { agents: true } : {}),
       });
-      await recordProjectLifecycleBestEffort(root, "update");
+      await recordProjectLifecycleBestEffort(root, "update", {
+        noTrack: commandOptions.track === false,
+      });
       writeLine(output, "stdout", formatUpdateResult(result));
     });
 
@@ -506,22 +469,36 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", formatMigrationResult(result));
     });
 
-  program
+  const archetypeCommand = program
     .command("archetype")
     .description("Show the current manifest archetype and mode")
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
-      await writeArchetypeCommandResult(output, commandOptions, "archetype");
+      await writeArchetypeCommandResult(output, commandOptions);
     });
 
-  program
-    .command("profile")
-    .description("Deprecated compatibility alias for `archetype`")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+  archetypeCommand
+    .command("list")
+    .description("List built-in and custom archetypes")
+    .option("--root <target-dir>", "project root for local archetypes", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
-      await writeArchetypeCommandResult(output, commandOptions, "profile");
+      const parentOptions = archetypeCommand.opts() as { json?: boolean; root?: string };
+      const rootOption =
+        commandOptions.root === process.cwd()
+          ? (parentOptions.root ?? commandOptions.root)
+          : commandOptions.root;
+      const root = await archetypeListRoot(rootOption);
+      const archetypes = await listAvailableArchetypes({ root });
+      if (commandOptions.json || parentOptions.json) {
+        writeJson(output, archetypes);
+        return;
+      }
+      writeLine(output, "stdout", "Available archetypes:");
+      for (const archetype of archetypes) {
+        writeLine(output, "stdout", `- ${archetype.name} (${archetype.source}): ${archetype.path}`);
+      }
     });
 
   const reference = program.command("reference").description("Reference operations");
@@ -547,7 +524,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .option("--branch <branch>", "branch to check out for Git-backed sources")
     .addOption(
-      new Option("--capture <mode>", "capture mode")
+      new Option("--capture <mode>", `capture mode (${SOURCE_CAPTURE_MODES.join("|")})`)
         .choices([...SOURCE_CAPTURE_MODES])
         .default("checkout"),
     )
@@ -821,7 +798,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--from-iteration <path>", "originating iteration path")
     .option(
       "--force",
-      "create even if an external governance system (trellis, superpowers, docs/adr/) is detected",
+      "create even if a blocking external governance system (trellis or .superpowers/) is detected",
     )
     .option("--root <target-dir>", "target framework directory", process.cwd())
     .action(async (title, commandOptions) => {
@@ -837,7 +814,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
             ? {}
             : { relatedIteration: commandOptions.fromIteration }),
         },
-        { force: commandOptions.force ?? false },
+        {
+          force: commandOptions.force ?? false,
+          onWarning: (message) => writeLine(output, "stderr", message),
+        },
       );
       writeLine(output, "stdout", `Created ADR: ${result.adr.id}`);
       writeLine(output, "stdout", `Path: ${result.adr.path}`);

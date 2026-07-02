@@ -61,9 +61,17 @@ beforeEach(async () => {
   registryRoot = await tempDir();
 });
 
-type Archetype = "research" | "contest" | "library";
+type Archetype = "study" | "solve" | "library" | "science" | "evaluation" | "explore";
+const USER_FACING_BUILT_INS: readonly Archetype[] = [
+  "library",
+  "study",
+  "solve",
+  "science",
+  "evaluation",
+  "explore",
+];
 
-async function initWorkspace(name: string, archetype: Archetype = "research"): Promise<string> {
+async function initWorkspace(name: string, archetype: Archetype = "study"): Promise<string> {
   const root = path.join(await tempDir(), name);
   await runCli(["init", root, "--name", name, "--archetype", archetype]);
   return root;
@@ -101,7 +109,7 @@ async function fillAnalysisSections(
 
 describe("assay iteration close CLI", () => {
   it("closes an iteration with --result", async () => {
-    const root = await initWorkspace("IterClose", "contest");
+    const root = await initWorkspace("IterClose", "solve");
     const start = await runCli(["iteration", "start", "Test Pattern", "--root", root]);
     expect(start.exitCode).toBe(0);
     // Extract the created iteration path from stdout
@@ -127,7 +135,7 @@ describe("assay iteration close CLI", () => {
   });
 
   it("rejects invalid --result values", async () => {
-    const root = await initWorkspace("IterCloseInvalid", "contest");
+    const root = await initWorkspace("IterCloseInvalid", "solve");
     await runCli(["iteration", "start", "X", "--root", root]);
 
     const close = await runCli(["iteration", "close", "x", "--root", root, "--result", "bogus"]);
@@ -136,30 +144,56 @@ describe("assay iteration close CLI", () => {
   });
 
   it("starts iterations only when the archetype enables the iteration capability", async () => {
-    const researchRoot = await initWorkspace("IterResearch");
+    const studyRoot = await initWorkspace("IterStudy");
     const libraryRoot = await initWorkspace("IterLibrary", "library");
-    const contestRoot = await initWorkspace("IterContest", "contest");
+    const evaluationRoot = await initWorkspace("IterEvaluation", "evaluation");
+    const solveRoot = await initWorkspace("IterSolve", "solve");
+    const scienceRoot = await initWorkspace("IterScience", "science");
+    const exploreRoot = await initWorkspace("IterExplore", "explore");
 
-    const research = await runCli(["iteration", "start", "Try Pattern", "--root", researchRoot]);
-    expect(research.exitCode).toBe(1);
-    expect(research.stdout).toBe("");
-    expect(research.stderr).toContain("capability not enabled in archetype research: iteration");
+    const study = await runCli(["iteration", "start", "Try Pattern", "--root", studyRoot]);
+    expect(study.exitCode).toBe(1);
+    expect(study.stdout).toBe("");
+    expect(study.stderr).toContain("capability not enabled in archetype study: iteration");
 
     const library = await runCli(["iteration", "start", "Try Pattern", "--root", libraryRoot]);
     expect(library.exitCode).toBe(1);
     expect(library.stdout).toBe("");
     expect(library.stderr).toContain("capability not enabled in archetype library: iteration");
 
-    const contest = await runCli(["iteration", "start", "Try Pattern", "--root", contestRoot]);
-    expect(contest.exitCode).toBe(0);
-    expect(contest.stderr).toBe("");
-    expect(contest.stdout).toContain("Started iteration: iterations/");
+    const evaluation = await runCli([
+      "iteration",
+      "start",
+      "Try Pattern",
+      "--root",
+      evaluationRoot,
+    ]);
+    expect(evaluation.exitCode).toBe(1);
+    expect(evaluation.stdout).toBe("");
+    expect(evaluation.stderr).toContain(
+      "capability not enabled in archetype evaluation: iteration",
+    );
+
+    const solve = await runCli(["iteration", "start", "Try Pattern", "--root", solveRoot]);
+    expect(solve.exitCode).toBe(0);
+    expect(solve.stderr).toBe("");
+    expect(solve.stdout).toContain("Started iteration: iterations/");
+
+    const science = await runCli(["iteration", "start", "Try Pattern", "--root", scienceRoot]);
+    expect(science.exitCode).toBe(0);
+    expect(science.stderr).toBe("");
+    expect(science.stdout).toContain("Started iteration: iterations/");
+
+    const explore = await runCli(["iteration", "start", "Try Pattern", "--root", exploreRoot]);
+    expect(explore.exitCode).toBe(0);
+    expect(explore.stderr).toBe("");
+    expect(explore.stdout).toContain("Started iteration: iterations/");
   });
 });
 
 describe("assay event capture CLI", () => {
-  it("rejects event capture by default for every archetype", async () => {
-    for (const archetype of ["research", "contest", "library"] as const) {
+  it("captures events for every archetype without scaffolding event templates", async () => {
+    for (const archetype of USER_FACING_BUILT_INS) {
       const root = await initWorkspace(`Event${archetype}`, archetype);
 
       const result = await runCli([
@@ -173,9 +207,9 @@ describe("assay event capture CLI", () => {
         root,
       ]);
 
-      expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain(`capability not enabled in archetype ${archetype}: events`);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Captured event: .framework/events/");
+      expect(result.stderr).toBe("");
       expect(await exists(path.join(root, ".framework", "events", ".gitkeep"))).toBe(false);
     }
   });
@@ -401,16 +435,16 @@ describe("assay absorb CLI", () => {
   });
 
   it("routes absorption mode sources to the explicit intake outlet", async () => {
-    const root = await initWorkspace("AbsorbContest", "contest");
-    const source = path.join(root, "..", "contest-source");
+    const root = await initWorkspace("AbsorbSolve", "solve");
+    const source = path.join(root, "..", "solve-source");
     await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Contest Candidate\n", "utf8");
+    await writeFile(path.join(source, "README.md"), "# Solve Candidate\n", "utf8");
 
     const res = await runCli([
       "absorb",
       source,
       "--name",
-      "Contest Candidate",
+      "Solve Candidate",
       "--as",
       "intake",
       "--root",
@@ -418,9 +452,9 @@ describe("assay absorb CLI", () => {
     ]);
 
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toContain("Absorbed source: intake/contest-candidate");
-    expect(await exists(path.join(root, "intake", "contest-candidate", "source.yaml"))).toBe(true);
-    expect(await exists(path.join(root, "problem", "contest-candidate"))).toBe(false);
+    expect(res.stdout).toContain("Absorbed source: intake/solve-candidate");
+    expect(await exists(path.join(root, "intake", "solve-candidate", "source.yaml"))).toBe(true);
+    expect(await exists(path.join(root, "problem", "solve-candidate"))).toBe(false);
     expect(await exists(path.join(root, "references", "frozen"))).toBe(false);
   });
 });

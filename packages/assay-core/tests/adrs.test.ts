@@ -16,6 +16,7 @@ import {
 } from "../src/index.js";
 
 const tempRoots: string[] = [];
+type TestArchetype = "study" | "solve" | "library" | "science" | "evaluation" | "explore";
 
 async function tempDir(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "assay-adrs-"));
@@ -35,10 +36,7 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-async function initWorkspace(
-  name: string,
-  archetype: "research" | "contest" | "library" = "research",
-): Promise<string> {
+async function initWorkspace(name: string, archetype: TestArchetype = "study"): Promise<string> {
   const root = path.join(await tempDir(), name);
   await initFramework({ target: root, name, archetype });
   return root;
@@ -96,6 +94,17 @@ describe("ADR index", () => {
     );
     await expect(listAdrs(root)).rejects.toThrow(
       /capability not enabled in archetype library: adr/,
+    );
+  });
+
+  it("allows ADR creation in the evaluation archetype", async () => {
+    const root = await initWorkspace("AdrEvaluation", "evaluation");
+
+    const result = await createAdr(root, { title: "Select Evaluation Winner" });
+
+    expect(result.adr.id).toBe("ADR-0001-select-evaluation-winner");
+    expect(await exists(path.join(root, "knowledge", "decisions", `${result.adr.id}.md`))).toBe(
+      true,
     );
   });
 
@@ -179,18 +188,41 @@ describe("ADR index", () => {
     expect(forced.adr.status).toBe("proposed");
   });
 
-  it.each([".superpowers", "superpowers"])(
-    "defers ADR creation when %s governance is detected",
-    async (marker) => {
-      const root = await initWorkspace(`AdrDefer${marker.replace(".", "")}`);
-      await mkdir(path.join(root, marker), { recursive: true });
+  it("defers ADR creation when .superpowers governance is detected", async () => {
+    const root = await initWorkspace("AdrDeferSuperpowers");
+    await mkdir(path.join(root, ".superpowers"), { recursive: true });
 
-      await expect(createAdr(root, { title: "Should Defer" })).rejects.toThrow(
-        /external governance detected.*superpowers.*Use --force/,
-      );
+    await expect(createAdr(root, { title: "Should Defer" })).rejects.toThrow(
+      /external governance detected.*superpowers.*Use --force/,
+    );
 
-      const forced = await createAdr(root, { title: "Forced" }, { force: true });
-      expect(forced.adr.status).toBe("proposed");
-    },
-  );
+    const forced = await createAdr(root, { title: "Forced" }, { force: true });
+    expect(forced.adr.status).toBe("proposed");
+  });
+
+  it("does not treat a bare superpowers directory as external governance", async () => {
+    const root = await initWorkspace("AdrBareSuperpowers");
+    await mkdir(path.join(root, "superpowers"), { recursive: true });
+
+    const result = await createAdr(root, { title: "Bare Superpowers Allowed" });
+
+    expect(result.adr.id).toBe("ADR-0001-bare-superpowers-allowed");
+  });
+
+  it("warns but creates ADRs when docs/adr already exists", async () => {
+    const root = await initWorkspace("AdrDocsAdrWarn");
+    const warnings: string[] = [];
+    await mkdir(path.join(root, "docs", "adr"), { recursive: true });
+
+    const result = await createAdr(
+      root,
+      { title: "Create Alongside Docs Adr" },
+      { onWarning: (message) => warnings.push(message) },
+    );
+
+    expect(result.adr.id).toBe("ADR-0001-create-alongside-docs-adr");
+    expect(warnings).toEqual([
+      expect.stringContaining("external governance detected (docs-adr at docs/adr/)"),
+    ]);
+  });
 });

@@ -53,7 +53,7 @@ export function defaultManifest(
     updated_at: createdAt,
     project: {
       name: project,
-      archetype: manifestOptions.archetype ?? "research",
+      archetype: manifestOptions.archetype ?? "study",
       mode: manifestOptions.mode ?? "learning",
     },
     managed_files: {},

@@ -1,22 +1,35 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
+import { parse } from "yaml";
+
 import { MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
 import type { ProjectArchetype, ProjectMode } from "./schemas/index.js";
-import { toPosixPath } from "./serialization.js";
 
-/**
- * An archetype is the framework's structure definition expressed as data.
- * It declares which directories `init` creates, which template files it writes,
- * the default absorb mode, and which optional capability modules are enabled.
- */
 export interface ArchetypeTemplateEntry {
   readonly path: string;
   readonly templateId: string;
+}
+
+export type ArchetypeSource = "project" | "user" | "built-in";
+
+export interface AvailableArchetype {
+  readonly name: ProjectArchetype;
+  readonly source: ArchetypeSource;
+  readonly path: string;
+}
+
+export interface ArchetypeLookupOptions {
+  /** Project root used for project-local `.framework/archetypes/<name>.yaml`. */
+  readonly root?: string;
+  /** Test/embedding override for the user-global archetype directory. */
+  readonly userArchetypesDir?: string;
+  /** Test/embedding override for bundled archetypes. */
+  readonly builtinArchetypesDir?: string;
 }
 
 export interface Archetype {
@@ -32,10 +45,6 @@ export interface Archetype {
   readonly templates: readonly ArchetypeTemplateEntry[];
 }
 
-/**
- * Return the full directory list for a given mode: shared dirs + mode-specific
- * dirs. Used by `init` to create the right structure per mode.
- */
 export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): readonly string[] {
   return [
     ...archetype.dirs,
@@ -46,166 +55,192 @@ export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): reado
 export type ProfileTemplateEntry = ArchetypeTemplateEntry;
 export type Profile = Archetype;
 
-export const SUPPORTED_CAPABILITY_MODULES = ["adr", "iteration", "events"] as const;
+export const SUPPORTED_CAPABILITY_MODULES = ["adr", "iteration"] as const;
 export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
 
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
+const DEFAULT_ARCHETYPE: ProjectArchetype = "study";
+const PROJECT_ARCHETYPES_DIR = path.join(".framework", "archetypes");
+const BUILTIN_ARCHETYPES_DIR = path.resolve(fileURLToPath(import.meta.url), "..", "..", "profiles");
 
-const CAPABILITY_SCAFFOLD: Readonly<
-  Record<
-    CapabilityModule,
-    {
-      readonly dirs: readonly string[];
-      readonly templates: readonly ArchetypeTemplateEntry[];
-    }
-  >
-> = {
-  adr: {
-    dirs: ["knowledge/decisions"],
-    templates: [
-      { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" },
-      {
-        path: "knowledge/decisions/ADR-TEMPLATE.md",
-        templateId: "knowledge.decisions.adr_template",
-      },
-    ],
-  },
-  iteration: {
-    dirs: ["iterations/templates"],
-    templates: [
-      { path: "iterations/README.md", templateId: "iterations.readme" },
-      { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" },
-    ],
-  },
-  events: {
-    dirs: [".framework/events"],
-    templates: [{ path: ".framework/events/.gitkeep", templateId: "framework.events.gitkeep" }],
-  },
+const BASE_ARCHETYPE: Archetype = {
+  name: "base",
+  mode: "learning",
+  modules: [],
+  dirs: [".framework/backups", ".framework/migrations", "systems", "knowledge"],
+  dirsLearning: [],
+  dirsAbsorption: [],
+  templates: [
+    { path: "README.md", templateId: "root.readme" },
+    { path: ".gitignore", templateId: "root.gitignore" },
+    { path: ".framework/README.md", templateId: "framework.readme" },
+    { path: ".framework/VERSION", templateId: "framework.version" },
+    { path: ".framework/migrations/README.md", templateId: "framework.migrations.readme" },
+    { path: ".framework/backups/.gitkeep", templateId: "framework.backups.gitkeep" },
+    { path: "systems/README.md", templateId: "systems.readme" },
+    { path: "knowledge/README.md", templateId: "knowledge.readme" },
+  ],
 };
 
-const OPTIONAL_CAPABILITY_DIRS = new Set(
-  Object.values(CAPABILITY_SCAFFOLD).flatMap((capability) => capability.dirs),
-);
-const OPTIONAL_CAPABILITY_TEMPLATE_PATHS = new Set(
-  Object.values(CAPABILITY_SCAFFOLD).flatMap((capability) =>
-    capability.templates.map((template) => template.path),
-  ),
-);
-const OPTIONAL_CAPABILITY_TEMPLATE_IDS = new Set(
-  Object.values(CAPABILITY_SCAFFOLD).flatMap((capability) =>
-    capability.templates.map((template) => template.templateId),
-  ),
-);
+interface ParsedArchetype extends Archetype {
+  readonly extendsName: string | null;
+}
 
-export const DEFAULT_ARCHETYPE: ProjectArchetype = "research";
-const DEPRECATED_ARCHETYPE_ALIASES: Readonly<Record<string, ProjectArchetype>> = {
-  assay: "research",
-};
-
-// Resolve the profiles/ directory relative to this module. In ESM there is no
-// __dirname, so use import.meta.url. The profiles directory sits beside src/
-// (at the package root), so from dist/profile.js we go up one level.
-const PROFILES_DIR = path.resolve(fileURLToPath(import.meta.url), "..", "..", "profiles");
-
-/**
- * Load an archetype by name from the profiles/ directory bundled with the core
- * package. `assay` is a deprecated one-cycle alias for `research`.
- */
-export async function loadArchetype(name: string = DEFAULT_ARCHETYPE): Promise<Archetype> {
-  const archetypeName = canonicalArchetypeName(name);
-  const profilePath = path.join(PROFILES_DIR, `${archetypeName}.yaml`);
-  let raw: string;
-  try {
-    raw = await readFile(profilePath, "utf8");
-  } catch {
-    throw new FrameworkError(`archetype not found: ${name} (looked at ${profilePath})`, {
-      code: "IO_ERROR",
-    });
-  }
-  return parseArchetypeYaml(raw, archetypeName);
+interface ArchetypeLookupLocation {
+  readonly source: ArchetypeSource;
+  readonly directory: string;
 }
 
 /**
- * Minimal YAML parser for the subset of syntax our archetypes use: top-level
- * `key: value`, `key:` followed by a list of `- item` lines, and inline
- * `{ path: "...", templateId: "..." }` flow mappings. We avoid a YAML
- * dependency because archetypes are small and structured.
+ * Load an archetype by name using the public extension lookup order:
+ * project-local `.framework/archetypes`, user-global `~/.assay/archetypes`,
+ * then bundled built-ins. The internal `base` archetype remains reserved and
+ * is only available through `extends: base`.
  */
-function parseArchetypeYaml(raw: string, name: ProjectArchetype): Archetype {
-  const lines = raw.replaceAll("\r\n", "\n").split("\n");
-  let mode: ProjectMode = "learning";
-  const modules: CapabilityModule[] = [];
-  const dirs: string[] = [];
-  const dirsLearning: string[] = [];
-  const dirsAbsorption: string[] = [];
-  const templates: ArchetypeTemplateEntry[] = [];
-  let currentList: "modules" | "dirs" | "dirs_learning" | "dirs_absorption" | "templates" | null =
-    null;
-
-  for (const line of lines) {
-    // Skip comments and blank lines.
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed.startsWith("#")) continue;
-
-    // List item under a current list section.
-    if (trimmed.startsWith("-") && currentList) {
-      const value = trimmed.slice(1).trim();
-      if (currentList === "modules") {
-        modules.push(parseCapabilityModule(value, name));
-      } else if (currentList === "dirs") {
-        dirs.push(value);
-      } else if (currentList === "dirs_learning") {
-        dirsLearning.push(value);
-      } else if (currentList === "dirs_absorption") {
-        dirsAbsorption.push(value);
-      } else if (currentList === "templates") {
-        templates.push(parseTemplateEntry(value));
-      }
-      continue;
-    }
-
-    // Top-level key: value.
-    currentList = null;
-    const match = trimmed.match(/^([a-z_]+):\s*(.*)$/);
-    if (!match || match[1] === undefined) continue;
-    const key = match[1];
-    const value = match[2]?.trim() ?? "";
-
-    if (key === "mode") {
-      mode = value === "absorption" ? "absorption" : "learning";
-    } else if (key === "modules") {
-      currentList = "modules";
-    } else if (key === "dirs") {
-      currentList = "dirs";
-    } else if (key === "dirs_learning") {
-      currentList = "dirs_learning";
-    } else if (key === "dirs_absorption") {
-      currentList = "dirs_absorption";
-    } else if (key === "templates") {
-      currentList = "templates";
-    }
+export async function loadArchetype(
+  name: string | undefined = DEFAULT_ARCHETYPE,
+  options: ArchetypeLookupOptions = {},
+): Promise<Archetype> {
+  const archetypeName = normalizeArchetypeName(name ?? DEFAULT_ARCHETYPE);
+  if (archetypeName === "base") {
+    throw await archetypeNotFoundError(archetypeName, options);
   }
 
-  if (dirs.length === 0) {
+  for (const location of archetypeLookupLocations(options)) {
+    const archetypePath = path.join(location.directory, `${archetypeName}.yaml`);
+    let raw: string;
+    try {
+      raw = await readFile(archetypePath, "utf8");
+    } catch {
+      continue;
+    }
+    return mergeBaseArchetype(parseArchetypeYaml(raw, archetypeName));
+  }
+
+  throw await archetypeNotFoundError(archetypeName, options);
+}
+
+export async function listAvailableArchetypes(
+  options: ArchetypeLookupOptions = {},
+): Promise<AvailableArchetype[]> {
+  const byName = new Map<string, AvailableArchetype>();
+  for (const location of archetypeLookupLocations(options)) {
+    for (const archetype of await listArchetypesInDirectory(location)) {
+      if (!byName.has(archetype.name)) {
+        byName.set(archetype.name, archetype);
+      }
+    }
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function parseArchetypeYaml(raw: string, name: ProjectArchetype): ParsedArchetype {
+  const value = parse(raw) as unknown;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new FrameworkError(`malformed archetype ${name}: expected YAML object`, {
+      code: "IO_ERROR",
+    });
+  }
+
+  const record = value as Record<string, unknown>;
+  const extendsName = parseOptionalString(record.extends, "extends", name);
+  if (extendsName && extendsName !== "base") {
+    throw new FrameworkError(
+      `unsupported archetype extension '${extendsName}' in archetype ${name}; supported extension: base`,
+      { code: "IO_ERROR" },
+    );
+  }
+
+  const mode = parseProjectMode(record.mode, name);
+  const modules = parseModuleList(record.modules, name);
+  const dirs = parseStringList(record.dirs, "dirs", name);
+  const dirsLearning = parseStringList(record.dirs_learning, "dirs_learning", name);
+  const dirsAbsorption = parseStringList(record.dirs_absorption, "dirs_absorption", name);
+  const templates = parseTemplateList(record.templates, name);
+
+  if (!extendsName && dirs.length === 0) {
     throw new FrameworkError(`archetype '${name}' has no dirs`, { code: "IO_ERROR" });
   }
 
-  return withCapabilityScaffold({
+  return {
     name,
+    extendsName,
     mode,
     modules,
     dirs,
     dirsLearning,
     dirsAbsorption,
     templates,
+  };
+}
+
+function parseOptionalString(value: unknown, field: string, archetypeName: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new FrameworkError(`invalid ${field} in archetype ${archetypeName}`, {
+      code: "IO_ERROR",
+    });
+  }
+  return value.trim();
+}
+
+function parseProjectMode(value: unknown, archetypeName: string): ProjectMode {
+  if (value === undefined || value === null) return "learning";
+  if (value === "learning" || value === "absorption") return value;
+  throw new FrameworkError(
+    `unsupported mode '${String(value)}' in archetype ${archetypeName}; supported modes: learning, absorption`,
+    { code: "IO_ERROR" },
+  );
+}
+
+function parseModuleList(value: unknown, archetypeName: ProjectArchetype): CapabilityModule[] {
+  const modules = parseStringList(value, "modules", archetypeName);
+  return modules.map((module) => parseCapabilityModule(module, archetypeName));
+}
+
+function parseStringList(value: unknown, field: string, archetypeName: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new FrameworkError(`invalid ${field} in archetype ${archetypeName}: expected list`, {
+      code: "IO_ERROR",
+    });
+  }
+  return value.map((item) => {
+    if (typeof item !== "string" || item.trim() === "") {
+      throw new FrameworkError(`invalid ${field} entry in archetype ${archetypeName}`, {
+        code: "IO_ERROR",
+      });
+    }
+    return item.trim();
   });
 }
 
-function canonicalArchetypeName(name: string): ProjectArchetype {
-  if (name === "research" || name === "contest" || name === "library") return name;
-  const alias = DEPRECATED_ARCHETYPE_ALIASES[name];
-  if (alias) return alias;
-  throw new FrameworkError(`unsupported archetype: ${name}`);
+function parseTemplateList(value: unknown, archetypeName: string): ArchetypeTemplateEntry[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new FrameworkError(`invalid templates in archetype ${archetypeName}: expected list`, {
+      code: "IO_ERROR",
+    });
+  }
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new FrameworkError(`invalid template entry in archetype ${archetypeName}`, {
+        code: "IO_ERROR",
+      });
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.path !== "string" || record.path.trim() === "") {
+      throw new FrameworkError(`invalid template path in archetype ${archetypeName}`, {
+        code: "IO_ERROR",
+      });
+    }
+    if (typeof record.templateId !== "string" || record.templateId.trim() === "") {
+      throw new FrameworkError(`invalid templateId in archetype ${archetypeName}`, {
+        code: "IO_ERROR",
+      });
+    }
+    return { path: record.path.trim(), templateId: record.templateId.trim() };
+  });
 }
 
 function parseCapabilityModule(value: string, archetypeName: ProjectArchetype): CapabilityModule {
@@ -218,48 +253,18 @@ function parseCapabilityModule(value: string, archetypeName: ProjectArchetype): 
   );
 }
 
-function unique(values: readonly string[]): string[] {
-  return [...new Set(values)];
-}
-
-function withCapabilityScaffold(archetype: Archetype): Archetype {
-  const enabled = new Set(archetype.modules);
-  const capabilityDirs = archetype.modules.flatMap((module) => CAPABILITY_SCAFFOLD[module].dirs);
-  const capabilityTemplates = archetype.modules.flatMap(
-    (module) => CAPABILITY_SCAFFOLD[module].templates,
-  );
-
-  return {
-    ...archetype,
-    dirs: unique([
-      ...archetype.dirs.filter((directory) => !OPTIONAL_CAPABILITY_DIRS.has(directory)),
-      ...capabilityDirs,
-    ]),
-    templates: [
-      ...archetype.templates.filter(
-        (template) =>
-          !OPTIONAL_CAPABILITY_TEMPLATE_PATHS.has(template.path) &&
-          !OPTIONAL_CAPABILITY_TEMPLATE_IDS.has(template.templateId),
-      ),
-      ...capabilityTemplates.filter((template) => enabled.has(capabilityForTemplate(template))),
-    ],
-  };
-}
-
-function capabilityForTemplate(template: ArchetypeTemplateEntry): CapabilityModule {
-  for (const [capability, scaffold] of Object.entries(CAPABILITY_SCAFFOLD) as Array<
-    [CapabilityModule, (typeof CAPABILITY_SCAFFOLD)[CapabilityModule]]
-  >) {
-    if (
-      scaffold.templates.some(
-        (candidate) =>
-          candidate.path === template.path || candidate.templateId === template.templateId,
-      )
-    ) {
-      return capability;
-    }
+function mergeBaseArchetype(archetype: ParsedArchetype): Archetype {
+  const { extendsName: _extendsName, ...definition } = archetype;
+  if (!archetype.extendsName) {
+    return definition;
   }
-  throw new FrameworkError(`internal error: unknown capability template ${template.templateId}`);
+  return {
+    ...definition,
+    dirs: unique([...BASE_ARCHETYPE.dirs, ...archetype.dirs]),
+    dirsLearning: unique([...BASE_ARCHETYPE.dirsLearning, ...archetype.dirsLearning]),
+    dirsAbsorption: unique([...BASE_ARCHETYPE.dirsAbsorption, ...archetype.dirsAbsorption]),
+    templates: [...BASE_ARCHETYPE.templates, ...archetype.templates],
+  };
 }
 
 export function archetypeHasCapability(
@@ -280,16 +285,18 @@ export async function readInstalledArchetype(root: string): Promise<ProjectArche
 
 export async function loadInstalledArchetype(root: string): Promise<Archetype | null> {
   const archetype = await readInstalledArchetype(root);
-  return archetype ? loadArchetype(archetype) : null;
+  return archetype ? loadArchetype(archetype, { root }) : null;
 }
 
-export async function isCapabilityEnabled(
+export async function installedArchetypeHasCapability(
   root: string,
   capability: CapabilityModule,
 ): Promise<boolean> {
   const archetype = await loadInstalledArchetype(root);
   return archetype ? archetypeHasCapability(archetype, capability) : false;
 }
+
+export const isCapabilityEnabled = installedArchetypeHasCapability;
 
 export async function requireCapability(
   root: string,
@@ -301,7 +308,7 @@ export async function requireCapability(
       `No framework manifest found at ${path.join(root, MANIFEST_FILE)}.`,
     );
   }
-  const archetype = await loadArchetype(manifest.project.archetype);
+  const archetype = await loadArchetype(manifest.project.archetype, { root });
   if (!archetypeHasCapability(archetype, capability)) {
     throw new FrameworkError(
       `capability not enabled in archetype ${manifest.project.archetype}: ${capability}`,
@@ -310,27 +317,78 @@ export async function requireCapability(
   return archetype;
 }
 
-/**
- * Parse an inline flow mapping like `{ path: "...", templateId: "..." }`.
- */
-function parseTemplateEntry(value: string): ArchetypeTemplateEntry {
-  const inner = value.replace(/^\{/, "").replace(/\}$/, "").trim();
-  let entryPath = "";
-  let templateId = "";
-  for (const part of inner.split(",")) {
-    const kv = part.trim().match(/^([a-zA-Z_]+):\s*"(.*)"$/);
-    if (!kv || kv[1] === undefined || kv[2] === undefined) continue;
-    if (kv[1] === "path") entryPath = kv[2];
-    else if (kv[1] === "templateId") templateId = kv[2];
+function archetypeLookupLocations(options: ArchetypeLookupOptions): ArchetypeLookupLocation[] {
+  const locations: ArchetypeLookupLocation[] = [];
+  if (options.root) {
+    locations.push({
+      source: "project",
+      directory: path.join(options.root, PROJECT_ARCHETYPES_DIR),
+    });
   }
-  if (!entryPath || !templateId) {
-    throw new FrameworkError(`malformed template entry: ${value}`, { code: "IO_ERROR" });
-  }
-  return { path: entryPath, templateId };
+  locations.push({
+    source: "user",
+    directory: options.userArchetypesDir ?? path.join(homedir(), ".assay", "archetypes"),
+  });
+  locations.push({
+    source: "built-in",
+    directory: options.builtinArchetypesDir ?? BUILTIN_ARCHETYPES_DIR,
+  });
+  return locations;
 }
 
-export const DEFAULT_PROFILE = DEFAULT_ARCHETYPE;
-export const dirsForMode = dirsForArchetype;
-export const loadProfile = loadArchetype;
+async function listArchetypesInDirectory(
+  location: ArchetypeLookupLocation,
+): Promise<AvailableArchetype[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(location.directory);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.endsWith(".yaml"))
+    .map((entry) => path.basename(entry, ".yaml"))
+    .filter((name) => name !== "base")
+    .filter(isValidArchetypeName)
+    .map((name) => ({
+      name,
+      source: location.source,
+      path: path.join(location.directory, `${name}.yaml`),
+    }));
+}
 
-export { CURRENT_VERSION, LAYOUT_VERSION, toPosixPath };
+function normalizeArchetypeName(name: string): ProjectArchetype {
+  const trimmed = name.trim();
+  if (!isValidArchetypeName(trimmed)) {
+    throw new FrameworkError(
+      `invalid archetype name '${name}'; use a non-empty file stem without path separators`,
+      { code: "IO_ERROR" },
+    );
+  }
+  return trimmed;
+}
+
+function isValidArchetypeName(name: string): boolean {
+  return (
+    name.length > 0 && !name.includes("/") && !name.includes("\\") && name !== "." && name !== ".."
+  );
+}
+
+async function archetypeNotFoundError(
+  name: string,
+  options: ArchetypeLookupOptions,
+): Promise<FrameworkError> {
+  const available = await listAvailableArchetypes(options);
+  const availableText =
+    available.length === 0
+      ? "none"
+      : available.map((archetype) => `${archetype.name} (${archetype.source})`).join(", ");
+  return new FrameworkError(
+    `archetype not found: ${name}. Available archetypes: ${availableText}`,
+    { code: "IO_ERROR" },
+  );
+}
+
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}

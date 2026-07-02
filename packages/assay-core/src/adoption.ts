@@ -18,6 +18,8 @@ export interface AdoptExistingProjectOptions {
   readonly name?: string;
   readonly dryRun?: boolean;
   readonly apply?: boolean;
+  readonly agents?: boolean;
+  readonly noTrack?: boolean;
   /** After a successful apply, generate an adoption inventory and open an adoption analysis so the archived content is tracked to completion. */
   readonly analyze?: boolean;
   readonly now?: Date;
@@ -371,7 +373,11 @@ export async function adoptExistingProject(
   let adoptionAnalysisPath: string | undefined;
   if (failures.length === 0) {
     try {
-      init = await initFramework({ target: plan.root, name: project });
+      init = await initFramework({
+        target: plan.root,
+        name: project,
+        agents: options.agents !== false,
+      });
       const eventPath = await appendEvent(plan.root, {
         archive: plan.archiveDir,
         archetype: init.archetype,
@@ -381,7 +387,9 @@ export async function adoptExistingProject(
         project,
       });
       eventFile = relativeDisplayPath(eventPath, plan.root);
-      await recordProjectLifecycleBestEffort(plan.root, "adopt");
+      await recordProjectLifecycleBestEffort(plan.root, "adopt", {
+        noTrack: options.noTrack ?? false,
+      });
 
       // Optionally open an adoption analysis so the archived content is tracked
       // to completion instead of left in .old/ to be forgotten.

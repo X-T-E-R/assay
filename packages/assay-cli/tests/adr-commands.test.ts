@@ -10,6 +10,7 @@ const packageRoot = process.cwd();
 const cliPath = path.join(packageRoot, "dist", "cli.js");
 const tempRoots: string[] = [];
 let registryRoot = "";
+type TestArchetype = "study" | "solve" | "library" | "science" | "evaluation" | "explore";
 
 interface CliResult {
   readonly exitCode: number;
@@ -61,10 +62,7 @@ beforeEach(async () => {
   registryRoot = await tempDir();
 });
 
-async function initWorkspace(
-  name: string,
-  archetype: "research" | "contest" | "library" = "research",
-): Promise<string> {
+async function initWorkspace(name: string, archetype: TestArchetype = "study"): Promise<string> {
   const root = path.join(await tempDir(), name);
   const init = await runCli(["init", root, "--name", name, "--archetype", archetype]);
   expect(init.exitCode).toBe(0);
@@ -125,6 +123,16 @@ describe("assay adr CLI", () => {
       status: "proposed",
       related_analysis: "analyses/references/example.md",
     });
+  });
+
+  it("creates ADRs in the evaluation archetype", async () => {
+    const root = await initWorkspace("AdrCliEvaluation", "evaluation");
+
+    const created = await runCli(["adr", "new", "Choose Candidate", "--root", root]);
+
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toContain("Created ADR: ADR-0001-choose-candidate");
+    expect(await exists(path.join(root, "knowledge", "decisions"))).toBe(true);
   });
 
   it("accepts and deprecates ADRs", async () => {
@@ -233,5 +241,18 @@ describe("assay adr CLI", () => {
     const forced = await runCli(["adr", "new", "Forced", "--root", root, "--force"]);
     expect(forced.exitCode).toBe(0);
     expect(forced.stdout).toContain("Created ADR: ADR-0001-forced");
+  });
+
+  it("warns but creates an ADR when docs/adr already exists", async () => {
+    const root = await initWorkspace("AdrCliDocsAdrWarn");
+    await mkdir(path.join(root, "docs", "adr"), { recursive: true });
+
+    const created = await runCli(["adr", "new", "Docs Adr Warning", "--root", root]);
+
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toContain("Created ADR: ADR-0001-docs-adr-warning");
+    expect(created.stderr).toContain(
+      "Warning: external governance detected (docs-adr at docs/adr/)",
+    );
   });
 });

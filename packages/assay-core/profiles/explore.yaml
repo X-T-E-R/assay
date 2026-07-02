@@ -1,0 +1,23 @@
+# Explore archetype: incubate multiple local approaches before converging.
+# It uses trials and comparisons to choose a direction without pretending the
+# target shape is known at the start.
+
+extends: base
+mode: absorption
+modules:
+  - iteration
+
+dirs:
+  - approaches
+  - trials
+  - iterations/templates
+
+dirs_learning: []
+dirs_absorption: []
+
+templates:
+  - { path: "approaches/README.md", templateId: "explore.approaches.readme" }
+  - { path: "trials/README.md", templateId: "explore.trials.readme" }
+  - { path: "comparison.md", templateId: "explore.comparison" }
+  - { path: "iterations/README.md", templateId: "iterations.readme" }
+  - { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" }

@@ -1,0 +1,28 @@
+# Science archetype: evidence-driven research in a local workspace.
+# It keeps hypotheses, experiments, datasets, findings, and paper drafts close
+# to the iteration loop so claims stay tied to observable evidence.
+
+extends: base
+mode: absorption
+modules:
+  - iteration
+
+dirs:
+  - hypotheses
+  - experiments
+  - datasets
+  - findings
+  - papers
+  - iterations/templates
+
+dirs_learning: []
+dirs_absorption: []
+
+templates:
+  - { path: "hypotheses/README.md", templateId: "science.hypotheses.readme" }
+  - { path: "experiments/README.md", templateId: "science.experiments.readme" }
+  - { path: "datasets/README.md", templateId: "science.datasets.readme" }
+  - { path: "findings/README.md", templateId: "science.findings.readme" }
+  - { path: "papers/README.md", templateId: "science.papers.readme" }
+  - { path: "iterations/README.md", templateId: "iterations.readme" }
+  - { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" }

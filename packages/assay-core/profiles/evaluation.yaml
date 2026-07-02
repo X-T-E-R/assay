@@ -1,0 +1,22 @@
+# Evaluation archetype: compare external candidates through explicit criteria,
+# scorecards, and ADR-backed decisions.
+
+extends: base
+mode: learning
+modules:
+  - adr
+
+dirs:
+  - candidates
+  - scorecards
+  - knowledge/decisions
+
+dirs_learning: []
+dirs_absorption: []
+
+templates:
+  - { path: "candidates/README.md", templateId: "evaluation.candidates.readme" }
+  - { path: "criteria.md", templateId: "evaluation.criteria" }
+  - { path: "scorecards/README.md", templateId: "evaluation.scorecards.readme" }
+  - { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" }
+  - { path: "knowledge/decisions/ADR-TEMPLATE.md", templateId: "knowledge.decisions.adr_template" }

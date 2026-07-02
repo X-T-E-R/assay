@@ -1,8 +1,8 @@
-# Trellis-Inspired Design Notes
+# Design Principles
 
-Assay treats a framework workspace as local project infrastructure, not as a loose collection of prompts or notes. This direction was influenced by workflow systems that keep project rules, task state, update metadata, and assistant-facing instructions inside the repository.
+Assay treats a framework workspace as local project infrastructure, not as a loose collection of prompts or notes. A useful workspace keeps project rules, task state, update metadata, and assistant-facing instructions close to the work they govern.
 
-The useful pattern is not any specific upstream implementation. The useful pattern is the separation of responsibilities:
+The core pattern is a separation of responsibilities:
 
 ```text
 human-facing workspace

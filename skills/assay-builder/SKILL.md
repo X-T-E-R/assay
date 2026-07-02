@@ -32,7 +32,7 @@ node <skill-root>/scripts/assay.mjs <command>
 
 ```bash
 # Workspace lifecycle
-assay init [target-dir] --name <project-name> [--mode learning|absorption]
+assay init [target-dir] --name <project-name> [--archetype <name>]  # built-ins: study|solve|science|evaluation|explore|library
 assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # semantic + structural + content-health validation
@@ -41,7 +41,7 @@ assay update --dry-run                       # always dry-run first
 assay migrate-layout --dry-run               # always dry-run first; v2→v3 included
 
 # Living sources / reference analysis / iteration / knowledge
-assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|thin|metadata|archive]
+assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|archive]
 assay source sync [alias] [--branch <branch>] [--ref <ref>] [--class same|patch|normal|major|replacement]
 assay source switch <alias> <branch-or-ref> [--sync]
 assay source status [alias]
@@ -84,7 +84,7 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 
 ## Framework structure
 
-Target projects converge to an 8-directory layout (`.framework/`, `references/`, `analyses/`, `systems/`, `iterations/`, `knowledge/`, `data/`, `releases/`). For the full structure diagram, intent-to-directory mapping, and `.framework/` managed files, read `references/framework-structure.md`.
+Target projects use an archetype-specific layout over a shared base (`.framework/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), `hypotheses/` + `experiments/` (`science`), `candidates/` + `scorecards/` (`evaluation`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.framework/` managed files, read `references/framework-structure.md`.
 
 ## Systems and version control
 
@@ -116,7 +116,7 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.
-2. Run `init` if empty (use `--mode absorption` when the whole project exists to absorb a specific external thing — e.g. a contest, a paper, a repo you are rebuilding — so its official materials land in `problem/` instead of the frozen-reference area). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
+2. Run `init` if empty (use `--archetype solve` when the whole project exists to work toward a specific measurable objective — e.g. a benchmark target, a paper implementation, or a repo you are rebuilding — so official materials land in `problem/` instead of the frozen-reference area). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
 3. Use `projects list` or `projects scan <parent-dir>` to locate existing workspaces.
 
 ### Absorption pipeline (the core loop, made executable)

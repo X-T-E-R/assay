@@ -1,21 +1,19 @@
-# Research archetype: source absorption is the main product.
+# Study archetype: source absorption is the main product.
 # It keeps the shared core, the four-way analyses split, and the learning-mode
-# frozen-reference outlet. Contest intake/problem/submission structures are not
-# part of this archetype.
+# frozen-reference outlet. Solve intake/problem/attempt structures are not part
+# of this archetype.
 
+extends: base
 mode: learning
 modules:
   - adr
 
 dirs:
-  - .framework/backups
-  - .framework/migrations
-  - systems
-  - knowledge
   - analyses/references
   - analyses/gaps
   - analyses/patterns
   - analyses/templates
+  - knowledge/decisions
 
 dirs_learning:
   - references/frozen
@@ -23,14 +21,6 @@ dirs_learning:
 dirs_absorption: []
 
 templates:
-  - { path: "README.md", templateId: "root.readme" }
-  - { path: ".gitignore", templateId: "root.gitignore" }
-  - { path: ".framework/README.md", templateId: "framework.readme" }
-  - { path: ".framework/VERSION", templateId: "framework.version" }
-  - { path: ".framework/migrations/README.md", templateId: "framework.migrations.readme" }
-  - { path: ".framework/backups/.gitkeep", templateId: "framework.backups.gitkeep" }
-  - { path: "systems/README.md", templateId: "systems.readme" }
-  - { path: "knowledge/README.md", templateId: "knowledge.readme" }
   - { path: "references/README.md", templateId: "references.readme" }
   - { path: "references/frozen/README.md", templateId: "references.frozen.readme" }
   - { path: "analyses/README.md", templateId: "analyses.readme" }
@@ -40,3 +30,5 @@ templates:
   - { path: "analyses/templates/reference-analysis-card.md", templateId: "analysis.template.reference" }
   - { path: "analyses/templates/gap-analysis.md", templateId: "analysis.template.gap" }
   - { path: "analyses/templates/pattern-card.md", templateId: "analysis.template.pattern" }
+  - { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" }
+  - { path: "knowledge/decisions/ADR-TEMPLATE.md", templateId: "knowledge.decisions.adr_template" }

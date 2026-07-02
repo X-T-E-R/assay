@@ -23,10 +23,10 @@ Every Assay workspace converges to this layout (layout v3):
 
 ## Project archetype and mode
 
-A workspace records `project.archetype` and `project.mode` in `.framework/manifest.json`, set by `assay init --archetype <archetype> --mode <mode>`. Use `assay archetype` to read the active values from the manifest.
+A workspace records `project.archetype` and `project.mode` in `.framework/manifest.json`. `assay init --archetype <archetype>` selects the archetype; the archetype YAML sets the mode. Use `assay archetype` to read the active values from the manifest.
 
 - **learning** (default): the project learns from external systems. Living external sources are added under `references/<alias>/` with `source.yaml`, current `checkout/`, bounded `materials/`, `history.md`, and an internal `.assay/` observation ledger. Use this when the external thing is something you study, not something you are.
-- **absorption**: the project exists to absorb a specific external thing (a contest, a paper, a repo you are rebuilding). Its official/source materials land under `problem/<name>/` with a `source.yaml` case file, because they ARE the project, not external references. `references/frozen/` is still available for genuine third-party side evidence.
+- **absorption**: the project exists to absorb a specific external thing (a benchmark target, a paper, a repo you are rebuilding). Its official/source materials land under `problem/<name>/` with a `source.yaml` case file, because they ARE the project, not external references. `references/frozen/` is still available for genuine third-party side evidence.
 
 `source add` is the preferred learning-mode intake for external systems that may change. `absorb` still routes automatically based on mode for the freeze-and-open-analysis flow: legacy/full capture under `references/frozen/` in learning mode, `problem/` in absorption mode.
 

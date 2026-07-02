@@ -2,6 +2,14 @@ import { chmod, copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "
 import path from "node:path";
 
 import {
+  ASSAY_AGENTS_MALFORMED_REASON,
+  type AssayAgentsBlockMode,
+  type AssayAgentsBlockResult,
+  applyAssayAgentsBlock,
+  describeAssayAgentsBlockAction,
+  planAssayAgentsBlock,
+} from "./agents.js";
+import {
   BACKUPS_DIR,
   CURRENT_VERSION,
   LAYOUT_VERSION,
@@ -45,6 +53,7 @@ export interface AnalyzeUpdateOptions {
 export interface PlanUpdateOptions extends AnalyzeUpdateOptions {
   readonly dryRun?: boolean;
   readonly action?: UpdateConflictAction;
+  readonly agents?: boolean;
 }
 
 export interface ApplyUpdateOptions extends PlanUpdateOptions {
@@ -66,6 +75,36 @@ export interface ApplyUpdateResult {
   readonly report: OperationReport;
   readonly backup?: BackupResult;
   readonly eventFile?: string;
+}
+
+function updateAgentsMode(value: boolean | undefined): AssayAgentsBlockMode {
+  if (value === true) {
+    return "install";
+  }
+  if (value === false) {
+    return "skip";
+  }
+  return "refresh-existing";
+}
+
+function recordAssayAgentsResult(report: OperationReport, result: AssayAgentsBlockResult): void {
+  if (result.changed && result.dryRun) {
+    report.notes.push(describeAssayAgentsBlockAction(result));
+    return;
+  }
+
+  if (!result.changed) {
+    if (result.reason === ASSAY_AGENTS_MALFORMED_REASON) {
+      report.notes.push(describeAssayAgentsBlockAction(result));
+    }
+    return;
+  }
+
+  if (result.action === "create") {
+    report.created_files.push(result.path);
+  } else if (result.action === "append" || result.action === "replace") {
+    report.updated_files.push(result.path);
+  }
 }
 
 export interface BuildLayoutMigrationPlanOptions {
@@ -239,6 +278,7 @@ export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<Upda
     project,
     manifest.project.archetype,
     manifest.project.mode,
+    { root },
   )) {
     const target = path.join(root, template.path);
     const record = manifest.managed_files[template.path];
@@ -410,18 +450,26 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
   const analysis = await analyzeUpdate({ root });
   const plan = await planUpdate({ root, dryRun, action });
   const report = createEmptyReport();
+  const agentsMode = updateAgentsMode(options.agents);
+  const agentsPlan = await planAssayAgentsBlock({ root, mode: agentsMode });
 
   if (dryRun) {
     report.notes.push("dry-run: no changes applied");
+    recordAssayAgentsResult(
+      report,
+      await applyAssayAgentsBlock({ root, mode: agentsMode, dryRun: true }),
+    );
     return { root, dryRun, action, analysis, plan, report };
   }
 
   const manifest = requireManifest(await loadManifest(root), root);
   const project = projectNameFromManifest(manifest, root);
   const templatesByPath = new Map(
-    (await desiredRuntimeTemplates(project, manifest.project.archetype, manifest.project.mode)).map(
-      (template) => [template.path, template],
-    ),
+    (
+      await desiredRuntimeTemplates(project, manifest.project.archetype, manifest.project.mode, {
+        root,
+      })
+    ).map((template) => [template.path, template]),
   );
   const backupPaths = [
     ...analysis.changes.auto_update,
@@ -430,7 +478,11 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
   ]
     .map((change) => change.path)
     .filter((relativePath) => templatesByPath.has(relativePath));
-  const backup = await createBackup(root, backupPaths, options.now);
+  const backupPathsWithAgents =
+    agentsPlan.changed && agentsPlan.action !== "create"
+      ? [...backupPaths, agentsPlan.path]
+      : backupPaths;
+  const backup = await createBackup(root, backupPathsWithAgents, options.now);
   report.notes.push(`backup: ${backup.relativePath}`);
 
   for (const change of plan.changes) {
@@ -462,6 +514,8 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
       report.conflicted_files.push(template.path);
     }
   }
+
+  recordAssayAgentsResult(report, await applyAssayAgentsBlock({ root, mode: agentsMode }));
 
   manifest.framework_version = CURRENT_VERSION;
   await saveManifest(root, manifest);

@@ -1,0 +1,30 @@
+# Solve archetype: external material is absorbed into project inputs and
+# iterative attempt work. It owns a neutral objective model and enables
+# iteration by default, without prebuilding a systems core.
+
+extends: base
+mode: absorption
+modules:
+  - iteration
+
+dirs:
+  - problem
+  - intake
+  - benchmarks
+  - attempts
+  - tools
+  - iterations/templates
+
+dirs_learning: []
+dirs_absorption: []
+
+templates:
+  - { path: "objective.json", templateId: "solve.objective" }
+  - { path: "systems/current.json", templateId: "solve.current_attempt" }
+  - { path: "runs.jsonl", templateId: "solve.runs.jsonl" }
+  - { path: "intake/README.md", templateId: "solve.intake.readme" }
+  - { path: "benchmarks/README.md", templateId: "solve.benchmarks.readme" }
+  - { path: "attempts/README.md", templateId: "solve.attempts.readme" }
+  - { path: "tools/README.md", templateId: "solve.tools.readme" }
+  - { path: "iterations/README.md", templateId: "iterations.readme" }
+  - { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" }

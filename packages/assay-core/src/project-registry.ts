@@ -16,6 +16,7 @@ export type AssayProjectRegistryStatus = "active" | "missing" | "uninstalled";
 export interface ProjectRegistryOptions {
   readonly registryRoot?: string;
   readonly now?: () => Date;
+  readonly noTrack?: boolean;
 }
 
 export interface AssayProjectRecord {
@@ -54,6 +55,7 @@ type ProjectRecordBuild = Omit<AssayProjectRecord, "frameworkVersion" | "layoutV
 const SCHEMA_VERSION = 1;
 const PROJECT_ID_LENGTH = 16;
 const REGISTRY_ROOT_ENV = "ASSAY_PROJECT_REGISTRY_ROOT";
+const NO_TRACK_ENV = "ASSAY_NO_TRACK";
 const PROJECT_ID_PATTERN = /^[0-9a-f]{16}$/;
 const HEAVY_SCAN_DIRS = new Set([
   ".git",
@@ -71,6 +73,14 @@ const HEAVY_SCAN_DIRS = new Set([
 ]);
 
 export function projectRegistryRoot(options: ProjectRegistryOptions = {}): string {
+  if (projectTrackingDisabled(options)) {
+    const configuredRoot = options.registryRoot ?? process.env[REGISTRY_ROOT_ENV];
+    if (configuredRoot && configuredRoot.trim().length > 0) {
+      return path.resolve(configuredRoot);
+    }
+    return path.join(os.homedir(), ".assay", "projects");
+  }
+
   if (options.registryRoot) {
     return path.resolve(options.registryRoot);
   }
@@ -81,6 +91,10 @@ export function projectRegistryRoot(options: ProjectRegistryOptions = {}): strin
   }
 
   return path.join(os.homedir(), ".assay", "projects");
+}
+
+export function projectTrackingDisabled(options: ProjectRegistryOptions = {}): boolean {
+  return options.noTrack === true || isTruthyEnvironmentValue(process.env[NO_TRACK_ENV]);
 }
 
 export function projectRecordPath(id: string, options: ProjectRegistryOptions = {}): string {
@@ -242,12 +256,17 @@ export async function pruneProjects(
 export async function recordProjectLifecycleBestEffort(
   projectPath: string,
   command: AssayProjectRegistryCommand,
+  options: ProjectRegistryOptions = {},
 ): Promise<void> {
+  if (projectTrackingDisabled(options)) {
+    return;
+  }
+
   try {
     if (command === "uninstall") {
-      await markProjectUninstalled(projectPath);
+      await markProjectUninstalled(projectPath, options);
     } else {
-      await registerProject(projectPath, command);
+      await registerProject(projectPath, command, options);
     }
   } catch {
     // Registry writes are lifecycle metadata only; scaffold operations should remain successful.
@@ -307,11 +326,23 @@ async function writeProjectRecord(
   record: AssayProjectRecord,
   options: ProjectRegistryOptions,
 ): Promise<void> {
+  if (projectTrackingDisabled(options)) {
+    return;
+  }
+
   const root = projectRegistryRoot(options);
   await mkdir(root, { recursive: true });
   const tmpPath = path.join(root, `${record.id}.${crypto.randomUUID()}.tmp`);
   await writeFile(tmpPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
   await rename(tmpPath, projectRecordPath(record.id, options));
+}
+
+function isTruthyEnvironmentValue(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 && !["0", "false", "no", "off"].includes(normalized);
 }
 
 async function readProjectRecord(

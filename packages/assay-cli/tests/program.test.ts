@@ -10,6 +10,7 @@ import { createProgram } from "../src/index.js";
 const execFileAsync = promisify(execFile);
 const packageRoot = process.cwd();
 const cliPath = path.join(packageRoot, "dist", "cli.js");
+const USER_FACING_BUILT_INS = ["evaluation", "explore", "library", "science", "solve", "study"];
 const tempRoots: string[] = [];
 let registryRoot = "";
 
@@ -37,17 +38,53 @@ async function tempDir(): Promise<string> {
   return root;
 }
 
-async function runCli(args: readonly string[]): Promise<CliResult> {
-  return runCliIn(packageRoot, args);
+async function writeCustomArchetype(
+  file: string,
+  options: {
+    readonly mode?: string;
+    readonly dirs: readonly string[];
+    readonly modules?: readonly string[];
+  },
+): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    [
+      "extends: base",
+      `mode: ${options.mode ?? "learning"}`,
+      "modules:",
+      ...((options.modules ?? []).length === 0
+        ? []
+        : (options.modules ?? []).map((module) => `  - ${module}`)),
+      "",
+      "dirs:",
+      ...options.dirs.map((directory) => `  - ${directory}`),
+      "",
+      "dirs_learning: []",
+      "dirs_absorption: []",
+      "templates: []",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
 }
 
-async function runCliIn(cwd: string, args: readonly string[]): Promise<CliResult> {
+async function runCli(args: readonly string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
+  return runCliIn(packageRoot, args, env);
+}
+
+async function runCliIn(
+  cwd: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = {},
+): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
       cwd,
       env: {
         ...process.env,
         ASSAY_PROJECT_REGISTRY_ROOT: registryRoot,
+        ...env,
       },
     });
     return { exitCode: 0, stdout, stderr };
@@ -72,7 +109,7 @@ beforeEach(async () => {
 });
 
 describe("assay Commander registration", () => {
-  it("registers compatibility commands in root help", () => {
+  it("registers root commands in help", () => {
     const help = createProgram().helpInformation();
 
     expect(help).toContain("Usage: assay [options] [command]");
@@ -85,7 +122,6 @@ describe("assay Commander registration", () => {
       "projects",
       "migrate-layout",
       "archetype",
-      "profile",
       "reference",
       "analysis",
       "iteration",
@@ -107,12 +143,17 @@ describe("assay Commander registration", () => {
 
   it("prints init help with archetype options and no core option", async () => {
     const result = await runCli(["init", "--help"]);
+    const removedProfileFlag = `--${"profile"}`;
+    const removedModeFlag = `--${"mode"}`;
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: assay init [options] [target-dir]");
     expect(result.stdout).toContain("--archetype <archetype>");
-    expect(result.stdout).toContain("--profile <name>");
-    expect(result.stdout).toContain("deprecated alias");
+    expect(result.stdout).not.toContain(removedProfileFlag);
+    expect(result.stdout).not.toContain(removedModeFlag);
+    expect(result.stdout).not.toContain("deprecated alias");
+    expect(result.stdout).toContain("--no-track");
+    expect(result.stdout).toContain("--no-agents");
     expect(result.stdout).not.toContain("--core");
     expect(result.stderr).toBe("");
   });
@@ -186,8 +227,68 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stdout).toContain("--root <target-dir>");
     expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("--apply");
+    expect(result.stdout).toContain("--no-track");
+    expect(result.stdout).toContain("--no-agents");
     expect(result.stdout).not.toContain("--core");
     expect(result.stderr).toBe("");
+  });
+
+  it("prints update help with explicit agents installation option", async () => {
+    const result = await runCli(["update", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: assay update [options]");
+    expect(result.stdout).toContain("--agents");
+    expect(result.stdout).toContain("--no-track");
+    expect(result.stderr).toBe("");
+  });
+
+  it("supports lifecycle registry opt-out for init, update, and adopt", async () => {
+    const untrackedInitRoot = path.join(await tempDir(), "untracked-init");
+    const init = await runCli([
+      "init",
+      untrackedInitRoot,
+      "--name",
+      "Untracked Init",
+      "--no-track",
+    ]);
+    expect(init.exitCode).toBe(0);
+    expect(await exists(registryRoot)).toBe(false);
+
+    const envUntrackedRoot = path.join(await tempDir(), "env-untracked-init");
+    const envInit = await runCli(["init", envUntrackedRoot, "--name", "Env Untracked Init"], {
+      ASSAY_NO_TRACK: "1",
+    });
+    expect(envInit.exitCode).toBe(0);
+    expect(await exists(registryRoot)).toBe(false);
+
+    const trackedRoot = path.join(await tempDir(), "tracked");
+    const trackedInit = await runCli(["init", trackedRoot, "--name", "Tracked Init"]);
+    expect(trackedInit.exitCode).toBe(0);
+    const beforeUpdate = await runCli(["projects", "show", trackedRoot, "--json"]);
+    expect(JSON.parse(beforeUpdate.stdout)).toMatchObject({ lastCommand: "init" });
+
+    const untrackedUpdate = await runCli(["update", "--root", trackedRoot, "--no-track"]);
+    expect(untrackedUpdate.exitCode).toBe(0);
+    const afterUpdate = await runCli(["projects", "show", trackedRoot, "--json"]);
+    expect(JSON.parse(afterUpdate.stdout)).toMatchObject({ lastCommand: "init" });
+
+    const adoptRoot = path.join(await tempDir(), "adopt-untracked");
+    await mkdir(path.join(adoptRoot, "src"), { recursive: true });
+    await writeFile(path.join(adoptRoot, "src", "index.ts"), "export {};\n", "utf8");
+    const adopt = await runCli([
+      "adopt",
+      "--root",
+      adoptRoot,
+      "--name",
+      "Untracked Adopt",
+      "--apply",
+      "--no-track",
+    ]);
+    expect(adopt.exitCode).toBe(0);
+    const adoptRecord = await runCli(["projects", "show", adoptRoot, "--json"]);
+    expect(adoptRecord.exitCode).toBe(1);
+    expect(adoptRecord.stderr).toContain("project not found");
   });
 
   it("prints migrate-layout help with explicit backup mode", async () => {
@@ -202,48 +303,233 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("accepts init archetype and profile compatibility options", async () => {
-    const contestRoot = path.join(await tempDir(), "contest");
-    const contest = await runCli([
-      "init",
-      contestRoot,
-      "--name",
-      "Contest CLI",
-      "--archetype",
-      "contest",
-    ]);
+  it("accepts init archetype and rejects the removed profile option", async () => {
+    const removedProfileFlag = `--${"profile"}`;
+    const solveRoot = path.join(await tempDir(), "solve");
+    const solve = await runCli(["init", solveRoot, "--name", "Solve CLI", "--archetype", "solve"]);
 
-    expect(contest.exitCode).toBe(0);
-    expect(contest.stdout).toContain("Initialized framework:");
-    expect(contest.stdout).toContain("Project: Contest CLI");
-    expect(contest.stdout).not.toContain("Core:");
-    expect(contest.stderr).toBe("");
-    expect(await exists(path.join(contestRoot, "problem"))).toBe(true);
+    expect(solve.exitCode).toBe(0);
+    expect(solve.stdout).toContain("Initialized framework:");
+    expect(solve.stdout).toContain("Project: Solve CLI");
+    expect(solve.stdout).not.toContain("Core:");
+    expect(solve.stderr).toBe("");
+    expect(await exists(path.join(solveRoot, "problem"))).toBe(true);
+    expect(await exists(path.join(solveRoot, "attempts"))).toBe(true);
+    expect(await exists(path.join(solveRoot, "objective.json"))).toBe(true);
 
-    const profileRoot = path.join(await tempDir(), "profile");
     const profile = await runCli([
       "init",
-      profileRoot,
+      path.join(await tempDir(), "profile"),
       "--name",
       "Profile CLI",
-      "--profile",
+      removedProfileFlag,
       "assay",
     ]);
 
-    expect(profile.exitCode).toBe(0);
-    expect(profile.stdout).toContain("Deprecated: --profile assay maps to --archetype research.");
-    expect(profile.stderr).toBe("");
+    expect(profile.exitCode).toBe(1);
+    expect(profile.stdout).toBe("");
+    expect(profile.stderr).toContain(`unknown option '${removedProfileFlag}'`);
+  });
 
-    const conflict = await runCli([
+  it("rejects removed archetype names and lists current built-ins", async () => {
+    const home = path.join(await tempDir(), "empty-home");
+    for (const removedName of [`re${"search"}`, `con${"test"}`]) {
+      const result = await runCli(
+        [
+          "init",
+          path.join(await tempDir(), removedName),
+          "--name",
+          "Removed",
+          "--archetype",
+          removedName,
+        ],
+        {
+          HOME: home,
+          USERPROFILE: home,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`archetype not found: ${removedName}`);
+      expect(result.stderr).toContain("Available archetypes:");
+      for (const archetype of USER_FACING_BUILT_INS) {
+        expect(result.stderr).toContain(`${archetype} (built-in)`);
+      }
+    }
+  });
+
+  it("initializes new built-in archetypes and each passes check", async () => {
+    const expectations = {
+      science: {
+        mode: "absorption",
+        paths: ["hypotheses", "experiments", "datasets", "findings", "papers"],
+      },
+      evaluation: {
+        mode: "learning",
+        paths: ["candidates", "scorecards", "criteria.md", path.join("knowledge", "decisions")],
+      },
+      explore: {
+        mode: "absorption",
+        paths: ["approaches", "trials", "comparison.md"],
+      },
+    } as const;
+
+    for (const [archetype, expectation] of Object.entries(expectations)) {
+      const root = path.join(await tempDir(), archetype);
+      const init = await runCli([
+        "init",
+        root,
+        "--name",
+        `${archetype} CLI`,
+        "--archetype",
+        archetype,
+      ]);
+
+      expect(init.exitCode).toBe(0);
+      expect(init.stderr).toBe("");
+      for (const expectedPath of expectation.paths) {
+        expect(await exists(path.join(root, expectedPath))).toBe(true);
+      }
+      const manifest = JSON.parse(
+        await readFile(path.join(root, ".framework", "manifest.json"), "utf8"),
+      );
+      expect(manifest.project).toMatchObject({ archetype, mode: expectation.mode });
+
+      const check = await runCli(["check", "--root", root]);
+      expect(check.exitCode).toBe(0);
+      expect(check.stdout).toContain("Framework check: ok");
+      expect(check.stderr).toBe("");
+    }
+  });
+
+  it("accepts project-local and user-global custom init archetypes", async () => {
+    const projectRoot = path.join(await tempDir(), "project-custom");
+    await writeCustomArchetype(path.join(projectRoot, ".framework", "archetypes", "foo.yaml"), {
+      dirs: ["project-zone"],
+      mode: "absorption",
+      modules: ["iteration"],
+    });
+
+    const project = await runCli([
       "init",
-      path.join(await tempDir(), "conflict"),
+      projectRoot,
+      "--name",
+      "Project Custom",
       "--archetype",
-      "research",
-      "--profile",
-      "assay",
+      "foo",
     ]);
-    expect(conflict.exitCode).toBe(1);
-    expect(conflict.stderr).toContain("cannot be used with option");
+
+    expect(project.exitCode).toBe(0);
+    expect(project.stderr).toBe("");
+    expect(await exists(path.join(projectRoot, "project-zone"))).toBe(true);
+    const projectManifest = JSON.parse(
+      await readFile(path.join(projectRoot, ".framework", "manifest.json"), "utf8"),
+    );
+    expect(projectManifest.project).toMatchObject({ archetype: "foo", mode: "absorption" });
+
+    const home = path.join(await tempDir(), "home");
+    await writeCustomArchetype(path.join(home, ".assay", "archetypes", "bar.yaml"), {
+      dirs: ["user-zone"],
+      mode: "learning",
+    });
+    const userRoot = path.join(await tempDir(), "user-custom");
+    const homeEnv = { HOME: home, USERPROFILE: home };
+
+    const user = await runCli(
+      ["init", userRoot, "--name", "User Custom", "--archetype", "bar"],
+      homeEnv,
+    );
+
+    expect(user.exitCode).toBe(0);
+    expect(user.stderr).toBe("");
+    expect(await exists(path.join(userRoot, "user-zone"))).toBe(true);
+    const userManifest = JSON.parse(
+      await readFile(path.join(userRoot, ".framework", "manifest.json"), "utf8"),
+    );
+    expect(userManifest.project).toMatchObject({ archetype: "bar", mode: "learning" });
+  });
+
+  it("reports invalid init archetypes with available choices from core", async () => {
+    const root = path.join(await tempDir(), "invalid-archetype");
+    const home = path.join(await tempDir(), "empty-home");
+
+    const result = await runCli(["init", root, "--name", "Invalid", "--archetype", "missing"], {
+      HOME: home,
+      USERPROFILE: home,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("archetype not found: missing");
+    expect(result.stderr).toContain("Available archetypes:");
+    for (const archetype of USER_FACING_BUILT_INS) {
+      expect(result.stderr).toContain(`${archetype} (built-in)`);
+    }
+    expect(result.stderr).not.toContain("base");
+  });
+
+  it("surfaces invalid custom archetype mode errors from core", async () => {
+    const root = path.join(await tempDir(), "invalid-custom-mode");
+    const home = path.join(await tempDir(), "home");
+    await writeCustomArchetype(path.join(home, ".assay", "archetypes", "badmode.yaml"), {
+      dirs: ["user-zone"],
+      mode: "typo",
+    });
+
+    const result = await runCli(
+      ["init", root, "--name", "Invalid Custom", "--archetype", "badmode"],
+      {
+        HOME: home,
+        USERPROFILE: home,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("unsupported mode 'typo'");
+    expect(result.stderr).toContain("supported modes: learning, absorption");
+    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(false);
+  });
+
+  it("lists built-in and custom archetypes with source labels", async () => {
+    const root = path.join(await tempDir(), "list-root");
+    const home = path.join(await tempDir(), "home");
+    await writeCustomArchetype(path.join(root, ".framework", "archetypes", "foo.yaml"), {
+      dirs: ["project-zone"],
+    });
+    await writeCustomArchetype(path.join(home, ".assay", "archetypes", "bar.yaml"), {
+      dirs: ["user-zone"],
+    });
+    const homeEnv = { HOME: home, USERPROFILE: home };
+
+    const result = await runCli(["archetype", "list", "--root", root], homeEnv);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Available archetypes:");
+    for (const archetype of USER_FACING_BUILT_INS) {
+      expect(result.stdout).toContain(`- ${archetype} (built-in):`);
+    }
+    expect(result.stdout).toContain("- foo (project):");
+    expect(result.stdout).toContain("- bar (user):");
+    expect(result.stdout).not.toContain("base");
+
+    const json = await runCli(["archetype", "list", "--root", root, "--json"], homeEnv);
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "foo", source: "project" }),
+        expect.objectContaining({ name: "bar", source: "user" }),
+        expect.objectContaining({ name: "study", source: "built-in" }),
+        expect.objectContaining({ name: "science", source: "built-in" }),
+      ]),
+    );
+    expect(
+      (JSON.parse(json.stdout) as Array<{ name: string; source: string }>)
+        .filter((archetype) => archetype.source === "built-in")
+        .map((archetype) => archetype.name),
+    ).toEqual(USER_FACING_BUILT_INS);
   });
 
   it("runs adopt as a dry-run by default without moving existing files", async () => {
@@ -294,31 +580,85 @@ describe("assay CLI subprocess behavior", () => {
     });
   });
 
-  it("shows manifest archetype and mode through the archetype command and profile alias", async () => {
+  it("maps AGENTS.md lifecycle options to core behavior", async () => {
+    const root = path.join(await tempDir(), "agents");
+
+    const noAgentsInit = await runCli(["init", root, "--name", "Agents CLI", "--no-agents"]);
+    expect(noAgentsInit.exitCode).toBe(0);
+    expect(await exists(path.join(root, "AGENTS.md"))).toBe(false);
+
+    const dryRun = await runCli(["update", "--root", root, "--agents", "--dry-run"]);
+    expect(dryRun.exitCode).toBe(0);
+    expect(dryRun.stdout).toContain("AGENTS.md: would create Assay managed block");
+    expect(await exists(path.join(root, "AGENTS.md"))).toBe(false);
+
+    const updateAgents = await runCli(["update", "--root", root, "--agents"]);
+    expect(updateAgents.exitCode).toBe(0);
+    expect(updateAgents.stdout).toContain("Created files");
+    expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toContain("<!-- ASSAY:START -->");
+
+    await writeFile(
+      path.join(root, "AGENTS.md"),
+      "# Local\n\n<!-- ASSAY:START -->\npartial\n",
+      "utf8",
+    );
+    const malformed = await runCli(["update", "--root", root, "--agents"]);
+    expect(malformed.exitCode).toBe(0);
+    expect(malformed.stdout).toContain("AGENTS.md has incomplete Assay managed block markers");
+    expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe(
+      "# Local\n\n<!-- ASSAY:START -->\npartial\n",
+    );
+
+    await rm(path.join(root, "AGENTS.md"));
+    const ordinaryUpdate = await runCli(["update", "--root", root]);
+    expect(ordinaryUpdate.exitCode).toBe(0);
+    expect(await exists(path.join(root, "AGENTS.md"))).toBe(false);
+
+    const adoptRoot = path.join(await tempDir(), "adopt-no-agents");
+    await mkdir(path.join(adoptRoot, "src"), { recursive: true });
+    await writeFile(path.join(adoptRoot, "src", "index.ts"), "export {};\n", "utf8");
+    const adopt = await runCli([
+      "adopt",
+      "--root",
+      adoptRoot,
+      "--name",
+      "Adopt No Agents",
+      "--apply",
+      "--no-agents",
+    ]);
+    expect(adopt.exitCode).toBe(0);
+    expect(await exists(path.join(adoptRoot, "AGENTS.md"))).toBe(false);
+  });
+
+  it("shows manifest archetype and mode through the archetype command only", async () => {
     const root = path.join(await tempDir(), "demo");
     await runCli(["init", root, "--name", "Archetype CLI"]);
     await writeFile(
       path.join(root, ".framework", "config.yaml"),
-      "profile: contest\nprofile_version: 99\nmode: absorption\n",
+      "profile: solve\nprofile_version: 99\nmode: absorption\n",
       "utf8",
     );
 
     const archetype = await runCli(["archetype", "--root", root]);
     expect(archetype.exitCode).toBe(0);
     expect(archetype.stdout).toContain("Project: Archetype CLI");
-    expect(archetype.stdout).toContain("Archetype: research");
+    expect(archetype.stdout).toContain("Archetype: study");
     expect(archetype.stdout).toContain("Mode: learning");
     expect(archetype.stdout).not.toContain("Version:");
     expect(archetype.stderr).toBe("");
 
-    const profile = await runCli(["profile", "--root", root, "--json"]);
-    expect(profile.exitCode).toBe(0);
-    expect(JSON.parse(profile.stdout)).toMatchObject({
+    const archetypeJson = await runCli(["archetype", "--root", root, "--json"]);
+    expect(archetypeJson.exitCode).toBe(0);
+    expect(JSON.parse(archetypeJson.stdout)).toMatchObject({
       project: "Archetype CLI",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
-      deprecated_alias: true,
     });
+
+    const profile = await runCli(["profile", "--root", root]);
+    expect(profile.exitCode).toBe(1);
+    expect(profile.stdout).toBe("");
+    expect(profile.stderr).toContain("unknown command 'profile'");
   });
 
   it("refuses adopt when a framework manifest already exists", async () => {
@@ -368,7 +708,7 @@ describe("assay CLI subprocess behavior", () => {
     const iteration = await runCliIn(workspace, ["iteration", "start", "Try Pattern"]);
     expect(iteration.exitCode).toBe(1);
     expect(iteration.stdout).toBe("");
-    expect(iteration.stderr).toContain("capability not enabled in archetype research: iteration");
+    expect(iteration.stderr).toContain("capability not enabled in archetype study: iteration");
 
     const event = await runCliIn(workspace, [
       "event",
@@ -378,9 +718,9 @@ describe("assay CLI subprocess behavior", () => {
       "--text",
       "Captured from CLI test",
     ]);
-    expect(event.exitCode).toBe(1);
-    expect(event.stdout).toBe("");
-    expect(event.stderr).toContain("capability not enabled in archetype research: events");
+    expect(event.exitCode).toBe(0);
+    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.stderr).toBe("");
   });
 
   it("returns non-zero for failed checks", async () => {
@@ -438,7 +778,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stderr).toContain("Allowed choices are");
   });
 
-  it("runs the remaining compatibility commands", async () => {
+  it("runs the remaining cross-feature commands", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await mkdir(source, { recursive: true });
@@ -456,27 +796,14 @@ describe("assay CLI subprocess behavior", () => {
     const iteration = await runCli(["iteration", "start", "Try Pattern", "--root", root]);
     expect(iteration.exitCode).toBe(1);
     expect(iteration.stdout).toBe("");
-    expect(iteration.stderr).toContain("capability not enabled in archetype research: iteration");
+    expect(iteration.stderr).toContain("capability not enabled in archetype study: iteration");
 
-    const contestRoot = path.join(await tempDir(), "contest");
-    await runCli([
-      "init",
-      contestRoot,
-      "--name",
-      "Compatibility Contest",
-      "--archetype",
-      "contest",
-    ]);
-    const contestIteration = await runCli([
-      "iteration",
-      "start",
-      "Try Pattern",
-      "--root",
-      contestRoot,
-    ]);
-    expect(contestIteration.exitCode).toBe(0);
-    expect(contestIteration.stdout).toContain("Started iteration: iterations/");
-    expect(contestIteration.stdout).toContain("Plan:");
+    const solveRoot = path.join(await tempDir(), "solve");
+    await runCli(["init", solveRoot, "--name", "Compatibility Solve", "--archetype", "solve"]);
+    const solveIteration = await runCli(["iteration", "start", "Try Pattern", "--root", solveRoot]);
+    expect(solveIteration.exitCode).toBe(0);
+    expect(solveIteration.stdout).toContain("Started iteration: iterations/");
+    expect(solveIteration.stdout).toContain("Plan:");
 
     const event = await runCli([
       "event",
@@ -488,9 +815,9 @@ describe("assay CLI subprocess behavior", () => {
       "--root",
       root,
     ]);
-    expect(event.exitCode).toBe(1);
-    expect(event.stdout).toBe("");
-    expect(event.stderr).toContain("capability not enabled in archetype research: events");
+    expect(event.exitCode).toBe(0);
+    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.stderr).toBe("");
 
     const migration = await runCli(["migrate-layout", "--root", root, "--dry-run"]);
     expect(migration.exitCode).toBe(0);

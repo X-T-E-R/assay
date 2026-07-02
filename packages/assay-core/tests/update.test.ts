@@ -36,7 +36,7 @@ async function exists(target: string): Promise<boolean> {
 }
 
 async function readmeTemplate() {
-  const template = (await desiredRuntimeTemplates("Demo", "research", "learning")).find(
+  const template = (await desiredRuntimeTemplates("Demo", "study", "learning")).find(
     (candidate) => candidate.path === "README.md",
   );
   if (!template) {

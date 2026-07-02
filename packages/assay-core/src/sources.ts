@@ -12,7 +12,7 @@ import type { CheckRow } from "./results.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import { nowIso } from "./time.js";
 
-export const SOURCE_CAPTURE_MODES = ["checkout", "thin", "metadata", "archive"] as const;
+export const SOURCE_CAPTURE_MODES = ["checkout", "archive"] as const;
 export type SourceCaptureMode = (typeof SOURCE_CAPTURE_MODES)[number];
 
 export const SOURCE_CHANGE_CLASSES = ["same", "patch", "normal", "major", "replacement"] as const;
@@ -1656,17 +1656,6 @@ export async function collectSourceHealthRows(root: string): Promise<CheckRow[]>
         status: "warning",
         message: `major source change '${latest.observation_id}' needs revalidation analysis`,
       });
-    }
-    if (latest.capture_mode === "thin") {
-      const materials = path.join(source.absolutePath, "materials");
-      const materialEntries = (await exists(materials)) ? await readdir(materials) : [];
-      if (materialEntries.length === 0) {
-        rows.push({
-          path: `${source.relativePath}/materials`,
-          status: "warning",
-          message: `thin source '${source.alias}' has no extracted materials`,
-        });
-      }
     }
   }
   return rows;

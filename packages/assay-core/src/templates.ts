@@ -1,5 +1,5 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
-import { type Archetype, loadArchetype } from "./profile.js";
+import { type Archetype, type ArchetypeLookupOptions, loadArchetype } from "./profile.js";
 
 export interface TemplateFile {
   readonly path: string;
@@ -40,26 +40,21 @@ function dedent(text: string): string {
 
 /**
  * Generate the list of template files for a new workspace, driven by an archetype.
- * The archetype YAML declares which templates to write and at
- * what path; this function resolves each templateId to its content generator.
- * Mode overrides the archetype's default mode when supplied (e.g. `init --mode absorption`).
- *
- * To evolve the default structure, edit profiles/research.yaml — not this
- * function (see ADR-0005).
+ * The archetype YAML declares which templates to write and at what path; this
+ * function resolves each templateId to its content generator.
+ * To evolve the default structure, edit profiles/study.yaml or add a custom
+ * archetype YAML — not this function.
  */
 export async function desiredTemplates(
   project: string,
   mode: "learning" | "absorption" = "learning",
-  archetypeName = "research",
+  archetypeName = "study",
+  options: ArchetypeLookupOptions = {},
 ): Promise<TemplateFile[]> {
-  const archetype = await loadArchetype(archetypeName);
+  const archetype = await loadArchetype(archetypeName, options);
   return archetypeTemplates(project, mode, archetype);
 }
 
-/**
- * Synchronous variant for tests/callers that already hold an Archetype. Resolves
- * template entries to content via the dispatcher.
- */
 export function archetypeTemplates(
   project: string,
   mode: "learning" | "absorption",
@@ -68,23 +63,16 @@ export function archetypeTemplates(
   const result: TemplateFile[] = [];
   for (const entry of archetype.templates) {
     const content = templateContentById(entry.templateId, project, mode, archetype);
-    if (content === null) continue; // unknown templateId: skip (archetype can reference future templates)
+    if (content === null) continue;
     result.push(templateFile({ path: entry.path, templateId: entry.templateId, content }));
   }
   return result;
 }
 
-export const profileTemplates = archetypeTemplates;
-
-/**
- * Dispatcher: map a templateId to its content generator. Content functions
- * remain in TS because some templates interpolate project state. Adding a new
- * template means adding a case here AND an entry in the archetype YAML.
- */
 function templateContentById(
   templateId: string,
   project: string,
-  mode: "learning" | "absorption",
+  _mode: "learning" | "absorption",
   _archetype: Archetype,
 ): string | null {
   switch (templateId) {
@@ -98,7 +86,6 @@ function templateContentById(
       return `${CURRENT_VERSION}\n`;
     case "framework.migrations.readme":
       return migrationsReadme();
-    case "framework.events.gitkeep":
     case "framework.backups.gitkeep":
     case "analyses.references.gitkeep":
     case "analyses.gaps.gitkeep":
@@ -127,7 +114,7 @@ function templateContentById(
     case "knowledge.readme":
       return knowledgeReadme();
     case "knowledge.decisions.readme":
-      return "# decisions/\n\nAccepted decisions and ADRs.\n";
+      return knowledgeDecisionsReadme();
     case "knowledge.decisions.adr_template":
       return adrTemplate();
     case "knowledge.guides.readme":
@@ -140,21 +127,42 @@ function templateContentById(
       return dataReadme();
     case "releases.readme":
       return releasesReadme();
-    // Contest profile v2 (ADR-0006)
-    case "contest.manifest":
-      return contestManifest(project);
-    case "contest.selection":
-      return contestSelection();
-    case "contest.runs.jsonl":
-      return contestRunsJsonl();
-    case "contest.intake.readme":
-      return contestIntakeReadme();
-    case "contest.benchmarks.readme":
-      return contestBenchmarksReadme();
-    case "contest.submissions.readme":
-      return contestSubmissionsReadme();
-    case "contest.tools.readme":
-      return contestToolsReadme();
+    case "solve.objective":
+      return solveObjective(project);
+    case "solve.current_attempt":
+      return solveCurrentAttempt();
+    case "solve.runs.jsonl":
+      return solveRunsJsonl();
+    case "solve.intake.readme":
+      return solveIntakeReadme();
+    case "solve.benchmarks.readme":
+      return solveBenchmarksReadme();
+    case "solve.attempts.readme":
+      return solveAttemptsReadme();
+    case "solve.tools.readme":
+      return solveToolsReadme();
+    case "science.hypotheses.readme":
+      return scienceHypothesesReadme();
+    case "science.experiments.readme":
+      return scienceExperimentsReadme();
+    case "science.datasets.readme":
+      return scienceDatasetsReadme();
+    case "science.findings.readme":
+      return scienceFindingsReadme();
+    case "science.papers.readme":
+      return sciencePapersReadme();
+    case "evaluation.candidates.readme":
+      return evaluationCandidatesReadme();
+    case "evaluation.criteria":
+      return evaluationCriteria();
+    case "evaluation.scorecards.readme":
+      return evaluationScorecardsReadme();
+    case "explore.approaches.readme":
+      return exploreApproachesReadme();
+    case "explore.trials.readme":
+      return exploreTrialsReadme();
+    case "explore.comparison":
+      return exploreComparison();
     default:
       return null;
   }
@@ -164,28 +172,21 @@ export function rootReadme(project: string): string {
   return dedent(`
     # ${project}
 
-    A versioned external-system-learning framework.
+    A versioned Assay workspace.
 
     Core loop:
 
     \`\`\`text
-    source material → analyses or implementation → systems → knowledge
+    evidence in -> structured checks -> decisions -> knowledge growth
     \`\`\`
 
     | Path | Purpose |
     | --- | --- |
     | \`.framework/\` | Runtime metadata: version, manifest, events, migrations, backups |
-    | \`references/\` | Frozen external snapshots when the archetype uses learning mode |
-    | \`analyses/\` | Analysis layer when research output is first-class |
-    | \`systems/\` | Registered active systems; use the systems registry for primary status |
-    | \`iterations/\` | Optional implementation experiments when enabled by the archetype |
+    | \`systems/\` | Registered active systems and local implementations |
     | \`knowledge/\` | Accepted reusable knowledge |
 
-    ## First workflow
-
-    1. Register active systems with \`system register\`.
-    2. Use the archetype-specific intake or reference outlet for source material.
-    3. Promote durable learning to \`knowledge/\`.
+    Use \`assay check\` to validate the workspace and \`assay status\` to inspect open work.
     `);
 }
 
@@ -213,7 +214,7 @@ export function frameworkReadme(): string {
     - \`manifest.json\`: managed file hashes and template IDs.
     - \`events/\`: JSONL event ledger.
     - \`migrations/\`: migration notes and plans.
-    - \`backups/\`: timestamped backups before update/migration.
+    - \`backups/\`: timestamped backups before update or migration.
 
     Current template release is ${CURRENT_VERSION}; layout release is ${LAYOUT_VERSION}.
     `);
@@ -229,7 +230,6 @@ export function referencesReadme(): string {
 
     Store external systems here. References are evidence inputs, not local implementations.
 
-    - \`intake/\`: candidate lists and search coverage notes.
     - \`<source>/\`: living source card with \`source.yaml\`, current \`checkout/\`, bounded \`materials/\`, \`history.md\`, and the internal \`.assay/\` observation ledger.
     - \`frozen/YYYYMM/<name>/\`: legacy or explicit full-capture snapshots, default read-only.
     `);
@@ -256,8 +256,8 @@ export function analysesReadme(): string {
     | Subdir | Purpose |
     | --- | --- |
     | \`references/\` | Analysis cards for external systems |
-    | \`gaps/\` | Gaps between an external system and our current framework |
-    | \`patterns/\` | Candidate patterns that need validation |
+    | \`gaps/\` | Gaps between an external system and the current workspace |
+    | \`patterns/\` | Candidate reusable patterns that need validation |
     | \`templates/\` | Analysis templates |
     `);
 }
@@ -332,7 +332,15 @@ export function patternCardTemplate(): string {
 }
 
 export function systemsReadme(): string {
-  return "# systems/\n\nOur active framework/system implementations. The framework manages only each system's `system.yaml` contract; system source, README files, changelogs, and docs belong to the system itself.\n";
+  return "# systems/\n\nYour active system implementations and registered system metadata. Assay manages each system's registry contract; system source and docs belong to the system itself.\n";
+}
+
+export function knowledgeReadme(): string {
+  return "# knowledge/\n\nStore accepted reusable knowledge only. Work-in-progress analysis belongs in the archetype-specific working directories.\n";
+}
+
+export function knowledgeDecisionsReadme(): string {
+  return "# decisions/\n\nAccepted decisions and ADRs.\n";
 }
 
 export function adrTemplate(): string {
@@ -358,126 +366,8 @@ export function adrTemplate(): string {
     `);
 }
 
-export function changelog(): string {
-  return dedent(`
-    # Changelog
-
-    All notable changes to this framework should be documented here.
-
-    ## [${CURRENT_VERSION}] - 2026-06-13
-
-    ### Added
-
-    - Versioned framework layout.
-    - Manifest-based managed file tracking.
-    - Four-zone core workflow: references, analyses, systems, iterations.
-    `);
-}
-
-export function artifactModelDoc(): string {
-  return dedent(`
-    # Artifact Model
-
-    | Artifact | Path | Exit |
-    | --- | --- | --- |
-    | Reference candidate | \`references/intake/\` | freeze / reject |
-    | Living source | \`references/<source>/\` | sync / delta analysis / revalidation |
-    | Frozen reference | \`references/frozen/YYYYMM/<name>/\` | legacy/full-capture analysis |
-    | Reference analysis | \`analyses/references/\` | reject / pattern / ADR |
-    | Gap analysis | \`analyses/gaps/\` | iteration / roadmap |
-    | Candidate pattern | \`analyses/patterns/\` | iteration / reject |
-    | Iteration | \`iterations/YYYY-MM-DD-<topic>/\` | adopt / reject / retest |
-    | System change | registered \`systems/<name>/\` | release / rollback |
-    | Knowledge entry | \`knowledge/\` | future reuse |
-    `);
-}
-
-export function workflowsDoc(): string {
-  return dedent(`
-    # Workflows
-
-    ## Reference intake
-
-    1. Define the search theme and acceptance criteria.
-    2. Capture candidate links and coverage notes in \`references/intake/\`.
-    3. Add living sources with \`assay source add <repo-or-dir> [alias]\`; use \`checkout/\` for the current source and \`.assay/\` for observations.
-    4. Use \`assay source sync\` when the external source changes; classify major changes as revalidation work instead of silently invalidating knowledge.
-    5. Use \`references/frozen/YYYYMM/\` only for legacy or explicit full captures.
-    6. Write a reference analysis; do not stop at collecting source code.
-
-    ## Analysis to pattern
-
-    1. Identify the problem solved by the external system.
-    2. Extract a mechanism, not just surface file names.
-    3. Record applicability and anti-applicability.
-    4. Choose an exit: reject, ADR, or iteration.
-
-    ## Local iteration
-
-    1. Start an iteration with a hypothesis and rollback plan.
-    2. Change only our \`systems/\` implementation.
-    3. Verify the result.
-    4. Promote validated learning to \`knowledge/\` or changelog.
-    `);
-}
-
-export function updateMechanismDoc(): string {
-  return dedent(`
-    # Update Mechanism
-
-    ## State files
-
-    - \`.framework/VERSION\`: installed framework version.
-    - \`.framework/manifest.json\`: managed files, template IDs, hashes, and installed versions.
-    - \`.framework/backups/\`: backups before writes.
-
-    ## Classification
-
-    | Classification | Meaning | Default |
-    | --- | --- | --- |
-    | new | desired template does not exist and is not user-deleted | create |
-    | auto-update | manifest hash equals current hash | update |
-    | modified | current hash differs from manifest hash | skip |
-    | user-deleted | manifest tracked it but path is absent | respect deletion |
-    | untracked-existing | path exists but not in manifest | skip / \`.new\` |
-
-    ## Migration
-
-    Layout migrations are explicit. Run dry-run first, then apply copy-first migrations only after review.
-    `);
-}
-
-export function roadmapDoc(): string {
-  return dedent(`
-    # Roadmap
-
-    ## P0 Bootstrap
-
-    - [ ] Structure exists.
-    - [ ] Manifest exists.
-    - [ ] First reference frozen.
-    - [ ] First analysis completed.
-
-    ## P1 Internalization
-
-    - [ ] At least one external pattern validated through an iteration.
-    - [ ] Update mechanism tested on a dirty project.
-    - [ ] CLI packaged and smoke-tested.
-
-    ## P2 Governance
-
-    - [ ] Release notes and changelog cadence.
-    - [ ] Contribution guide.
-    - [ ] Reference security/license checklist.
-    `);
-}
-
 export function iterationsReadme(): string {
-  return dedent(`
-    # iterations/
-
-    Iterations are controlled changes to our own framework. Each iteration should contain a hypothesis, scope, verification, result, and rollback plan.
-    `);
+  return "# iterations/\n\nIterations are controlled changes to your own systems. Each iteration should contain a hypothesis, scope, verification, result, and rollback plan.\n";
 }
 
 export function iterationPlanTemplate(): string {
@@ -511,21 +401,101 @@ export function bootstrapIterationPlan(today: string): string {
 
     ## Hypothesis
 
-    A versioned four-zone framework structure will reduce ambiguity and make updates safer than a notes-first layout.
+    A versioned framework structure will reduce ambiguity and make updates safer than a notes-first layout.
 
     ## Verification
 
     - \`assay check --root .\` passes.
     - \`.framework/manifest.json\` exists.
-    - First external reference receives an analysis card.
     `);
 }
 
-export function knowledgeReadme(): string {
+export function changelog(): string {
   return dedent(`
-    # knowledge/
+    # Changelog
 
-    Store accepted reusable knowledge only. Work-in-progress analysis belongs in \`analyses/\`; experiments on our own system belong in \`iterations/\`.
+    All notable changes to this framework should be documented here.
+
+    ## [${CURRENT_VERSION}] - 2026-06-13
+
+    ### Added
+
+    - Versioned framework layout.
+    - Manifest-based managed file tracking.
+    `);
+}
+
+export function artifactModelDoc(): string {
+  return dedent(`
+    # Artifact Model
+
+    | Artifact | Path | Exit |
+    | --- | --- | --- |
+    | Living source | \`references/<source>/\` | sync / delta analysis / revalidation |
+    | Frozen reference | \`references/frozen/YYYYMM/<name>/\` | legacy/full-capture analysis |
+    | Analysis | \`analyses/\` | reject / pattern / ADR |
+    | Iteration | \`iterations/YYYY-MM-DD-<topic>/\` | adopt / reject / retest |
+    | Knowledge entry | \`knowledge/\` | future reuse |
+    `);
+}
+
+export function workflowsDoc(): string {
+  return dedent(`
+    # Workflows
+
+    ## Source intake
+
+    1. Define the theme and acceptance criteria.
+    2. Add living sources with \`assay source add <repo-or-dir> [alias]\`.
+    3. Use \`assay source sync\` when the external source changes.
+    4. Write an analysis or start an iteration; do not stop at collecting files.
+
+    ## Analysis to pattern
+
+    1. Identify the problem solved by the external system.
+    2. Extract a mechanism, not just surface file names.
+    3. Record applicability and anti-applicability.
+    4. Choose an exit: reject, ADR, or iteration.
+    `);
+}
+
+export function updateMechanismDoc(): string {
+  return dedent(`
+    # Update Mechanism
+
+    ## State files
+
+    - \`.framework/VERSION\`: installed framework version.
+    - \`.framework/manifest.json\`: managed files, template IDs, hashes, and installed versions.
+    - \`.framework/backups/\`: backups before writes.
+
+    ## Classification
+
+    | Classification | Meaning | Default |
+    | --- | --- | --- |
+    | new | desired template does not exist and is not user-deleted | create |
+    | auto-update | manifest hash equals current hash | update |
+    | modified | current hash differs from manifest hash | skip |
+    | user-deleted | manifest tracked it but path is absent | respect deletion |
+    | untracked-existing | path exists but not in manifest | skip / \`.new\` |
+    `);
+}
+
+export function roadmapDoc(): string {
+  return dedent(`
+    # Roadmap
+
+    ## P0 Bootstrap
+
+    - [ ] Structure exists.
+    - [ ] Manifest exists.
+    - [ ] First evidence input captured.
+
+    ## P1 Internalization
+
+    - [ ] At least one external pattern validated through an iteration.
+    - [ ] Update mechanism tested on a dirty project.
+    - [ ] CLI packaged and smoke-tested.
     `);
 }
 
@@ -537,25 +507,16 @@ export function releasesReadme(): string {
   return "# releases/\n\nRelease notes, packages, and migration guides.\n";
 }
 
-// ---------------------------------------------------------------------------
-// Contest profile v2 templates (ADR-0006).
-// These are scoped to the `contest` profile; the assay default profile
-// does not reference them. Keep generators small and explicit — these files
-// hold contest-specific manifest semantics (spec/env/selection pointers,
-// runs.jsonl, intake/benchmarks/submissions READMEs).
-// ---------------------------------------------------------------------------
-
-export function contestManifest(project: string): string {
+export function solveObjective(project: string): string {
   return dedent(`
     {
-      "kind": "contest",
+      "kind": "objective",
       "schema_version": 1,
-      "contest_id": "${slugifyForJson(project)}",
+      "objective_id": "${slugifyForJson(project)}",
       "title": "${project}",
       "status": "template",
-      "current_spec_id": null,
-      "current_environment_ids": [],
-      "current_selection_path": "systems/current.json",
+      "success_criteria": [],
+      "current_attempt_path": "systems/current.json",
       "artifact_store": {
         "type": "local-content-addressed",
         "root": "intake/objects/sha256"
@@ -564,132 +525,195 @@ export function contestManifest(project: string): string {
   `);
 }
 
-/**
- * Q1+Q2 selection pointer (v2 ADR-0006). Deprecated in v3 — use
- * contestSelectionV3 instead once migration completes. The new form
- * uses a generic `questions: []` list where each entry carries an id,
- * route path,  and an optional sealed_tree_hash. This handles any
- * number of questions (not just 2).
- */
-export function contestSelection(): string {
-  // v2 backward-compatible fallback — delegates to the new schema.
-  return contestSelectionV3();
-}
-
-/**
- * Selection pointer v3: generic `questions: []` list.
- *
- * Example usage:
- *   { "kind": "selection", "questions": [
- *       { "id": "q1", "base_path": "systems/wireless-solution-systems/question-1-ai-forecasting", "route": "v6-main-gap-floor" },
- *       { "id": "q2", "base_path": "systems/wireless-solution-systems/question-2-scheduler", "route": "v6-o3-52-main" }
- *   ]}
- *
- * `base_path` is the absolute question directory under the registered system,
- * `route` is the folder name under that base_path. The sealed tree hash
- * is null by default; it gets stamped when a submission is assembled.
- */
-export function contestSelectionV3(): string {
+export function solveCurrentAttempt(): string {
   return dedent(`
     {
-      "kind": "selection",
-      "schema_version": "v3-1",
-      "questions": [],
-      "spec_id": null,
-      "environment_id": null,
+      "kind": "current_attempt",
+      "schema_version": 1,
+      "attempts": [],
+      "objective_id": null,
+      "benchmark_id": null,
       "updated_at": null
     }
   `);
 }
 
-export function contestRunsJsonl(): string {
-  // Append-only run ledger. Each line is one run record. Empty by default —
-  // the file exists so absorb/check can detect the contest profile in use.
-  // Recommended row schema (kept minimal on purpose; add fields as needed):
-  //   {"ts": "...", "q": "q1|q2", "route": "...", "benchmark": "...", "spec": "...", "env": "...", "score": "...", "kind": "exploratory|formal"}
+export function solveRunsJsonl(): string {
   return "";
 }
 
-export function contestIntakeReadme(): string {
+export function solveIntakeReadme(): string {
   return dedent(`
     # intake/
 
-    Raw external deliveries. Immutable layer (ADR-0006).
+    Raw objective inputs and external evidence. Immutable layer.
 
-    Every delivery lives at \`intake/<delivery-id>/\` and contains:
-    - the original artifact (ZIP, directory dump, etc.)
-    - \`sha256.txt\` recording the raw bytes hash
-    - \`source.md\` recording where it came from, when, and the prompt/context
+    Every delivery lives at \`intake/<delivery-id>/\` and records the original artifact, a hash, and source context. Once written, a delivery is not modified; mistakes create a new delivery.
 
-    Once written, a delivery is **not modified**. Mistakes create a new
-    delivery; the original stays as evidence of what was actually delivered.
-
-    This is the only place where Web AI ZIP packages or third-party deliveries
-    enter the project before any normalization. The normalized form (if any)
-    lives under \`systems/qN/<route>/\` with a back-reference to the delivery.
+    This is the evidence boundary before normalization. The normalized form lives under the relevant system with a back-reference to the delivery.
   `);
 }
 
-export function contestBenchmarksReadme(): string {
+export function solveBenchmarksReadme(): string {
   return dedent(`
     # benchmarks/
 
-    Versioned test sets with explicit applicability scope.
+    Versioned checks with explicit applicability scope.
 
-    Each benchmark lives at \`benchmarks/<benchmark-id>/\` and should declare:
-    - what it tests (public samples / random / stress / regression / hidden)
-    - generator version and seed (if synthetic)
-    - leakage risk and interpretive scope
-
-    A run records its \`benchmark_id\` in \`runs.jsonl\`. Scores on a benchmark
-    are scoped to that benchmark — they do not auto-generalize to others.
+    Each benchmark should declare what it tests, how it was generated, leakage risk, and interpretive scope. Scores are scoped to the benchmark that produced them.
   `);
 }
 
-export function contestSubmissionsReadme(): string {
+export function solveAttemptsReadme(): string {
   return dedent(`
-    # submissions/
+    # attempts/
 
-    Immutable submission packages (ADR-0006).
+    Immutable attempt packages.
 
-    Each submission lives at \`submissions/<submission-id>/\` and contains:
-    - \`package.zip\` — the final upload bytes
-    - \`staging.sha256\` — file-tree hash of the staging directory the ZIP was built from
-    - \`package.sha256\` — hash of the ZIP bytes themselves
-    - \`manifest.md\` — references to the q1/q2 routes, spec, environment, and validation report
+    Each attempt lives at \`attempts/<attempt-id>/\` and contains the preserved output, hashes, and a manifest referencing the objective, source inputs, benchmark, score, and validation report.
 
-    A submission is **assembled from sealed routes** referenced by a snapshot
-    of \`systems/current.json\`. Once sealed, the package is not edited; a new
-    submission gets a new id.
-
-    Double hashing matters: \`staging.sha256\` proves what content was packaged,
-    \`package.sha256\` proves what bytes were uploaded. Compression-tool
-    metadata differences (timestamps, file order) can change ZIP bytes without
-    changing content; both hashes together close that gap.
+    An attempt is assembled from an explicit snapshot referenced by \`systems/current.json\`. Once recorded, it is not edited; a new attempt gets a new id.
   `);
 }
 
-export function contestToolsReadme(): string {
+export function solveToolsReadme(): string {
   return dedent(`
     # tools/
 
-    Contest-specific tooling. Conventional sub-locations:
+    Objective-specific tooling. Conventional sub-locations:
 
-    - \`tools/judge/\` — local evaluator/judge (Dockerfile, runner, scoring config).
-      The judge is the local replica of the contest's official scoring environment.
-    - \`tools/pack/\` — submission packagers (assembles q1+q2 into the contest's
-      required ZIP layout, stamps both staging-tree and ZIP-byte SHA-256).
-    - \`tools/import/\` — importers for external deliveries (intake/<id>/ → a
-      normalized form usable as a candidate route).
-    - \`tools/handoff/\` — handoff helpers if any contest-specific glue is needed
-      (general handoff lives under \`.framework/handoffs/\`).
+    - \`tools/evaluate/\` — local evaluator, runner, or scoring config. It should make benchmark scoring repeatable and inspectable.
+    - \`tools/package/\` — attempt packagers that stamp both staging-tree and artifact/package SHA-256 values.
+    - \`tools/import/\` — importers for external deliveries into a normalized form usable by a candidate approach.
+    - \`tools/report/\` — objective-specific reporting helpers if benchmark output needs a repeatable publication format.
 
-    Tools that are not contest-specific belong elsewhere (handoff generators in
-    \`.framework/handoffs/\`, generic build scripts under each route's source).
+    Tools that are not objective-specific belong elsewhere, such as generic build scripts under the relevant system source.
   `);
 }
 
-// Helper for contestManifest: produce a JSON-safe lowercase slug.
+export function scienceHypothesesReadme(): string {
+  return dedent(`
+    # hypotheses/
+
+    Candidate claims before evidence is collected.
+
+    Each hypothesis should name the claim, expected observation, falsification condition, and linked experiment plan.
+  `);
+}
+
+export function scienceExperimentsReadme(): string {
+  return dedent(`
+    # experiments/
+
+    Experiment plans and execution notes.
+
+    Keep protocol, variables, environment, and result links together so evidence can be audited later.
+  `);
+}
+
+export function scienceDatasetsReadme(): string {
+  return dedent(`
+    # datasets/
+
+    Dataset cards, provenance, licenses, transformations, and quality notes.
+
+    Preserve enough detail for another run to understand what evidence was used.
+  `);
+}
+
+export function scienceFindingsReadme(): string {
+  return dedent(`
+    # findings/
+
+    Evidence-backed findings.
+
+    A finding should link to hypotheses, experiments, datasets, and limitations. Separate observed evidence from interpretation.
+  `);
+}
+
+export function sciencePapersReadme(): string {
+  return dedent(`
+    # papers/
+
+    Drafts, outlines, figures, and publication notes.
+
+    Keep claims traceable to findings and evidence instead of prose-only memory.
+  `);
+}
+
+export function evaluationCandidatesReadme(): string {
+  return dedent(`
+    # candidates/
+
+    External candidates under review.
+
+    Give each candidate a source, version, evaluation scope, and known constraints before scoring.
+  `);
+}
+
+export function evaluationCriteria(): string {
+  return dedent(`
+    # Evaluation Criteria
+
+    This file defines the decision matrix before scoring starts.
+
+    | Criterion | Weight | Measurement | Notes |
+    | --- | ---: | --- | --- |
+    | Fit | 1 | | |
+    | Risk | 1 | | |
+    | Operability | 1 | | |
+
+    ## Final selection
+
+    Record the final selection only after scorecards are complete and an ADR captures the decision.
+  `);
+}
+
+export function evaluationScorecardsReadme(): string {
+  return dedent(`
+    # scorecards/
+
+    Scorecards apply the decision matrix to each candidate.
+
+    Keep raw observations, criterion scores, weighting notes, and final selection rationale separate so tradeoffs stay visible.
+  `);
+}
+
+export function exploreApproachesReadme(): string {
+  return dedent(`
+    # approaches/
+
+    Parallel local approaches.
+
+    Give each approach a short premise, owner, expected upside, risk, and trial plan. Keep approaches comparable enough for converging later.
+  `);
+}
+
+export function exploreTrialsReadme(): string {
+  return dedent(`
+    # trials/
+
+    Trial notes for local approaches.
+
+    Record setup, observed behavior, costs, surprises, and whether the approach should continue, merge, or stop.
+  `);
+}
+
+export function exploreComparison(): string {
+  return dedent(`
+    # Approach Comparison
+
+    Use this as the horse-race board for approaches that are still being shaped.
+
+    | Approach | Evidence | Strength | Weakness | Next move |
+    | --- | --- | --- | --- | --- |
+
+    ## Convergence decision
+
+    State what is converging, what remains uncertain, and which approach should become the next concrete direction.
+  `);
+}
+
 function slugifyForJson(value: string): string {
   return value
     .trim()

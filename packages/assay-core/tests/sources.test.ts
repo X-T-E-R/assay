@@ -6,6 +6,7 @@ import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  SOURCE_CAPTURE_MODES,
   addSource,
   checkFramework,
   diffSource,
@@ -52,6 +53,10 @@ async function initAssayWorkspace(name: string): Promise<string> {
 }
 
 describe("source observations", () => {
+  it("exposes only behaviorally distinct capture modes", () => {
+    expect(SOURCE_CAPTURE_MODES).toEqual(["checkout", "archive"]);
+  });
+
   it("adds a checkout-backed local directory source at a shallow reference path", async () => {
     const root = await initAssayWorkspace("SourceAdd");
     const source = path.join(await tempDir(), "source-project");
@@ -135,6 +140,91 @@ describe("source observations", () => {
         (row) => row.path.includes("references/source-project") && row.status === "warning",
       ),
     ).toEqual([]);
+  });
+
+  it("adds an archive-backed local directory source without creating a checkout", async () => {
+    const root = await initAssayWorkspace("SourceArchive");
+    const source = path.join(await tempDir(), "archive-source");
+    await mkdir(path.join(source, "src"), { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Archive Source\n\nUseful source.\n", "utf8");
+    await writeFile(path.join(source, "src", "index.ts"), "export const value = 1;\n", "utf8");
+
+    const result = await addSource({
+      root,
+      source,
+      alias: "Archive Source",
+      capture: "archive",
+      now: new Date("2026-07-01T08:00:00"),
+    });
+
+    expect(result.path).toBe("references/archive-source");
+    expect(result.checkoutPath).toBeNull();
+    expect(result.observation.capture_mode).toBe("archive");
+    expect(result.observation.capture_path).toBe(
+      `.assay/captures/${result.observation.observation_id}/source`,
+    );
+    expect(
+      await exists(path.join(root, "references", "archive-source", "checkout", "README.md")),
+    ).toBe(false);
+    expect(
+      await exists(
+        path.join(
+          root,
+          "references",
+          "archive-source",
+          ".assay",
+          "captures",
+          result.observation.observation_id,
+          "source",
+          "README.md",
+        ),
+      ),
+    ).toBe(true);
+
+    const observationYaml = await readFile(
+      path.join(
+        root,
+        "references",
+        "archive-source",
+        ".assay",
+        "observations",
+        `${result.observation.observation_id}.yaml`,
+      ),
+      "utf8",
+    );
+    expect(observationYaml).toContain("capture_mode: archive");
+    expect(observationYaml).toContain(
+      `capture_path: .assay/captures/${result.observation.observation_id}/source`,
+    );
+    expect(observationYaml).not.toContain("checkout_path:");
+
+    const status = await getSourceStatus({ root, alias: "archive-source" });
+    expect(status.sources[0]?.captureMode).toBe("archive");
+
+    const check = await checkFramework({ root });
+    expect(
+      check.rows.filter(
+        (row) => row.path.includes("references/archive-source") && row.status === "warning",
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects removed source capture modes", async () => {
+    const root = await initAssayWorkspace("SourceCaptureModes");
+    const source = path.join(await tempDir(), "capture-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Capture Source\n", "utf8");
+
+    for (const capture of ["thin", "metadata"] as const) {
+      await expect(
+        addSource({
+          root,
+          source,
+          alias: capture,
+          capture: capture as (typeof SOURCE_CAPTURE_MODES)[number],
+        }),
+      ).rejects.toThrow("capture mode must be one of: checkout, archive");
+    }
   });
 
   it("syncs a directory source without duplicating same observations and diffs changed files", async () => {

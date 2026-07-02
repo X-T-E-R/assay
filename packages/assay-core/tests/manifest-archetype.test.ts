@@ -53,23 +53,35 @@ describe("manifest archetype/mode contract", () => {
     expect(frameworkProjectSchema.parse({ name: "Legacy", core: "legacy-core" })).toEqual({
       name: "Legacy",
       core: "legacy-core",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
 
     expect(frameworkProjectSchema.parse({ name: "Coreless" })).toEqual({
       name: "Coreless",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
   });
 
-  it("rejects invalid archetype and mode values", () => {
+  it("accepts custom archetype strings while still rejecting blank archetype and invalid mode values", () => {
+    expect(
+      frameworkProjectSchema.parse({
+        name: "Custom",
+        core: "custom-core",
+        archetype: "assay",
+      }),
+    ).toMatchObject({
+      name: "Custom",
+      archetype: "assay",
+      mode: "learning",
+    });
+
     expect(() =>
       frameworkProjectSchema.parse({
         name: "Invalid",
         core: "invalid-core",
-        archetype: "assay",
+        archetype: "",
       }),
     ).toThrow();
 
@@ -85,18 +97,18 @@ describe("manifest archetype/mode contract", () => {
   it("creates default manifests with explicit or default archetype and mode", () => {
     expect(defaultManifest("Demo").project).toEqual({
       name: "Demo",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
 
     expect(
-      defaultManifest("Contest", {
-        archetype: "contest",
+      defaultManifest("Solve", {
+        archetype: "solve",
         mode: "absorption",
       }).project,
     ).toEqual({
-      name: "Contest",
-      archetype: "contest",
+      name: "Solve",
+      archetype: "solve",
       mode: "absorption",
     });
 
@@ -116,7 +128,7 @@ describe("manifest archetype/mode contract", () => {
     expect(loaded.project).toEqual({
       name: "Legacy",
       core: "legacy-core",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
 
@@ -125,7 +137,7 @@ describe("manifest archetype/mode contract", () => {
       project?: Record<string, unknown>;
     };
     expect(saved.project).toMatchObject({
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
   });
@@ -138,14 +150,14 @@ describe("manifest archetype/mode contract", () => {
     assert(loaded);
     expect(loaded.project).toEqual({
       name: "Legacy",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
   });
 
-  it("throws a typed error instead of preserving invalid manifest values", async () => {
+  it("throws a typed error instead of preserving invalid mode values", async () => {
     const root = await tempDir();
-    await writeManifestJson(root, legacyManifest({ archetype: "assay" }));
+    await writeManifestJson(root, legacyManifest({ mode: "archive" }));
 
     await expect(loadManifest(root)).rejects.toBeInstanceOf(InvalidManifestError);
   });

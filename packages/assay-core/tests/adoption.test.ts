@@ -107,7 +107,7 @@ describe("adoptExistingProject", () => {
     expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
     expect((await loadManifest(root))?.project).toMatchObject({
       name: "Adopted Project",
-      archetype: "research",
+      archetype: "study",
       mode: "learning",
     });
 
@@ -118,10 +118,39 @@ describe("adoptExistingProject", () => {
       failures: [],
       scaffold: {
         project: "Adopted Project",
-        archetype: "research",
+        archetype: "study",
         mode: "learning",
       },
     });
+  });
+
+  it("skips project registry writes when adoption noTrack is enabled", async () => {
+    const root = path.join(await tempDir(), "existing");
+    const registryRoot = path.join(await tempDir(), "registry");
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "index.ts"), "export {};\n", "utf8");
+    const previousRegistryRoot = process.env.ASSAY_PROJECT_REGISTRY_ROOT;
+
+    try {
+      process.env.ASSAY_PROJECT_REGISTRY_ROOT = registryRoot;
+      const result = await adoptExistingProject({
+        root,
+        name: "Adopted Without Tracking",
+        apply: true,
+        noTrack: true,
+        now: fixedNow(),
+      });
+
+      expect(result.failures).toEqual([]);
+      expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+      expect(await exists(registryRoot)).toBe(false);
+    } finally {
+      if (previousRegistryRoot === undefined) {
+        Reflect.deleteProperty(process.env, "ASSAY_PROJECT_REGISTRY_ROOT");
+      } else {
+        process.env.ASSAY_PROJECT_REGISTRY_ROOT = previousRegistryRoot;
+      }
+    }
   });
 
   it("does not move .old into the new archive", async () => {

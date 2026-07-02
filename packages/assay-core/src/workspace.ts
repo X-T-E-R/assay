@@ -3,13 +3,24 @@ import path from "node:path";
 import { execa } from "execa";
 
 import { defaultAdrIndex, loadAdrIndex, saveAdrIndex } from "./adrs.js";
+import {
+  ASSAY_AGENTS_MALFORMED_REASON,
+  type AssayAgentsBlockResult,
+  applyAssayAgentsBlock,
+  describeAssayAgentsBlockAction,
+} from "./agents.js";
 import { ADRS_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
-import { dirsForMode, loadProfile, readInstalledArchetype, requireCapability } from "./profile.js";
+import {
+  dirsForArchetype,
+  loadArchetype,
+  readInstalledArchetype,
+  requireCapability,
+} from "./profile.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import type {
   AdrIndex,
@@ -26,7 +37,7 @@ import {
   resolveSourceObservation,
 } from "./sources.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
-import { desiredTemplates } from "./templates.js";
+import { archetypeTemplates } from "./templates.js";
 import { nowIso } from "./time.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
@@ -38,26 +49,14 @@ const GENERATED_REFERENCE_DIRS = new Set([
   ".next",
 ]);
 
-function profileAliasToArchetype(profile: string | undefined): ProjectArchetype {
-  if (profile === "contest" || profile === "library") return profile;
-  return "research";
-}
-
-function profileNameForArchetype(archetype: ProjectArchetype): string {
-  return archetype;
-}
-
-function defaultModeForArchetype(archetype: ProjectArchetype): ProjectMode {
-  return archetype === "contest" ? "absorption" : "learning";
-}
-
 export async function desiredRuntimeTemplates(
   project: string,
   archetype: ProjectArchetype,
   mode: ProjectMode,
+  options: { readonly root?: string } = {},
 ) {
-  const profileName = profileNameForArchetype(archetype);
-  return desiredTemplates(project, mode, profileName);
+  const archetypeDefinition = await loadArchetype(archetype, options);
+  return archetypeTemplates(project, mode, archetypeDefinition);
 }
 
 export interface InitFrameworkOptions {
@@ -66,14 +65,9 @@ export interface InitFrameworkOptions {
   readonly git?: boolean;
   readonly force?: boolean;
   readonly createNew?: boolean;
-  /** Project mode: "learning" treats external sources as references; "absorption" treats them as project-level sources. */
-  readonly mode?: ProjectMode;
-  /** Project archetype: research (default), contest, or library. */
+  readonly agents?: boolean;
+  /** Project archetype name. Built-ins and local/user YAML archetypes are resolved by the core loader. */
   readonly archetype?: ProjectArchetype;
-  /**
-   * @deprecated Legacy alias for archetype. "assay" maps to "research".
-   */
-  readonly profile?: string;
 }
 
 export interface InitFrameworkResult {
@@ -531,28 +525,43 @@ async function scaffoldAdrIndex(root: string, report: OperationReport): Promise<
   report.created_files.push(ADRS_FILE);
 }
 
+function recordAssayAgentsResult(report: OperationReport, result: AssayAgentsBlockResult): void {
+  if (result.action === "skip") {
+    if (result.reason === ASSAY_AGENTS_MALFORMED_REASON) {
+      report.notes.push(describeAssayAgentsBlockAction(result));
+    }
+    return;
+  }
+
+  if (!result.changed || result.dryRun) {
+    return;
+  }
+
+  if (result.action === "create") {
+    report.created_files.push(result.path);
+  } else if (result.action === "append" || result.action === "replace") {
+    report.updated_files.push(result.path);
+  }
+}
+
 export async function initFramework(options: InitFrameworkOptions): Promise<InitFrameworkResult> {
   const root = path.resolve(options.target);
   const project = options.name ?? path.basename(root);
   const report = createEmptyReport();
 
-  const archetype = options.archetype ?? profileAliasToArchetype(options.profile);
-  const profileName = profileNameForArchetype(archetype);
-  const profile = await loadProfile(profileName);
-  // Mode is manifest-owned. Explicit options win; otherwise use the archetype
-  // default (falling back to the legacy profile while profiles are being
-  // renamed in the adjacent partition).
-  const mode = options.mode ?? defaultModeForArchetype(archetype) ?? profile.mode;
+  const archetype = options.archetype ?? "study";
+  const archetypeDefinition = await loadArchetype(archetype, { root });
+  const mode = archetypeDefinition.mode;
 
   await ensureDir(root, root, report);
-  for (const directory of dirsForMode(profile, mode)) {
+  for (const directory of dirsForArchetype(archetypeDefinition, mode)) {
     await ensureDir(path.join(root, directory), root, report);
   }
 
   let manifest = (await loadManifest(root)) ?? defaultManifest(project, { archetype, mode });
   manifest.project.archetype = archetype;
   manifest.project.mode = mode;
-  for (const template of await desiredRuntimeTemplates(project, archetype, mode)) {
+  for (const template of archetypeTemplates(project, mode, archetypeDefinition)) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,
@@ -562,13 +571,21 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
       recordTemplate(manifest, template);
     }
   }
-  if (profile.modules.includes("adr")) {
+  if (archetypeDefinition.modules.includes("adr")) {
     await scaffoldAdrIndex(root, report);
   }
 
   const manifestExisted = await exists(path.join(root, MANIFEST_FILE));
   manifest = await saveManifest(root, manifest);
   (manifestExisted ? report.updated_files : report.created_files).push(MANIFEST_FILE);
+
+  recordAssayAgentsResult(
+    report,
+    await applyAssayAgentsBlock({
+      root,
+      mode: options.agents === false ? "skip" : "install",
+    }),
+  );
 
   await appendEvent(root, {
     archetype,
@@ -595,9 +612,7 @@ export async function checkFramework(
 ): Promise<CheckFrameworkResult> {
   const root = path.resolve(options.root);
   // Base structure check targets: always-required runtime files plus the
-  // archetype-declared primary directories. The profile loader remains only as
-  // a scaffold-data adapter until that partition renames profiles to
-  // archetypes.
+  // archetype-declared primary directories.
   const checkTargets: Array<readonly [string, string]> = [
     [".framework directory", ".framework"],
     [".framework/VERSION", ".framework/VERSION"],
@@ -608,14 +623,14 @@ export async function checkFramework(
 
   // If a workspace declares its archetype, augment checks with that archetype's
   // top-level dirs (intake/, problem/, references/, analyses/, iterations/,
-  // benchmarks/, submissions/...). Default to a permissive check when the
+  // benchmarks/, attempts/...). Default to a permissive check when the
   // manifest/archetype cannot be read.
   try {
-    const installedArchetype = await readInstalledProfileName(root);
-    const profile = await loadProfile(profileNameForArchetype(installedArchetype ?? "research"));
+    const installedArchetype = await readInstalledArchetype(root);
+    const archetypeDefinition = await loadArchetype(installedArchetype ?? "study", { root });
     const mode = await readFrameworkMode(root);
     const topLevels = new Set<string>();
-    for (const d of dirsForMode(profile, mode)) {
+    for (const d of dirsForArchetype(archetypeDefinition, mode)) {
       const top = d.split("/")[0];
       if (top && !top.startsWith(".") && top !== "systems" && top !== "knowledge") {
         topLevels.add(top);
@@ -1424,16 +1439,6 @@ export async function readFrameworkMode(root: string): Promise<"learning" | "abs
   return "learning";
 }
 
-/**
- * Read the installed archetype from a workspace manifest.
- *
- * The legacy function name remains for source compatibility with CLI code that
- * has not yet been renamed from profile→archetype.
- */
-export async function readInstalledProfileName(root: string): Promise<ProjectArchetype | null> {
-  return readInstalledArchetype(root);
-}
-
 export async function absorbReference(
   options: AbsorbReferenceOptions,
 ): Promise<AbsorbReferenceResult> {
@@ -1802,7 +1807,6 @@ export async function startIteration(
 export async function captureEvent(options: CaptureEventOptions): Promise<CaptureEventResult> {
   const root = path.resolve(options.root);
   requireManifest(await loadManifest(root), root);
-  await requireCapability(root, "events");
   const eventFile = await appendEvent(
     root,
     { event: "capture.created", kind: options.kind, text: options.text },

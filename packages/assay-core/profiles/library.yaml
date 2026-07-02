@@ -1,24 +1,11 @@
 # Library archetype: shared core only. It does not scaffold absorb outlets,
 # governance directories, or optional capability modules by default.
 
+extends: base
 mode: learning
 modules: []
 
-dirs:
-  - .framework/backups
-  - .framework/migrations
-  - systems
-  - knowledge
-
+dirs: []
 dirs_learning: []
 dirs_absorption: []
-
-templates:
-  - { path: "README.md", templateId: "root.readme" }
-  - { path: ".gitignore", templateId: "root.gitignore" }
-  - { path: ".framework/README.md", templateId: "framework.readme" }
-  - { path: ".framework/VERSION", templateId: "framework.version" }
-  - { path: ".framework/migrations/README.md", templateId: "framework.migrations.readme" }
-  - { path: ".framework/backups/.gitkeep", templateId: "framework.backups.gitkeep" }
-  - { path: "systems/README.md", templateId: "systems.readme" }
-  - { path: "knowledge/README.md", templateId: "knowledge.readme" }
+templates: []
