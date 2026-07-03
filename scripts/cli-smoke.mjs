@@ -44,7 +44,7 @@ function main() {
   }
 
   const help = run("CLI help", ["--help"]);
-  if (!help.includes("Bootstrap and update an external-system-learning framework.")) {
+  if (!help.includes("Bootstrap and update an Assay evidence workbench.")) {
     fail("CLI help did not include the expected description.");
   }
 

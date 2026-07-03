@@ -1,11 +1,11 @@
 ---
 name: assay-builder
-description: "Build, adopt, update, analyze, and iterate Assay framework workspaces. Use when the user wants to initialize an Assay project, adopt an existing project into Assay, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-Assay knowledge management workflows."
+description: "Build, adopt, update, analyze, and iterate Assay workspaces. Use when the user wants to initialize an Assay project, adopt an existing project into Assay, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-Assay knowledge management workflows."
 ---
 
 # Assay Builder
 
-Build and maintain an Assay external-system-learning framework — a versioned project layer that stores external systems, analyzes them, converts validated patterns into our own framework, and iterates that framework over time.
+Build and maintain an Assay evidence workbench — a versioned project layer that stores sources, analyzes them, converts validated patterns into our own systems, and iterates over time.
 
 ## Prerequisites
 
@@ -14,13 +14,13 @@ Build and maintain an Assay external-system-learning framework — a versioned p
 - Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
 - Read `references/cli-setup.md` for install, build, and invocation details. Use `references/cli-setup.zh.md` when Chinese setup instructions are needed.
 
-## Core loop
+## Evidence loop
 
 ```text
-references -> analyses -> systems -> iterations -> knowledge
+evidence in -> structured checks -> decisions -> knowledge growth
 ```
 
-Each transition has a CLI command and writes an event to `.framework/events/YYYY-MM.jsonl`. Open work is closed explicitly: iterations and analyses must be closed with a result/exit, and durable findings flow into `knowledge/`.
+Archetypes instantiate that loop with different workspace structures. `study` uses references and analyses for external systems; `solve` uses objectives, inputs, attempts, and benchmarks; `science`, `evaluation`, `explore`, and `library` keep their own evidence and decision shapes. Open work is closed explicitly where the CLI provides lifecycle commands: iterations and analyses must be closed with a result/exit, and durable findings flow into `knowledge/`.
 
 ## CLI quick reference
 
@@ -119,9 +119,9 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 2. Run `init` if empty (use `--archetype solve` when the whole project exists to work toward a specific measurable objective — e.g. a benchmark target, a paper implementation, or a repo you are rebuilding — so official materials land in `problem/` instead of the frozen-reference area). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
 3. Use `projects list` or `projects scan <parent-dir>` to locate existing workspaces.
 
-### Absorption pipeline (the core loop, made executable)
+### Study/absorption pipeline (the loop made executable)
 
-The loop `references → analyses → systems → iterations → knowledge` is NOT a directory-transfer graph where "file exists = step done". Each step must produce content before it counts as complete. Use this pipeline so work cannot be frozen and forgotten:
+The study-style pipeline `references → analyses → systems → iterations → knowledge` is NOT a directory-transfer graph where "file exists = step done". Each step must produce content before it counts as complete. Use this pipeline so work cannot be frozen and forgotten:
 
 ```
 absorb <source>                      # freeze + write case file + OPEN a pre-filled analysis (one command)

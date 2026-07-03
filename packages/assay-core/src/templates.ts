@@ -174,7 +174,7 @@ export function rootReadme(project: string): string {
 
     A versioned Assay workspace.
 
-    Core loop:
+    Evidence loop:
 
     \`\`\`text
     evidence in -> structured checks -> decisions -> knowledge growth
@@ -186,7 +186,7 @@ export function rootReadme(project: string): string {
     | \`systems/\` | Registered active systems and local implementations |
     | \`knowledge/\` | Accepted reusable knowledge |
 
-    Use \`assay check\` to validate the workspace and \`assay status\` to inspect open work.
+    Archetype-specific working directories sit alongside this base. Use \`assay status\` to inspect open work and \`assay check\` to validate the workspace.
     `);
 }
 
@@ -208,10 +208,12 @@ export function frameworkReadme(): string {
   return dedent(`
     # .framework/
 
-    Framework runtime metadata. Do not store external research or long-lived user knowledge here.
+    Framework runtime metadata. Do not store external evidence or long-lived user knowledge here.
 
-    - \`VERSION\`: installed framework template version.
+    - \`VERSION\`: installed template version.
     - \`manifest.json\`: managed file hashes and template IDs.
+    - \`systems-registry.json\`: registered systems and the current primary system after \`assay system register\`.
+    - \`adrs.json\`: ADR numbering and status index when the archetype enables ADRs.
     - \`events/\`: JSONL event ledger.
     - \`migrations/\`: migration notes and plans.
     - \`backups/\`: timestamped backups before update or migration.

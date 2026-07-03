@@ -1,24 +1,25 @@
 # Framework directory structure
 
-Every Assay workspace converges to this layout (layout v3):
+Every Assay workspace has a shared base, then the selected archetype adds its own working directories (layout v3):
 
 ```text
 <project-root>/
 ├── .framework/       # version, manifest, registries, events, migrations, backups
-├── references/       # living external sources; intake + legacy/full captures
-├── problem/          # project-level source materials (absorption mode only)
-├── analyses/         # reference analysis, gap analysis, candidate patterns
-├── systems/          # our active framework/system implementations
+├── systems/          # registered systems and local implementations
 │   ├── <name>/             # active system (system.yaml + source; may be independent git repo)
 │   └── archive/            # archived prior systems, copy-first move
-├── iterations/       # iterations on our own framework
 ├── knowledge/        # accepted reusable knowledge only
 │   ├── decisions/    # accepted decisions and ADRs
 │   ├── patterns/     # validated reusable patterns
 │   ├── guides/       # operational guides
 │   └── troubleshooting/  # failure modes and fixes
-├── data/             # samples, evaluation data, research data
-└── releases/         # release notes, packages, migration guides
+├── references/       # study/evaluation learning-mode sources, when enabled
+├── analyses/         # study analysis cards, when enabled
+├── problem/          # solve/absorption-mode source materials, when enabled
+├── iterations/       # solve/science/explore iteration plans, when enabled
+├── candidates/       # evaluation candidates, when enabled
+├── hypotheses/       # science claims, when enabled
+└── approaches/       # explore alternatives, when enabled
 ```
 
 ## Project archetype and mode
@@ -32,7 +33,7 @@ A workspace records `project.archetype` and `project.mode` in `.framework/manife
 
 ## Content gates (not just directory exits)
 
-Each step of `references → analyses → systems → iterations → knowledge` must produce content before it counts as complete — a file existing is not enough. `check` enforces:
+The evidence loop must produce content before it counts as complete — a file existing is not enough. `check` enforces the gates it can verify:
 
 - A frozen reference must be cited by an analysis or have `reference.yaml.analyzed: true`, else `unanalyzed reference` warning.
 - A living source observation must have provenance/fingerprint/manifest metadata. `major` source observations stay warning-level until a revalidation analysis closes the stale-risk loop.
@@ -44,13 +45,15 @@ Each step of `references → analyses → systems → iterations → knowledge` 
 
 | User intent | Directory |
 | --- | --- |
-| store others' projects/materials | `references/` |
+| study others' projects/materials | `references/` |
 | analyze them | `analyses/` |
-| build our own framework | `systems/` |
-| iterate our own framework | `iterations/` |
+| absorb objective inputs | `problem/`, `intake/` |
+| compare external candidates | `candidates/`, `criteria.md`, `scorecards/` |
+| run science work | `hypotheses/`, `experiments/`, `datasets/`, `findings/`, `papers/` |
+| explore local approaches | `approaches/`, `trials/`, `comparison.md` |
+| build local systems | `systems/` |
+| iterate local systems | `iterations/` |
 | promote accepted findings | `knowledge/` |
-| store evaluation/research data | `data/` |
-| publish release notes and migration guides | `releases/` |
 
 ## `.framework/` managed files
 

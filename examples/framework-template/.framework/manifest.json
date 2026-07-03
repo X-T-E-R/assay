@@ -1,248 +1,168 @@
 {
   "__schema": 1,
+  "applied_migrations": [],
+  "created_at": "2026-07-03T09:04:18+08:00",
   "framework_version": "0.2.0",
   "layout_version": 3,
-  "created_at": "2026-07-01T00:00:00Z",
-  "updated_at": "2026-07-01T00:00:00Z",
-  "project": {
-    "name": "Assay",
-    "archetype": "research",
-    "mode": "learning"
-  },
   "managed_files": {
     ".framework/README.md": {
-      "template_id": "framework.readme",
-      "hash": "96a43d43225916d816446a22ec8fdba221664843f1bacdc8c757f9142fc3e918",
+      "executable": false,
+      "hash": "da83749ffc01cd7f90cf448f7f7bd8ce128897da77f136b099d4c020f92a5b7c",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "framework.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     ".framework/VERSION": {
-      "template_id": "framework.version",
+      "executable": false,
       "hash": "1f930dd1f133c1f97a94fe3acb8db34372cf4c01ffdb2b3ff4ca72f9494121e9",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "framework.version",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     ".framework/backups/.gitkeep": {
+      "executable": false,
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "installed_version": "0.2.0",
+      "protected": false,
       "template_id": "framework.backups.gitkeep",
-      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    ".framework/events/.gitkeep": {
-      "template_id": "framework.events.gitkeep",
-      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     ".framework/migrations/README.md": {
-      "template_id": "framework.migrations.readme",
+      "executable": false,
       "hash": "f15464f357cfacdc9da4bc9ca369c78429814cb45eaa9ba9e08ee55d5b38311c",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "framework.migrations.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     ".gitignore": {
-      "template_id": "root.gitignore",
+      "executable": false,
       "hash": "e2e233c61ec46374f7d80c047d815a973131b96cfb3e355466e954210ad72902",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "root.gitignore",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "README.md": {
-      "template_id": "root.readme",
-      "hash": "e113f1316ded3283fddc5978f73c370125bc38ba97cd8674976adc4205305be6",
+      "executable": false,
+      "hash": "78bb1e32c0f470b9a5c78ed55234893bbaf93b4f0d79c3083916d37ed13957a6",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "root.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "analyses/README.md": {
-      "template_id": "analyses.readme",
-      "hash": "a7e7a4ffd4547582162bc69548081d826c117fff09259e1f7d58208e1df7475b",
+      "executable": false,
+      "hash": "45ab954c3fac786c1078617e71a71a1da0840a83886be391b02c58c4879d8f26",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "analyses.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "analyses/gaps/.gitkeep": {
-      "template_id": "analyses.gaps.gitkeep",
+      "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "analyses.gaps.gitkeep",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "analyses/patterns/.gitkeep": {
-      "template_id": "analyses.patterns.gitkeep",
+      "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "analyses.patterns.gitkeep",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "analyses/references/.gitkeep": {
-      "template_id": "analyses.references.gitkeep",
+      "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "analyses.references.gitkeep",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "analyses/templates/gap-analysis.md": {
-      "template_id": "analysis.template.gap",
+      "executable": false,
       "hash": "2ad913da03f45627a8dbe3b037146f3c0b5f0f13b10ccaf63bc5d75f84025cfd",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "analysis.template.gap",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "analyses/templates/pattern-card.md": {
-      "template_id": "analysis.template.pattern",
+      "executable": false,
       "hash": "71dc69ce9b7c6aae99b0ae6f828e0dab4d8971003f4d051718dcce196a00c5c3",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "analysis.template.pattern",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "analyses/templates/reference-analysis-card.md": {
-      "template_id": "analysis.template.reference",
+      "executable": false,
       "hash": "1eaf1b1be9c23da0546d6b0792d2fcf11b2cb62d801f4d5fa2e329359fbc7a24",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "data/README.md": {
-      "template_id": "data.readme",
-      "hash": "2794ae4679d2bcfa7e1e75168c463283fbc7042d67cd65989f3171aa1e6e95f1",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "iterations/README.md": {
-      "template_id": "iterations.readme",
-      "hash": "7db5f9353a412126fb8fb2bc36d90b0d56014a8a7e0753bf9255fbddd1bd0831",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "iterations/templates/iteration-plan.md": {
-      "template_id": "iterations.template.plan",
-      "hash": "922f26e219136ec809430d9f1e6b276b48f476e3982238ee35009f596b884556",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "analysis.template.reference",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "knowledge/README.md": {
-      "template_id": "knowledge.readme",
-      "hash": "ffee3fcc8cfbb213c8a2ed9989425bfb4906686dfca58119bb382d59da48f4bb",
+      "executable": false,
+      "hash": "bce19cbcee4007901559a6384c5d03e7562d1c843d2c064e16a65c0f4fe49f59",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "knowledge.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "knowledge/decisions/ADR-TEMPLATE.md": {
-      "template_id": "knowledge.decisions.adr_template",
+      "executable": false,
       "hash": "33b66dc9f7fc08d614a01550474f7f6fa4f9f25a2d1432f442194bbeff967257",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "knowledge.decisions.adr_template",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "knowledge/decisions/README.md": {
-      "template_id": "knowledge.decisions.readme",
+      "executable": false,
       "hash": "d6e63ebb156b07360023e495577377cdf239bbfc827f548315aa2ea2e91ea2d7",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "knowledge/guides/README.md": {
-      "template_id": "knowledge.guides.readme",
-      "hash": "ce1bab940080e88d920225becab12dc97e7762eec156bdaf6ceced11754ac03e",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "knowledge/patterns/README.md": {
-      "template_id": "knowledge.patterns.readme",
-      "hash": "12f27c9e2c4cd694e6f53a7410bfbe1b35cd09a465222d6561d9ed835928a264",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "knowledge/troubleshooting/README.md": {
-      "template_id": "knowledge.troubleshooting.readme",
-      "hash": "dc58a2258f832148147fbb0ee49759955a4f84f799efc10a67793cb38283d869",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "knowledge.decisions.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "references/README.md": {
-      "template_id": "references.readme",
-      "hash": "41253e7148bacc5d832b64e6a757ab1fa9461b0ced83b1ca2b63ce689ef7fd25",
+      "executable": false,
+      "hash": "a12a66dfeec1b369ebd3f9f62996a0bc7e71883c0cafabd6038cc26496f09523",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "references.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "references/frozen/README.md": {
-      "template_id": "references.frozen.readme",
+      "executable": false,
       "hash": "72fbc102d1f870c31db0146cd0241a76f3629d866da05f15312c28e7d4e805fa",
       "installed_version": "0.2.0",
       "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "references/intake/README.md": {
-      "template_id": "references.intake.readme",
-      "hash": "6bb2a7758cfe734949d7bb279711eed7ba31e3971e28dcf32b472006a05eb4b9",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "releases/README.md": {
-      "template_id": "releases.readme",
-      "hash": "4b27fc3db43bcc5d075c3a8eac61485f5337d6c4a06bb6637fb34e70ed9170f2",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "template_id": "references.frozen.readme",
+      "updated_at": "2026-07-03T09:04:18+08:00"
     },
     "systems/README.md": {
+      "executable": false,
+      "hash": "d38e6bbded4f7e1da770357041bf5529619f0941c273809b97e171865bb6bd48",
+      "installed_version": "0.2.0",
+      "protected": false,
       "template_id": "systems.readme",
-      "hash": "a7ad36ceb9fabc033d3bd0663f4373a86a51da405fbe19fde2edef35f29c255e",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
-    },
-    "systems/assay-core/system.yaml": {
-      "template_id": "system.core.contract",
-      "hash": "da99dbd0baf5fb039a73984ff7194cfc92f02a1a0f24e0ba18743f99ad1341b7",
-      "installed_version": "0.2.0",
-      "protected": false,
-      "executable": false,
-      "updated_at": "2026-07-01T00:00:00Z"
+      "updated_at": "2026-07-03T09:04:18+08:00"
     }
   },
-  "user_deleted": [],
-  "applied_migrations": []
+  "project": {
+    "archetype": "study",
+    "mode": "learning",
+    "name": "Assay"
+  },
+  "updated_at": "2026-07-03T09:04:18+08:00",
+  "user_deleted": []
 }

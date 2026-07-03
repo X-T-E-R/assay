@@ -164,7 +164,7 @@ describe("assay CLI subprocess behavior", () => {
     const result = await runCli(["--help"]);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Bootstrap and update an external-system-learning framework.");
+    expect(result.stdout).toContain("Bootstrap and update an Assay evidence workbench.");
     expect(result.stdout).toContain("adopt");
     expect(result.stdout).toContain("migrate-layout");
     expect(result.stderr).toBe("");

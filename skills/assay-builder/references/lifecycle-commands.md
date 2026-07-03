@@ -1,6 +1,6 @@
 # Lifecycle commands
 
-The Assay core loop is `references → analyses → systems → iterations → knowledge`. Every step except `references` has a dedicated **start** and **close** command, and every close writes a structured event to the JSONL ledger so the workflow stays auditable.
+The common Assay evidence loop is `evidence in → structured checks → decisions → knowledge growth`. Study-style work often materializes that as `references → analyses → systems → iterations → knowledge`. Every close-capable step writes a structured event to the JSONL ledger so the workflow stays auditable.
 
 ## Why explicit close
 
@@ -56,7 +56,7 @@ assay analysis close <path> --exit adopt|reject|experiment|adr [--note "..."]
 
 What `close` does:
 
-1. Reads the analysis at `<path>` (relative to the framework root).
+1. Reads the analysis at `<path>` (relative to the workspace root).
 2. Replaces `- Status: draft` with `- Status: applied|rejected|experiment|adr` (mapping from `--exit`).
 3. Replaces the matching unchecked checkbox with `[x]` (e.g. `- [x] adopt`).
 4. Appends an optional `> Closed on <date>: <note>` line.

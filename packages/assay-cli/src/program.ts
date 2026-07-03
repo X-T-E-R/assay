@@ -206,7 +206,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   const output = createOutput(options);
   const program = new Command()
     .name("assay")
-    .description("Bootstrap and update an external-system-learning framework.")
+    .description("Bootstrap and update an Assay evidence workbench.")
     .version("0.2.0")
     .configureOutput({
       writeOut: (text) => output.stdout(text),
@@ -215,10 +215,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   program
     .command("init")
-    .description("Initialize a versioned framework structure without overwriting by default")
-    .argument("[target-dir]", "target framework directory", process.cwd())
+    .description("Initialize an Assay workspace without overwriting by default")
+    .argument("[target-dir]", "target workspace directory", process.cwd())
     .option("--name <project-name>", "project name")
-    .option("--git", "initialize a git repository in the framework root")
+    .option("--git", "initialize a git repository in the workspace root")
     .option("--force", "overwrite existing files and track them as managed")
     .option("--create-new", "write .new copies when files already exist")
     .option("--no-track", "do not update the Assay project registry")
@@ -284,8 +284,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   program
     .command("check")
-    .description("Check required framework structure")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .description("Check required workspace structure")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await checkFramework({ root });
@@ -297,8 +297,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   program
     .command("status")
-    .description("Print framework status")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .description("Print workspace status")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       writeLine(output, "stdout", formatStatusResult(await getFrameworkStatus({ root })));
@@ -306,8 +306,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   program
     .command("update")
-    .description("Update managed framework files using manifest hashes")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .description("Update managed workspace files using manifest hashes")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--dry-run", "plan update without applying writes")
     .option("--agents", "install or refresh the Assay managed block in root AGENTS.md")
     .option("--no-track", "do not update the Assay project registry")
@@ -453,7 +453,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   program
     .command("migrate-layout")
     .description("Plan or apply old-to-new folder layout migration")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .addOption(new Option("--dry-run", "plan migration without applying writes").conflicts("apply"))
     .addOption(new Option("--apply", "apply copy-first migration steps").conflicts("dryRun"))
     .option("--backup", "with --apply, back up pre-existing files overwritten by migration")
@@ -472,7 +472,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   const archetypeCommand = program
     .command("archetype")
     .description("Show the current manifest archetype and mode")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
       await writeArchetypeCommandResult(output, commandOptions);
@@ -507,7 +507,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Copy a local source directory into references/frozen/YYYYMM")
     .argument("<source-dir>", "local source directory to freeze")
     .argument("<name>", "reference name")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (sourceDir, name, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await addReference({ root, source: sourceDir, name });
@@ -521,7 +521,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Add a living external source under references/<alias>/")
     .argument("<repo-or-dir>", "local source directory or git repository URL")
     .argument("[alias]", "short filesystem-safe source alias")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--branch <branch>", "branch to check out for Git-backed sources")
     .addOption(
       new Option("--capture <mode>", `capture mode (${SOURCE_CAPTURE_MODES.join("|")})`)
@@ -551,7 +551,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("sync")
     .description("Observe an existing source again and update current materials")
     .argument("[alias]", "source alias; optional when exactly one source exists")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--branch <branch>", "Git branch to check out before observing")
     .option("--ref <ref>", "Git ref to check out before observing")
     .addOption(
@@ -578,7 +578,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Switch a Git-backed source checkout to a branch or ref")
     .argument("<alias>", "source alias")
     .argument("<branch-or-ref>", "branch, tag, or commit")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--sync", "record an observation after switching")
     .action(async (alias, target, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -601,7 +601,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("status")
     .description("Show living source status")
     .argument("[alias]", "source alias")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       writeLine(
@@ -617,7 +617,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("log")
     .description("Show a source observation log")
     .argument("<alias>", "source alias")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       writeLine(output, "stdout", formatSourceLogResult(await getSourceLog({ root, alias })));
@@ -627,7 +627,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("diff")
     .description("Show file-level differences for the latest source observation")
     .argument("<alias>", "source alias")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--since <observation>", "observation id or .assay/observations path")
     .action(async (alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -649,7 +649,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Absorb a source using the workspace manifest mode and open a pre-filled analysis")
     .argument("<source-dir>", "local source directory to absorb")
     .option("--name <name>", "reference name (defaults to source directory basename)")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .addOption(
       new Option("--as <outlet>", "absorption-mode outlet: problem (default) or intake").choices([
         ...ABSORPTION_OUTLETS,
@@ -678,7 +678,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("new")
     .description("Create a reference analysis draft")
     .argument("<title>", "analysis title")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option(
       "--for-reference <path>",
       "frozen reference path to bind (pre-fills Reference/Source/Freeze path)",
@@ -705,7 +705,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   analysis
     .command("close")
     .description("Close an analysis with a decision exit")
-    .argument("<path>", "analysis file path relative to framework root")
+    .argument("<path>", "analysis file path relative to workspace root")
     .addOption(
       new Option("--exit <exit>", "decision exit")
         .choices(["adopt", "reject", "experiment", "adr"])
@@ -713,7 +713,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     )
     .option("--note <note>", "closing note")
     .option("--allow-empty", "allow closing an analysis without required content gates")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (analysisPath, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await closeAnalysis({
@@ -733,9 +733,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   const iteration = program.command("iteration").description("Iteration operations");
   iteration
     .command("start")
-    .description("Start an iteration against our own framework")
+    .description("Start an iteration against your own systems")
     .argument("<title>", "iteration title")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (title, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await startIteration({ root, title });
@@ -754,7 +754,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         .makeOptionMandatory(),
     )
     .option("--note <note>", "closing note")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await closeIteration({
@@ -777,7 +777,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         .makeOptionMandatory(),
     )
     .requiredOption("--text <text>", "event text")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await captureEvent({
@@ -800,7 +800,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       "--force",
       "create even if a blocking external governance system (trellis or .superpowers/) is detected",
     )
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (title, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await createAdr(
@@ -829,7 +829,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("accept")
     .description("Accept a proposed ADR")
     .argument("<selector>", "ADR id, number, or unique id prefix")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await acceptAdr(root, selector);
@@ -842,7 +842,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Mark an accepted ADR as superseded by another accepted ADR")
     .argument("<old-selector>", "ADR being superseded")
     .argument("<new-selector>", "accepted replacement ADR")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (oldSelector, newSelector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await supersedeAdr(root, oldSelector, newSelector);
@@ -855,7 +855,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("deprecate")
     .description("Deprecate a proposed or accepted ADR without replacing it")
     .argument("<selector>", "ADR id, number, or unique id prefix")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await deprecateAdr(root, selector);
@@ -866,7 +866,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   adr
     .command("list")
     .description("List indexed ADRs")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .addOption(new Option("--status <status>", "filter by status").choices([...ADR_STATUSES]))
     .action(async (commandOptions: AdrListOptions) => {
@@ -884,7 +884,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("show")
     .description("Show one ADR by id, number, or unique id prefix")
     .argument("<selector>", "ADR id, number, or unique id prefix")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -902,8 +902,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   system
     .command("register")
     .description("Register a system directory in the systems registry")
-    .argument("<path>", "system directory (relative to framework root)")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .argument("<path>", "system directory (relative to workspace root)")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--name <name>", "system name (defaults to directory basename)")
     .addOption(
       new Option("--vcs <vcs>", "version control mode").choices([
@@ -946,7 +946,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("promote")
     .description("Promote a system to primary; demotes the previous primary")
     .argument("<selector>", "system name or unique name prefix")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await promoteSystem(root, selector);
@@ -965,7 +965,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("archive")
     .description("Archive a non-primary system into systems/archive/")
     .argument("<selector>", "system name or unique name prefix")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .addOption(new Option("--dry-run", "plan archive without moving files").conflicts("apply"))
     .addOption(new Option("--apply", "move the system into the archive").conflicts("dryRun"))
     .action(async (selector, commandOptions) => {
@@ -989,7 +989,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   system
     .command("list")
     .description("List all registered systems")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .addOption(
       new Option("--status <status>", "filter by status").choices([
@@ -1020,7 +1020,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("show")
     .description("Show one registered system by name or unique prefix")
     .argument("<selector>", "system name or unique name prefix")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -1041,7 +1041,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .argument("<title>", "knowledge entry title")
     .option("--from-analysis <path>", "originating analysis path")
     .option("--from-iteration <path>", "originating iteration path")
-    .option("--root <target-dir>", "target framework directory", process.cwd())
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (type, title, commandOptions) => {
       const validTypes = ["decision", "pattern", "guide", "troubleshooting"];
       if (!validTypes.includes(type)) {

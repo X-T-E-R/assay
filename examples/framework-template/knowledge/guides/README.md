@@ -1,3 +1,0 @@
-# guides/
-
-Reusable operational guides.

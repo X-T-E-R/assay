@@ -1,4 +1,3 @@
-
 # knowledge/
 
-Store accepted reusable knowledge only. Work-in-progress analysis belongs in `analyses/`; experiments on our own system belong in `iterations/`.
+Store accepted reusable knowledge only. Work-in-progress analysis belongs in the archetype-specific working directories.

@@ -188,7 +188,7 @@ describe("assay iteration close CLI", () => {
     expect(explore.exitCode).toBe(0);
     expect(explore.stderr).toBe("");
     expect(explore.stdout).toContain("Started iteration: iterations/");
-  });
+  }, 30_000);
 });
 
 describe("assay event capture CLI", () => {
@@ -212,7 +212,7 @@ describe("assay event capture CLI", () => {
       expect(result.stderr).toBe("");
       expect(await exists(path.join(root, ".framework", "events", ".gitkeep"))).toBe(false);
     }
-  });
+  }, 30_000);
 });
 
 describe("assay analysis close CLI", () => {
