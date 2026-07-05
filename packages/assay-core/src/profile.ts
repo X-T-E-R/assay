@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
-import { MANIFEST_FILE } from "./constants.js";
+import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
 import type { ProjectArchetype, ProjectMode } from "./schemas/index.js";
@@ -24,7 +24,7 @@ export interface AvailableArchetype {
 }
 
 export interface ArchetypeLookupOptions {
-  /** Project root used for project-local `.framework/archetypes/<name>.yaml`. */
+  /** Project root used for project-local `.assay/archetypes/<name>.yaml`. */
   readonly root?: string;
   /** Test/embedding override for the user-global archetype directory. */
   readonly userArchetypesDir?: string;
@@ -60,23 +60,23 @@ export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
 
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
 const DEFAULT_ARCHETYPE: ProjectArchetype = "study";
-const PROJECT_ARCHETYPES_DIR = path.join(".framework", "archetypes");
+const PROJECT_ARCHETYPES_DIR = path.join(MANAGED_DIR, "archetypes");
 const BUILTIN_ARCHETYPES_DIR = path.resolve(fileURLToPath(import.meta.url), "..", "..", "profiles");
 
 const BASE_ARCHETYPE: Archetype = {
   name: "base",
   mode: "learning",
   modules: [],
-  dirs: [".framework/backups", ".framework/migrations", "systems", "knowledge"],
+  dirs: [`${MANAGED_DIR}/backups`, `${MANAGED_DIR}/migrations`, "systems", "knowledge"],
   dirsLearning: [],
   dirsAbsorption: [],
   templates: [
     { path: "README.md", templateId: "root.readme" },
     { path: ".gitignore", templateId: "root.gitignore" },
-    { path: ".framework/README.md", templateId: "framework.readme" },
-    { path: ".framework/VERSION", templateId: "framework.version" },
-    { path: ".framework/migrations/README.md", templateId: "framework.migrations.readme" },
-    { path: ".framework/backups/.gitkeep", templateId: "framework.backups.gitkeep" },
+    { path: `${MANAGED_DIR}/README.md`, templateId: "framework.readme" },
+    { path: `${MANAGED_DIR}/VERSION`, templateId: "framework.version" },
+    { path: `${MANAGED_DIR}/migrations/README.md`, templateId: "framework.migrations.readme" },
+    { path: `${MANAGED_DIR}/backups/.gitkeep`, templateId: "framework.backups.gitkeep" },
     { path: "systems/README.md", templateId: "systems.readme" },
     { path: "knowledge/README.md", templateId: "knowledge.readme" },
   ],
@@ -93,7 +93,7 @@ interface ArchetypeLookupLocation {
 
 /**
  * Load an archetype by name using the public extension lookup order:
- * project-local `.framework/archetypes`, user-global `~/.assay/archetypes`,
+ * project-local `.assay/archetypes`, user-global `~/.assay/archetypes`,
  * then bundled built-ins. The internal `base` archetype remains reserved and
  * is only available through `extends: base`.
  */

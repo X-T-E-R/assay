@@ -13,6 +13,9 @@ import {
   BACKUPS_DIR,
   CURRENT_VERSION,
   LAYOUT_VERSION,
+  LEGACY_MANAGED_DIR,
+  LEGACY_MANIFEST_FILE,
+  MANAGED_DIR,
   MANIFEST_FILE,
   SYSTEMS_REGISTRY_FILE,
   VERSION_FILE,
@@ -559,7 +562,7 @@ export async function buildLayoutMigrationPlan(
     // Step 1: create systems-registry.json from manifest core
     steps.push({
       type: "create-systems-registry",
-      from: ".framework/manifest.json",
+      from: LEGACY_MANIFEST_FILE,
       to: SYSTEMS_REGISTRY_FILE,
       reason: `initialize registry from manifest core '${coreName}'`,
       action: "create",
@@ -660,14 +663,22 @@ export async function buildLayoutMigrationPlan(
     steps.push({ type: "copy-dir", from: "experiments", to: "iterations", action: "copy" });
   }
 
+  // v0/v1 legacy state lived in a root `.assay/` directory (pre-framework).
+  // In layout v4 `.assay/` is the current managed dir, so guard this copy
+  // step: only treat `.assay/` as a legacy source when it carries the v0/v1
+  // shape (config.yaml / queue.json) but no v4 manifest or VERSION file.
   const legacyMeta = path.join(root, ".assay");
-  if (await exists(legacyMeta)) {
+  const looksLikeLegacyV0V1State =
+    (await exists(legacyMeta)) &&
+    !(await exists(path.join(legacyMeta, "manifest.json"))) &&
+    !(await exists(path.join(legacyMeta, "VERSION")));
+  if (looksLikeLegacyV0V1State) {
     for (const item of ["events", "queue.json", "config.yaml"]) {
       if (await exists(path.join(legacyMeta, item))) {
         steps.push({
           type: "copy",
           from: `.assay/${item}`,
-          to: `.framework/legacy-assay/${item}`,
+          to: `${MANAGED_DIR}/legacy-assay/${item}`,
           action: "copy",
         });
       }

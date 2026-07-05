@@ -8,7 +8,12 @@ import {
   MANIFEST_FILE,
   SYSTEMS_REGISTRY_FILE,
 } from "./constants.js";
-import type { FrameworkManifest, WorkspaceLayout, WorkspaceLayoutMode, WorkspacePrivacy } from "./schemas/index.js";
+import type {
+  FrameworkManifest,
+  WorkspaceLayout,
+  WorkspaceLayoutMode,
+  WorkspacePrivacy,
+} from "./schemas/index.js";
 
 /**
  * Areas of an Assay workspace that commands need to locate. Every command

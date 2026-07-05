@@ -11,7 +11,7 @@ evidence in -> structured checks -> decisions -> knowledge growth
 
 | Path | Purpose |
 | --- | --- |
-| `.framework/` | Runtime metadata: version, manifest, events, migrations, backups |
+| `.assay/` | Runtime metadata: version, manifest, events, migrations, backups |
 | `systems/` | Registered active systems and local implementations |
 | `knowledge/` | Accepted reusable knowledge |
 

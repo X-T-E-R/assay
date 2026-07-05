@@ -400,7 +400,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   projects
     .command("scan")
-    .description("Scan directories for .framework/manifest.json projects and register them")
+    .description("Scan directories for .assay/manifest.json projects and register them")
     .argument("<roots...>", "directories to scan")
     .option("--json", "emit JSON")
     .action(async (roots: string[], commandOptions: ProjectJsonOptions) => {
@@ -938,7 +938,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Registered system: ${result.system.name}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
-      writeLine(output, "stdout", "Registry: .framework/systems-registry.json");
+      writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { MANAGED_DIR } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { loadManifest } from "./manifest.js";
@@ -289,7 +290,7 @@ async function exists(target: string): Promise<boolean> {
 function requireManifestPresent(manifest: unknown, root: string): void {
   if (!manifest) {
     throw new FrameworkNotFoundError(
-      `No framework manifest found at ${path.join(root, ".framework", "manifest.json")}.`,
+      `No Assay manifest found at ${path.join(root, MANAGED_DIR, "manifest.json")}.`,
     );
   }
 }

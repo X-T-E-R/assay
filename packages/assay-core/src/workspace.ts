@@ -9,7 +9,13 @@ import {
   applyAssayAgentsBlock,
   describeAssayAgentsBlockAction,
 } from "./agents.js";
-import { ADRS_FILE, MANIFEST_FILE } from "./constants.js";
+import {
+  ADRS_FILE,
+  LEGACY_MANAGED_DIR,
+  MANAGED_DIR,
+  MANIFEST_FILE,
+  SYSTEMS_REGISTRY_FILE,
+} from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
@@ -614,9 +620,9 @@ export async function checkFramework(
   // Base structure check targets: always-required runtime files plus the
   // archetype-declared primary directories.
   const checkTargets: Array<readonly [string, string]> = [
-    [".framework directory", ".framework"],
-    [".framework/VERSION", ".framework/VERSION"],
-    [".framework/manifest.json", ".framework/manifest.json"],
+    [`${MANAGED_DIR} directory`, MANAGED_DIR],
+    [`${MANAGED_DIR}/VERSION`, `${MANAGED_DIR}/VERSION`],
+    [`${MANAGED_DIR}/manifest.json`, `${MANAGED_DIR}/manifest.json`],
     ["systems directory", "systems"],
     ["knowledge directory", "knowledge"],
   ];
@@ -716,13 +722,13 @@ export async function checkFramework(
       const primaries = Object.values(registry.systems).filter((s) => s.status === "primary");
       if (primaries.length === 0 && registry.primary !== null) {
         rows.push({
-          path: ".framework/systems-registry.json",
+          path: SYSTEMS_REGISTRY_FILE,
           status: "error",
           message: `registry primary is '${registry.primary}' but no system has status: primary`,
         });
       } else if (primaries.length > 1) {
         rows.push({
-          path: ".framework/systems-registry.json",
+          path: SYSTEMS_REGISTRY_FILE,
           status: "error",
           message: `expected exactly one primary system, found ${primaries.length}: ${primaries.map((s) => s.name).join(", ")}`,
         });
@@ -762,7 +768,7 @@ export async function checkFramework(
     }
   } catch (error) {
     rows.push({
-      path: ".framework/systems-registry.json",
+      path: SYSTEMS_REGISTRY_FILE,
       status: "error",
       message: error instanceof Error ? error.message : "systems registry error",
     });
@@ -948,8 +954,8 @@ export async function checkFramework(
   // the framework cannot report ok while work is stranded.
   try {
     const queueCandidates = [
-      path.join(root, ".framework", "queue.json"),
-      path.join(root, ".assay", "queue.json"),
+      path.join(root, MANAGED_DIR, "queue.json"),
+      path.join(root, LEGACY_MANAGED_DIR, "queue.json"),
     ];
     for (const queuePath of queueCandidates) {
       if (!(await exists(queuePath))) continue;

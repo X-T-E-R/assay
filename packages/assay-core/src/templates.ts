@@ -182,7 +182,7 @@ export function rootReadme(project: string): string {
 
     | Path | Purpose |
     | --- | --- |
-    | \`.framework/\` | Runtime metadata: version, manifest, events, migrations, backups |
+    | \`.assay/\` | Runtime metadata: version, manifest, events, migrations, backups |
     | \`systems/\` | Registered active systems and local implementations |
     | \`knowledge/\` | Accepted reusable knowledge |
 
@@ -199,16 +199,16 @@ export function rootGitignore(): string {
     .venv/
     .secrets/
     *.log
-    .framework/backups/*
-    !.framework/backups/.gitkeep
+    .assay/backups/*
+    !.assay/backups/.gitkeep
     `);
 }
 
 export function frameworkReadme(): string {
   return dedent(`
-    # .framework/
+    # .assay/
 
-    Framework runtime metadata. Do not store external evidence or long-lived user knowledge here.
+    Assay runtime metadata. Do not store external evidence or long-lived user knowledge here.
 
     - \`VERSION\`: installed template version.
     - \`manifest.json\`: managed file hashes and template IDs.
@@ -403,12 +403,12 @@ export function bootstrapIterationPlan(today: string): string {
 
     ## Hypothesis
 
-    A versioned framework structure will reduce ambiguity and make updates safer than a notes-first layout.
+    A versioned Assay structure will reduce ambiguity and make updates safer than a notes-first layout.
 
     ## Verification
 
     - \`assay check --root .\` passes.
-    - \`.framework/manifest.json\` exists.
+    - \`.assay/manifest.json\` exists.
     `);
 }
 
@@ -467,9 +467,9 @@ export function updateMechanismDoc(): string {
 
     ## State files
 
-    - \`.framework/VERSION\`: installed framework version.
-    - \`.framework/manifest.json\`: managed files, template IDs, hashes, and installed versions.
-    - \`.framework/backups/\`: backups before writes.
+    - \`.assay/VERSION\`: installed Assay version.
+    - \`.assay/manifest.json\`: managed files, template IDs, hashes, and installed versions.
+    - \`.assay/backups/\`: backups before writes.
 
     ## Classification
 
