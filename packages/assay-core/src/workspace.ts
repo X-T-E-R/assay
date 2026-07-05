@@ -24,6 +24,9 @@ import {
   defaultStandaloneLayout,
   resolveWorkspaceLayout,
   workspacePath,
+  workspaceRelativePath,
+  workspaceSubpath,
+  workspaceWorkRelativePath,
 } from "./layout.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
@@ -40,6 +43,7 @@ import type {
   FrameworkManifest,
   ProjectArchetype,
   ProjectMode,
+  WorkspaceLayout,
 } from "./schemas/index.js";
 import { toPosixPath } from "./serialization.js";
 import {
@@ -352,8 +356,33 @@ async function countFiles(root: string): Promise<number> {
   return count;
 }
 
-async function countKnowledgeEntries(root: string): Promise<number> {
-  const knowledgeRoot = path.join(root, "knowledge");
+function layoutForManifest(manifest: FrameworkManifest | null): WorkspaceLayout {
+  return resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
+}
+
+function isWorkspaceArea(value: string): value is WorkspaceArea {
+  return (
+    value === "manifest" ||
+    value === "events" ||
+    value === "backups" ||
+    value === "systemsRegistry" ||
+    value === "adrsIndex" ||
+    value === "references" ||
+    value === "analyses" ||
+    value === "iterations" ||
+    value === "knowledge" ||
+    value === "systemsContracts"
+  );
+}
+
+function layoutDirectoryPath(layout: WorkspaceLayout, directory: string): string {
+  return isWorkspaceArea(directory)
+    ? workspaceRelativePath(layout, directory)
+    : workspaceWorkRelativePath(layout, directory);
+}
+
+async function countKnowledgeEntries(root: string, layout: WorkspaceLayout): Promise<number> {
+  const knowledgeRoot = path.join(root, workspaceRelativePath(layout, "knowledge"));
   if (!(await exists(knowledgeRoot))) return 0;
   const files: string[] = [];
   await collectMarkdownFiles(knowledgeRoot, files);
@@ -365,8 +394,8 @@ async function countKnowledgeEntries(root: string): Promise<number> {
 
 const OPEN_STATUS_PATTERN = /(?<![a-z])Status:\s*open\b/i;
 
-async function countOpenIterations(root: string): Promise<number> {
-  const iterationsDir = path.join(root, "iterations");
+async function countOpenIterations(root: string, layout: WorkspaceLayout): Promise<number> {
+  const iterationsDir = path.join(root, workspaceRelativePath(layout, "iterations"));
   if (!(await exists(iterationsDir))) {
     return 0;
   }
@@ -633,9 +662,7 @@ export async function checkFramework(
   } catch {
     // invalid manifest is reported below; use standalone fallback for paths
   }
-  const layout = resolveWorkspaceLayout(manifestForLayout) ?? defaultStandaloneLayout();
-  const relativeArea = (area: WorkspaceArea): string =>
-    workspacePath("", layout, area).split(path.sep).join("/");
+  const layout = layoutForManifest(manifestForLayout);
 
   // Base structure check targets: always-required runtime files plus the
   // archetype-declared primary directories. systems/ and knowledge/ resolve
@@ -645,8 +672,8 @@ export async function checkFramework(
     [`${MANAGED_DIR} directory`, MANAGED_DIR],
     [`${MANAGED_DIR}/VERSION`, `${MANAGED_DIR}/VERSION`],
     [`${MANAGED_DIR}/manifest.json`, `${MANAGED_DIR}/manifest.json`],
-    ["systems directory", relativeArea("systemsContracts")],
-    ["knowledge directory", relativeArea("knowledge")],
+    ["systems directory", workspaceRelativePath(layout, "systemsContracts")],
+    ["knowledge directory", workspaceRelativePath(layout, "knowledge")],
   ];
 
   // If a workspace declares its archetype, augment checks with that archetype's
@@ -665,7 +692,7 @@ export async function checkFramework(
       }
     }
     for (const dir of topLevels) {
-      checkTargets.push([`${dir} directory`, relativeArea(dir as WorkspaceArea)]);
+      checkTargets.push([`${dir} directory`, layoutDirectoryPath(layout, dir)]);
     }
   } catch {
     // unreadable manifest/archetype; fall back to base targets only
@@ -798,10 +825,10 @@ export async function checkFramework(
 
   // Semantic check 3: open iterations
   try {
-    openIterations = await countOpenIterations(root);
+    openIterations = await countOpenIterations(root, layout);
     if (openIterations > 0) {
       rows.push({
-        path: "iterations/",
+        path: `${workspaceRelativePath(layout, "iterations")}/`,
         status: "warning",
         message: `${openIterations} iteration(s) not closed (Status: open)`,
       });
@@ -861,7 +888,7 @@ export async function checkFramework(
   // subdirectory that is not one of the expected names so the drift cannot
   // hide silently.
   try {
-    const knowledgeRoot = path.join(root, "knowledge");
+    const knowledgeRoot = workspacePath(root, layout, "knowledge");
     if (await exists(knowledgeRoot)) {
       const EXPECTED_KNOWLEDGE_DIRS = new Set([
         "decisions",
@@ -876,7 +903,7 @@ export async function checkFramework(
         if (!entry.isDirectory()) continue;
         if (!EXPECTED_KNOWLEDGE_DIRS.has(entry.name)) {
           rows.push({
-            path: `knowledge/${entry.name}`,
+            path: workspaceSubpath(layout, "knowledge", entry.name),
             status: "warning",
             message: `unexpected knowledge subdirectory '${entry.name}' (expected one of: ${[...EXPECTED_KNOWLEDGE_DIRS].join(", ")}). A legacy bug created 'troubleshootings'; move entries into 'knowledge/troubleshooting/'.`,
           });
@@ -894,11 +921,11 @@ export async function checkFramework(
   // reference directory and check whether any analysis file mentions its name
   // or path. Unanalyzed references surface as warnings so they cannot hide.
   try {
-    const frozenRoot = path.join(root, "references", "frozen");
+    const frozenRoot = path.join(workspacePath(root, layout, "references"), "frozen");
     if (await exists(frozenRoot)) {
-      const references = await collectFrozenReferences(frozenRoot);
+      const references = await collectFrozenReferences(root, frozenRoot);
       if (references.length > 0) {
-        const analysisText = await readAllAnalysisText(root);
+        const analysisText = await readAllAnalysisText(root, layout);
         for (const ref of references) {
           // Authoritative signal: reference.yaml.analyzed === true means an
           // analysis was closed against this reference (see closeAnalysis).
@@ -934,9 +961,9 @@ export async function checkFramework(
   // An analysis card left at Status: draft with no Key observations content is
   // a shell that was never filled — the "write docs then stop" anti-pattern.
   try {
-    const analysesRoot = path.join(root, "analyses");
+    const analysesRoot = workspacePath(root, layout, "analyses");
     if (await exists(analysesRoot)) {
-      const emptyDrafts = await findEmptyDraftAnalyses(analysesRoot);
+      const emptyDrafts = await findEmptyDraftAnalyses(root, analysesRoot);
       for (const draft of emptyDrafts) {
         rows.push({
           path: draft.relativePath,
@@ -1038,10 +1065,11 @@ interface FrozenReference {
  * Each leaf directory (the <name> level) is one reference. Returns its name and
  * path relative to the framework root.
  */
-async function collectFrozenReferences(frozenRoot: string): Promise<FrozenReference[]> {
+async function collectFrozenReferences(
+  root: string,
+  frozenRoot: string,
+): Promise<FrozenReference[]> {
   const references: FrozenReference[] = [];
-  const rootParent = path.dirname(frozenRoot); // .../references
-  const frameworkRoot = path.dirname(rootParent); // project root
 
   const months = await readdir(frozenRoot, { withFileTypes: true });
   for (const month of months) {
@@ -1051,7 +1079,7 @@ async function collectFrozenReferences(frozenRoot: string): Promise<FrozenRefere
     for (const name of names) {
       if (!name.isDirectory()) continue;
       const absolute = path.join(monthPath, name.name);
-      const relativePath = toPosixPath(path.relative(frameworkRoot, absolute));
+      const relativePath = relativeDisplayPath(absolute, root);
       references.push({ name: name.name, relativePath });
     }
   }
@@ -1062,8 +1090,8 @@ async function collectFrozenReferences(frozenRoot: string): Promise<FrozenRefere
  * Read the concatenated text of every markdown file under analyses/. Used to
  * test whether a frozen reference is cited by any analysis.
  */
-async function readAllAnalysisText(root: string): Promise<string[]> {
-  const analysesRoot = path.join(root, "analyses");
+async function readAllAnalysisText(root: string, layout: WorkspaceLayout): Promise<string[]> {
+  const analysesRoot = workspacePath(root, layout, "analyses");
   if (!(await exists(analysesRoot))) return [];
   const files: string[] = [];
   await collectMarkdownFiles(analysesRoot, files);
@@ -1100,8 +1128,7 @@ interface EmptyDraft {
  * heading is immediately followed by another heading or end-of-file, with only
  * blank lines between.
  */
-async function findEmptyDraftAnalyses(analysesRoot: string): Promise<EmptyDraft[]> {
-  const root = path.dirname(analysesRoot);
+async function findEmptyDraftAnalyses(root: string, analysesRoot: string): Promise<EmptyDraft[]> {
   const files: string[] = [];
   await collectMarkdownFiles(analysesRoot, files);
   const empty: EmptyDraft[] = [];
@@ -1110,7 +1137,7 @@ async function findEmptyDraftAnalyses(analysesRoot: string): Promise<EmptyDraft[
       const content = await readFile(file, "utf8");
       if (!/- Status:\s*draft\b/i.test(content)) continue;
       if (!hasEmptyKeyObservations(content)) continue;
-      empty.push({ relativePath: toPosixPath(path.relative(root, file)) });
+      empty.push({ relativePath: relativeDisplayPath(file, root) });
     } catch {
       // skip unreadable
     }
@@ -1205,13 +1232,14 @@ export async function getFrameworkStatus(
 ): Promise<FrameworkStatusResult> {
   const root = path.resolve(options.root);
   const manifest = await loadManifest(root);
+  const layout = layoutForManifest(manifest);
   const zones = await Promise.all(
     [
-      "references/frozen",
-      "analyses/references",
-      "analyses/patterns",
-      "iterations",
-      "knowledge",
+      workspaceSubpath(layout, "references", "frozen"),
+      workspaceSubpath(layout, "analyses", "references"),
+      workspaceSubpath(layout, "analyses", "patterns"),
+      workspaceRelativePath(layout, "iterations"),
+      workspaceRelativePath(layout, "knowledge"),
     ].map(async (zone) => ({ path: zone, files: await countFiles(path.join(root, zone)) })),
   );
 
@@ -1244,7 +1272,7 @@ export async function getFrameworkStatus(
   }
 
   try {
-    openIterations = await countOpenIterations(root);
+    openIterations = await countOpenIterations(root, layout);
   } catch {
     // iterations dir may not exist
   }
@@ -1266,7 +1294,7 @@ export async function getFrameworkStatus(
     // sources may not exist or may be mid-migration; status omits the summary
   }
 
-  const knowledgeCount = await countKnowledgeEntries(root);
+  const knowledgeCount = await countKnowledgeEntries(root, layout);
 
   if (!manifest) {
     return {
@@ -1310,10 +1338,17 @@ function shouldCopyReference(source: string, destination: string): boolean {
 
 export async function addReference(options: AddReferenceOptions): Promise<AddReferenceResult> {
   const root = path.resolve(options.root);
-  requireManifest(await loadManifest(root), root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = layoutForManifest(manifest);
   const source = path.resolve(options.source);
   const now = options.now ?? new Date();
-  const relativePath = `references/frozen/${monthStamp(now)}/${slugify(options.name)}`;
+  const relativePath = workspaceSubpath(
+    layout,
+    "references",
+    "frozen",
+    monthStamp(now),
+    slugify(options.name),
+  );
   const destination = path.join(root, relativePath);
 
   if (await exists(destination)) {
@@ -1705,10 +1740,16 @@ export async function createAnalysis(
   options: CreateAnalysisOptions,
 ): Promise<CreateAnalysisResult> {
   const root = path.resolve(options.root);
-  requireManifest(await loadManifest(root), root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = layoutForManifest(manifest);
   const now = options.now ?? new Date();
   const date = dateStamp(now);
-  const relativePath = `analyses/references/${date}-${slugify(options.title)}.md`;
+  const relativePath = workspaceSubpath(
+    layout,
+    "analyses",
+    "references",
+    `${date}-${slugify(options.title)}.md`,
+  );
   const absolutePath = path.join(root, relativePath);
 
   if (await exists(absolutePath)) {
@@ -1799,11 +1840,12 @@ export async function startIteration(
   options: StartIterationOptions,
 ): Promise<StartIterationResult> {
   const root = path.resolve(options.root);
-  requireManifest(await loadManifest(root), root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = layoutForManifest(manifest);
   await requireCapability(root, "iteration");
   const now = options.now ?? new Date();
   const date = dateStamp(now);
-  const relativePath = `iterations/${date}-${slugify(options.title)}`;
+  const relativePath = workspaceSubpath(layout, "iterations", `${date}-${slugify(options.title)}`);
   const absolutePath = path.join(root, relativePath);
 
   if (await exists(absolutePath)) {
@@ -1848,13 +1890,15 @@ export async function closeIteration(
   options: CloseIterationOptions,
 ): Promise<CloseIterationResult> {
   const root = path.resolve(options.root);
-  requireManifest(await loadManifest(root), root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = layoutForManifest(manifest);
   await requireCapability(root, "iteration");
   const now = options.now ?? new Date();
   const date = dateStamp(now);
 
   // Resolve iteration directory from selector (path or date-slug prefix)
-  const iterationsDir = path.join(root, "iterations");
+  const iterationsRelative = workspaceRelativePath(layout, "iterations");
+  const iterationsDir = path.join(root, iterationsRelative);
   let iterPath: string | null = null;
   const selectorNormalized = options.selector.replace(/\\/g, "/");
 
@@ -1870,7 +1914,7 @@ export async function closeIteration(
         .filter((e) => e.isDirectory() && e.name.startsWith(options.selector))
         .map((e) => e.name);
       if (matches.length === 1 && matches[0]) {
-        iterPath = `iterations/${matches[0]}`;
+        iterPath = `${iterationsRelative}/${matches[0]}`;
       } else if (matches.length > 1) {
         throw new FrameworkNotFoundError(
           `iteration selector '${options.selector}' is ambiguous (${matches.join(", ")})`,
@@ -2011,11 +2055,12 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
 
 export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKnowledgeResult> {
   const root = path.resolve(options.root);
-  requireManifest(await loadManifest(root), root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = layoutForManifest(manifest);
   const now = options.now ?? new Date();
   const date = dateStamp(now);
 
-  const typeDir = `knowledge/${KNOWLEDGE_TYPE_DIRS[options.type]}`;
+  const typeDir = workspaceSubpath(layout, "knowledge", KNOWLEDGE_TYPE_DIRS[options.type]);
   const fileName = `${date}-${slugify(options.title)}.md`;
   const relativePath = `${typeDir}/${fileName}`;
   const absolutePath = path.join(root, relativePath);

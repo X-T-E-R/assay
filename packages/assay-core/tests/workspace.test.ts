@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +11,7 @@ import {
   addKnowledge,
   addReference,
   addSource,
+  attachExistingRepo,
   captureEvent,
   checkFramework,
   closeAnalysis,
@@ -59,6 +61,12 @@ async function exists(target: string): Promise<boolean> {
     }
     throw error;
   }
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const result = await execa("git", [...args], { cwd, reject: false });
+  expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+  return result.stdout;
 }
 
 async function fillAnalysisSections(
@@ -702,6 +710,63 @@ describe("getFrameworkStatus systems section", () => {
 });
 
 describe("workspace operations", () => {
+  it("keeps overlay work folders under .assay and out of product git", async () => {
+    const root = path.join(await tempDir(), "product");
+    const source = path.join(await tempDir(), "source");
+    await mkdir(root, { recursive: true });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(root, "package.json"), '{"name":"product"}\n', "utf8");
+    await writeFile(path.join(source, "README.md"), "# Source\n\nUseful source.\n", "utf8");
+
+    await git(root, ["init"]);
+    await git(root, ["config", "user.email", "assay@example.test"]);
+    await git(root, ["config", "user.name", "Assay Test"]);
+    await git(root, ["add", "package.json"]);
+    await git(root, ["commit", "-m", "initial"]);
+
+    await attachExistingRepo({
+      root,
+      name: "Product",
+      archetype: "study",
+      privacy: "private",
+      now: new Date("2026-07-06T08:00:00"),
+    });
+    const analysis = await createAnalysis({
+      root,
+      title: "Overlay Analysis",
+      now: new Date("2026-07-06T09:00:00"),
+    });
+    const sourceResult = await addSource({
+      root,
+      source,
+      alias: "Sample",
+      now: new Date("2026-07-06T10:00:00"),
+    });
+    const knowledge = await addKnowledge({
+      root,
+      type: "pattern",
+      title: "Overlay Pattern",
+      now: new Date("2026-07-06T11:00:00"),
+    });
+    const check = await checkFramework({ root });
+
+    expect(analysis.path).toBe(".assay/analyses/references/2026-07-06-overlay-analysis.md");
+    expect(sourceResult.path).toBe(".assay/references/sample");
+    expect(knowledge.path).toBe(".assay/knowledge/patterns/2026-07-06-overlay-pattern.md");
+    expect(await exists(path.join(root, "analyses"))).toBe(false);
+    expect(await exists(path.join(root, "references"))).toBe(false);
+    expect(await exists(path.join(root, "knowledge"))).toBe(false);
+    expect(await exists(path.join(root, ".assay", "analyses"))).toBe(true);
+    expect(await exists(path.join(root, ".assay", "references", "sample", "source.yaml"))).toBe(
+      true,
+    );
+    expect(check.ok).toBe(true);
+    expect(check.rows.some((row) => row.path === ".assay/references" && row.status === "ok")).toBe(
+      true,
+    );
+    expect((await git(root, ["status", "--short"])).trim()).toBe("");
+  });
+
   it("adds references while ignoring common generated directories and appending an event", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");

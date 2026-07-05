@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   LAYOUT_VERSION,
   applyUpdate,
   buildLayoutMigrationPlan,
+  checkFramework,
   computeHash,
   desiredRuntimeTemplates,
   initFramework,
@@ -50,6 +51,24 @@ async function initUpdateFixture(): Promise<string> {
   const root = path.join(await tempDir(), "demo");
   await initFramework({ target: root, name: "Demo" });
   return root;
+}
+
+async function convertCurrentFixtureToLegacyFramework(root: string): Promise<void> {
+  const manifestPath = path.join(root, ".assay", "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+  const managedFiles = manifest.managed_files as Record<string, unknown>;
+  const legacyManifest = Object.fromEntries(
+    Object.entries(manifest).filter(([key]) => key !== "layout"),
+  ) as Record<string, unknown>;
+  legacyManifest.layout_version = 3;
+  legacyManifest.managed_files = Object.fromEntries(
+    Object.entries(managedFiles).map(([relativePath, record]) => [
+      relativePath.replace(/^\.assay\//, ".framework/"),
+      record,
+    ]),
+  );
+  await writeFile(manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, "utf8");
+  await rename(path.join(root, ".assay"), path.join(root, ".framework"));
 }
 
 async function addLegacySystemManagedFiles(root: string): Promise<void> {
@@ -284,6 +303,59 @@ describe("layout migration", () => {
       .split("\n");
     const event = JSON.parse(eventLines[eventLines.length - 1] ?? "{}");
     expect(event.backup).toBeUndefined();
+  });
+
+  it("migrates a legacy .framework workspace into .assay state", async () => {
+    const root = await initUpdateFixture();
+    await convertCurrentFixtureToLegacyFramework(root);
+
+    const plan = await buildLayoutMigrationPlan({ root, dryRun: true });
+
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(false);
+    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(plan.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "copy-dir",
+          from: ".framework",
+          to: ".assay",
+        }),
+        expect.objectContaining({
+          type: "upgrade-manifest",
+          from: ".framework/manifest.json",
+          to: ".assay/manifest.json",
+        }),
+      ]),
+    );
+
+    const result = await migrateLayout({
+      root,
+      apply: true,
+      now: new Date("2026-07-06T09:30:00"),
+    });
+    const manifest = await loadManifest(root);
+    const check = await checkFramework({ root });
+
+    expect(result.backup).toBeUndefined();
+    expect("backup_dir" in result.plan).toBe(false);
+    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(true);
+    expect(await exists(path.join(root, ".assay", "VERSION"))).toBe(true);
+    expect(result.eventFile).toMatch(/^\.assay\/events\//);
+    expect(manifest?.layout_version).toBe(LAYOUT_VERSION);
+    expect(manifest?.layout).toMatchObject({
+      mode: "standalone",
+      state_root: ".assay",
+      work_root: ".",
+    });
+    expect(Object.keys(manifest?.managed_files ?? {})).toContain(".assay/VERSION");
+    expect(Object.keys(manifest?.managed_files ?? {})).not.toContain(".framework/VERSION");
+    expect(check.rows).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: ".assay/manifest.json", status: "missing" }),
+      ]),
+    );
+    expect(check.ok).toBe(true);
   });
 });
 

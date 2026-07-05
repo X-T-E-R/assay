@@ -49,7 +49,7 @@ cd packages/assay-cli && npm link && cd ../..
 创建一个 standalone study 工作区：
 
 ```bash
-assay init ../assay-study --name AssayStudy --archetype study --layout standalone --no-track
+assay init ../assay-study --name AssayStudy --archetype study --no-track
 cd ../assay-study
 assay check
 assay source add https://github.com/<owner>/<project> sample

@@ -124,7 +124,7 @@ For independent systems, prefer sidecar contracts under `.assay/systems/<name>.y
 
 Overlay default is private:
 
-1. `assay attach --private` creates `.assay/`.
+1. `assay attach --privacy private` creates `.assay/`.
 2. It appends `/.assay/` to `.git/info/exclude`, not `.gitignore`.
 3. It does not change root `README.md`, root `.gitignore`, or root `AGENTS.md` unless you opt in.
 4. `assay check` verifies that `.assay/` is not tracked by the product repo when privacy is `private` or `private-git`.

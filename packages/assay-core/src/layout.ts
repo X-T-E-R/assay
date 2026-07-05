@@ -114,6 +114,35 @@ export function workspacePath(root: string, layout: WorkspaceLayout, area: Works
   }
 }
 
+export function workspaceRelativePath(layout: WorkspaceLayout, area: WorkspaceArea): string {
+  return workspacePath("", layout, area).split(path.sep).join("/");
+}
+
+export function workspaceSubpath(
+  layout: WorkspaceLayout,
+  area: WorkspaceArea,
+  ...segments: readonly string[]
+): string {
+  return [
+    workspaceRelativePath(layout, area),
+    ...segments.map((segment) => toRelativePosix(segment)),
+  ]
+    .filter((segment) => segment.length > 0)
+    .join("/");
+}
+
+export function workspaceWorkRelativePath(layout: WorkspaceLayout, relativePath: string): string {
+  const normalized = toRelativePosix(relativePath);
+  if (layout.work_root === ".") {
+    return normalized;
+  }
+  return [layout.work_root, normalized].filter((segment) => segment.length > 0).join("/");
+}
+
+function toRelativePosix(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
+}
+
 /**
  * Relative path map for standalone layout v4. State under `.assay/`, work
  * folders at root.

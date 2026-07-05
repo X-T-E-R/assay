@@ -100,6 +100,11 @@ async function runCliIn(
   }
 }
 
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", [...args], { cwd });
+  return stdout;
+}
+
 afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -243,7 +248,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("supports lifecycle registry opt-out for init, update, and adopt", async () => {
+  it("supports lifecycle registry opt-out for init, update, adopt, and attach", async () => {
     const untrackedInitRoot = path.join(await tempDir(), "untracked-init");
     const init = await runCli([
       "init",
@@ -289,6 +294,46 @@ describe("assay CLI subprocess behavior", () => {
     const adoptRecord = await runCli(["projects", "show", adoptRoot, "--json"]);
     expect(adoptRecord.exitCode).toBe(1);
     expect(adoptRecord.stderr).toContain("project not found");
+
+    const trackedAttachRoot = path.join(await tempDir(), "tracked-attach");
+    await mkdir(trackedAttachRoot, { recursive: true });
+    await writeFile(path.join(trackedAttachRoot, "package.json"), '{"name":"product"}\n', "utf8");
+    await git(trackedAttachRoot, ["init"]);
+    await git(trackedAttachRoot, ["config", "user.email", "assay@example.test"]);
+    await git(trackedAttachRoot, ["config", "user.name", "Assay Test"]);
+    await git(trackedAttachRoot, ["add", "package.json"]);
+    await git(trackedAttachRoot, ["commit", "-m", "initial"]);
+    const trackedAttach = await runCli([
+      "attach",
+      "--root",
+      trackedAttachRoot,
+      "--name",
+      "Tracked Attach",
+    ]);
+    expect(trackedAttach.exitCode).toBe(0);
+    const attachRecord = await runCli(["projects", "show", trackedAttachRoot, "--json"]);
+    expect(JSON.parse(attachRecord.stdout)).toMatchObject({ lastCommand: "attach" });
+
+    const untrackedAttachRoot = path.join(await tempDir(), "untracked-attach");
+    await mkdir(untrackedAttachRoot, { recursive: true });
+    await writeFile(path.join(untrackedAttachRoot, "package.json"), '{"name":"product"}\n', "utf8");
+    await git(untrackedAttachRoot, ["init"]);
+    await git(untrackedAttachRoot, ["config", "user.email", "assay@example.test"]);
+    await git(untrackedAttachRoot, ["config", "user.name", "Assay Test"]);
+    await git(untrackedAttachRoot, ["add", "package.json"]);
+    await git(untrackedAttachRoot, ["commit", "-m", "initial"]);
+    const untrackedAttach = await runCli([
+      "attach",
+      "--root",
+      untrackedAttachRoot,
+      "--name",
+      "Untracked Attach",
+      "--no-track",
+    ]);
+    expect(untrackedAttach.exitCode).toBe(0);
+    const untrackedAttachRecord = await runCli(["projects", "show", untrackedAttachRoot, "--json"]);
+    expect(untrackedAttachRecord.exitCode).toBe(1);
+    expect(untrackedAttachRecord.stderr).toContain("project not found");
   });
 
   it("prints migrate-layout help with explicit backup mode", async () => {

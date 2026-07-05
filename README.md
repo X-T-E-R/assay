@@ -49,7 +49,7 @@ cd packages/assay-cli && npm link && cd ../..
 Create a standalone study workspace:
 
 ```bash
-assay init ../assay-study --name AssayStudy --archetype study --layout standalone --no-track
+assay init ../assay-study --name AssayStudy --archetype study --no-track
 cd ../assay-study
 assay check
 assay source add https://github.com/<owner>/<project> sample

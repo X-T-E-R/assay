@@ -311,6 +311,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
         ...(commandOptions.archetype === undefined ? {} : { archetype: commandOptions.archetype }),
         privacy: commandOptions.privacy as WorkspacePrivacy,
+        noTrack: commandOptions.track === false,
+      });
+      await recordProjectLifecycleBestEffort(result.root, "attach", {
+        noTrack: commandOptions.track === false,
       });
       writeLine(output, "stdout", formatAttachResult(result));
     });

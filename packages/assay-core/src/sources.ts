@@ -7,9 +7,11 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { MANAGED_DIR } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { resolveWorkspaceLayout, workspacePath, workspaceRelativePath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import type { CheckRow } from "./results.js";
+import type { FrameworkManifest } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import { nowIso } from "./time.js";
 
@@ -287,12 +289,32 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-function requireManifestPresent(manifest: unknown, root: string): void {
+function requireManifestPresent(
+  manifest: FrameworkManifest | null,
+  root: string,
+): FrameworkManifest {
   if (!manifest) {
     throw new FrameworkNotFoundError(
       `No Assay manifest found at ${path.join(root, MANAGED_DIR, "manifest.json")}.`,
     );
   }
+  return manifest;
+}
+
+function layoutForManifest(manifest: FrameworkManifest) {
+  const layout = resolveWorkspaceLayout(manifest);
+  if (!layout) {
+    throw new FrameworkNotFoundError("Assay workspace layout could not be resolved.");
+  }
+  return layout;
+}
+
+function referencesRootForManifest(root: string, manifest: FrameworkManifest): string {
+  return workspacePath(root, layoutForManifest(manifest), "references");
+}
+
+function referencesRelativeForManifest(manifest: FrameworkManifest): string {
+  return workspaceRelativePath(layoutForManifest(manifest), "references");
 }
 
 function assertCaptureMode(value: SourceCaptureMode): void {
@@ -1106,9 +1128,11 @@ async function appendHistory(
 }
 
 async function sourceEntryForAlias(root: string, alias?: string): Promise<SourceEntry> {
-  const referencesRoot = path.join(root, "references");
+  const manifest = requireManifestPresent(await loadManifest(root), root);
+  const referencesRoot = referencesRootForManifest(root, manifest);
+  const referencesRelative = referencesRelativeForManifest(manifest);
   if (!(await exists(referencesRoot))) {
-    throw new FrameworkNotFoundError("no references directory found");
+    throw new FrameworkNotFoundError(`no references directory found: ${referencesRelative}`);
   }
 
   if (alias) {
@@ -1120,7 +1144,7 @@ async function sourceEntryForAlias(root: string, alias?: string): Promise<Source
     }
     return {
       alias: normalized,
-      relativePath: `references/${normalized}`,
+      relativePath: `${referencesRelative}/${normalized}`,
       absolutePath: entryRoot,
       lineage: await readYamlFile<SourceLineage>(sourceFile),
     };
@@ -1143,7 +1167,9 @@ async function sourceEntryForAlias(root: string, alias?: string): Promise<Source
 }
 
 async function listSourceEntries(root: string): Promise<SourceEntry[]> {
-  const referencesRoot = path.join(root, "references");
+  const manifest = requireManifestPresent(await loadManifest(root), root);
+  const referencesRoot = referencesRootForManifest(root, manifest);
+  const referencesRelative = referencesRelativeForManifest(manifest);
   if (!(await exists(referencesRoot))) return [];
   const entries = await readdir(referencesRoot, { withFileTypes: true });
   const sources: SourceEntry[] = [];
@@ -1154,7 +1180,7 @@ async function listSourceEntries(root: string): Promise<SourceEntry[]> {
     if (!(await exists(sourceFile))) continue;
     sources.push({
       alias: entry.name,
-      relativePath: `references/${entry.name}`,
+      relativePath: `${referencesRelative}/${entry.name}`,
       absolutePath: entryRoot,
       lineage: await readYamlFile<SourceLineage>(sourceFile),
     });
@@ -1215,7 +1241,7 @@ async function materializeMaterials(captureRoot: string, materialsDir: string): 
 
 export async function addSource(options: SourceAddOptions): Promise<SourceAddResult> {
   const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  const manifest = requireManifestPresent(await loadManifest(root), root);
   const now = options.now ?? new Date();
   const captureMode = options.capture ?? "checkout";
   assertCaptureMode(captureMode);
@@ -1225,7 +1251,7 @@ export async function addSource(options: SourceAddOptions): Promise<SourceAddRes
       ? options.source
       : path.resolve(options.source);
   const alias = aliasForSource(options.source, options.alias);
-  const relativePath = `references/${alias}`;
+  const relativePath = `${referencesRelativeForManifest(manifest)}/${alias}`;
   const entryRoot = path.join(root, relativePath);
   if (await exists(entryRoot)) {
     throw new FrameworkAlreadyExistsError(`source already exists: ${relativePath}`);
