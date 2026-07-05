@@ -628,7 +628,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Show file-level differences for the latest source observation")
     .argument("<alias>", "source alias")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--since <observation>", "observation id or .assay/observations path")
+    .option("--since <observation>", "observation id or observations/<id>.yaml path")
     .action(async (alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       writeLine(

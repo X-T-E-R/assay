@@ -360,12 +360,31 @@ async function writeYamlFile(file: string, value: unknown): Promise<void> {
   await writeFile(file, stringifyYaml(value), "utf8");
 }
 
+// Source-entry ledger directories live directly under references/<alias>/.
+// Layout v3 nested these under references/<alias>/.assay/, but once the
+// workspace state dir became .assay (v4) that nesting produced confusing
+// paths like .assay/references/foo/.assay/observations/. The ledger is now
+// flat; LEGACY_SOURCE_LEDGER is read only as a migration fallback.
+const OBSERVATIONS_DIR = "observations";
+const MANIFESTS_DIR = "manifests";
+const CAPTURES_DIR = "captures";
+const COMPARISONS_DIR = "comparisons";
+const LEGACY_SOURCE_LEDGER = ".assay";
+
 function observationPath(observationId: string): string {
-  return `.assay/observations/${observationId}.yaml`;
+  return `${OBSERVATIONS_DIR}/${observationId}.yaml`;
+}
+
+function legacyObservationPath(observationId: string): string {
+  return `${LEGACY_SOURCE_LEDGER}/${OBSERVATIONS_DIR}/${observationId}.yaml`;
 }
 
 function manifestPath(observationId: string): string {
-  return `.assay/manifests/${observationId}.json`;
+  return `${MANIFESTS_DIR}/${observationId}.json`;
+}
+
+function legacyManifestPath(observationId: string): string {
+  return `${LEGACY_SOURCE_LEDGER}/${MANIFESTS_DIR}/${observationId}.json`;
 }
 
 function analysisStatusForChange(
@@ -746,7 +765,7 @@ async function materializeArchiveCapture(
   observationId: string,
   captureRoot: string,
 ): Promise<string> {
-  const relativePath = `.assay/captures/${observationId}/source`;
+  const relativePath = `${CAPTURES_DIR}/${observationId}/source`;
   const destination = path.join(entryRoot, relativePath);
   await cp(captureRoot, destination, {
     recursive: true,
@@ -848,15 +867,15 @@ async function refreshCheckoutBeforeObservation(
 
 async function ensureSourceScaffold(entryRoot: string): Promise<void> {
   await mkdir(path.join(entryRoot, "materials"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "observations"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "manifests"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "comparisons"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "captures"), { recursive: true });
+  await mkdir(path.join(entryRoot, OBSERVATIONS_DIR), { recursive: true });
+  await mkdir(path.join(entryRoot, MANIFESTS_DIR), { recursive: true });
+  await mkdir(path.join(entryRoot, COMPARISONS_DIR), { recursive: true });
+  await mkdir(path.join(entryRoot, CAPTURES_DIR), { recursive: true });
 }
 
 async function nextObservationId(entryRoot: string, now: Date, suffix: string): Promise<string> {
   const base = `${dateCompact(now)}-${suffix.slice(0, 12)}`;
-  const obsDir = path.join(entryRoot, ".assay", "observations");
+  const obsDir = path.join(entryRoot, OBSERVATIONS_DIR);
   if (!(await exists(path.join(obsDir, `${base}.yaml`)))) {
     return base;
   }
@@ -1005,7 +1024,7 @@ async function recordObservation(input: {
     manifest: manifestPath(id),
     materials_path: "materials",
     ...(input.captureMode === "checkout" ? { checkout_path: "checkout" } : {}),
-    ...(input.captureMode === "archive" ? { capture_path: `.assay/captures/${id}/source` } : {}),
+    ...(input.captureMode === "archive" ? { capture_path: `${CAPTURES_DIR}/${id}/source` } : {}),
   };
 
   const obsFile = path.join(input.entryRoot, observationPath(id));
@@ -1064,7 +1083,7 @@ async function writeSourceCard(
     "- `source.yaml`: durable lineage identity",
     "- `checkout/`: current materialized source when capture mode is `checkout`",
     "- `materials/`: selected extracts and supporting files",
-    "- `.assay/`: observation ledger, manifests, comparisons, and optional captures",
+    "- `observations/`, `manifests/`, `comparisons/`, `captures/`: source observation ledger",
     "",
   ];
   await writeFile(path.join(entryRoot, "README.md"), lines.join("\n"), "utf8");
@@ -1149,9 +1168,18 @@ async function loadObservation(
 ): Promise<SourceObservation | null> {
   if (!observationRef) return null;
   const normalized = observationRef.replace(/\\/g, "/");
-  const file = normalized.endsWith(".yaml")
-    ? path.join(entryRoot, normalized)
-    : path.join(entryRoot, ".assay", "observations", `${normalized}.yaml`);
+  // Resolve three selector shapes: a full path (flat or legacy), or a bare
+  // observation id. Bare ids and flat paths prefer the v4 flat layout; legacy
+  // .assay/observations/ paths are read as-is for migration compatibility.
+  let file: string;
+  if (normalized.endsWith(".yaml")) {
+    file = path.join(entryRoot, normalized);
+  } else {
+    file = path.join(entryRoot, OBSERVATIONS_DIR, `${normalized}.yaml`);
+    if (!(await exists(file))) {
+      file = path.join(entryRoot, legacyObservationPath(normalized));
+    }
+  }
   if (!(await exists(file))) return null;
   return readYamlFile<SourceObservation>(file);
 }
@@ -1162,8 +1190,17 @@ async function loadObservationManifest(
 ): Promise<SourceManifest | null> {
   if (!observation) return null;
   const file = path.join(entryRoot, observation.manifest);
-  if (!(await exists(file))) return null;
-  return readManifest(file);
+  if (await exists(file)) {
+    return readManifest(file);
+  }
+  // Migration fallback: v3 stored manifests under .assay/manifests/. If the
+  // manifest path points at the flat layout but the file is missing, try the
+  // legacy location derived from the observation id.
+  const legacyFile = path.join(entryRoot, legacyManifestPath(observation.observation_id));
+  if (await exists(legacyFile)) {
+    return readManifest(legacyFile);
+  }
+  return null;
 }
 
 async function writeLineage(entryRoot: string, lineage: SourceLineage): Promise<void> {
@@ -1342,8 +1379,7 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
   await writeFile(
     path.join(
       entry.absolutePath,
-      ".assay",
-      "comparisons",
+      COMPARISONS_DIR,
       `${previousObservation?.observation_id ?? "none"}--${recorded.observation.observation_id}.md`,
     ),
     formatDiffMarkdown(comparisonResult),
@@ -1469,12 +1505,14 @@ export async function getSourceLog(options: {
   const root = path.resolve(options.root);
   requireManifestPresent(await loadManifest(root), root);
   const entry = await sourceEntryForAlias(root, options.alias);
-  const observationsDir = path.join(entry.absolutePath, ".assay", "observations");
+  const flatDir = path.join(entry.absolutePath, OBSERVATIONS_DIR);
+  const legacyDir = path.join(entry.absolutePath, LEGACY_SOURCE_LEDGER, OBSERVATIONS_DIR);
+  const observationsDir = (await exists(flatDir)) ? flatDir : legacyDir;
   const entries = await readdir(observationsDir, { withFileTypes: true });
   const observations: SourceLogEntry[] = [];
   for (const file of entries) {
     if (!file.isFile() || !file.name.endsWith(".yaml")) continue;
-    const relative = `.assay/observations/${file.name}`;
+    const relative = `${OBSERVATIONS_DIR}/${file.name}`;
     observations.push({
       observation: await readYamlFile<SourceObservation>(path.join(observationsDir, file.name)),
       path: relative,
@@ -1487,8 +1525,13 @@ export async function getSourceLog(options: {
 function normalizeObservationSelector(selector: string): string {
   const normalized = selector.replace(/\\/g, "/");
   if (normalized.endsWith(".yaml")) return normalized;
-  if (normalized.startsWith(".assay/observations/")) return `${normalized}.yaml`;
-  return `.assay/observations/${normalized}.yaml`;
+  // Accept both flat (observations/<id>) and legacy (.assay/observations/<id>)
+  // selectors; readers resolve both against the source entry root.
+  if (normalized.startsWith(`${OBSERVATIONS_DIR}/`)) return `${normalized}.yaml`;
+  if (normalized.startsWith(`${LEGACY_SOURCE_LEDGER}/${OBSERVATIONS_DIR}/`)) {
+    return `${normalized}.yaml`;
+  }
+  return `${OBSERVATIONS_DIR}/${normalized}.yaml`;
 }
 
 function observationIdFromPath(observationRef: string | null): string | null {
@@ -1523,11 +1566,17 @@ export async function resolveSourceObservation(
   const entry = await resolveSourceObservationEntry(root, options.alias, options.observation);
   const observationFile = observationPath(entry.observation.observation_id);
   const previousId = observationIdFromPath(entry.observation.previous_observation);
-  const diffFile = previousId
-    ? `.assay/comparisons/${previousId}--${entry.observation.observation_id}.md`
-    : null;
-  const diffExists =
-    diffFile !== null && (await exists(path.join(entry.absolutePath, diffFile))) ? diffFile : null;
+  const diffName = previousId ? `${previousId}--${entry.observation.observation_id}.md` : null;
+  let diffExists: string | null = null;
+  if (diffName) {
+    const flat = `${COMPARISONS_DIR}/${diffName}`;
+    const legacy = `${LEGACY_SOURCE_LEDGER}/${COMPARISONS_DIR}/${diffName}`;
+    if (await exists(path.join(entry.absolutePath, flat))) {
+      diffExists = flat;
+    } else if (await exists(path.join(entry.absolutePath, legacy))) {
+      diffExists = legacy;
+    }
+  }
 
   return {
     root,
