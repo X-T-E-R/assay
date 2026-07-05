@@ -25,6 +25,7 @@ import {
   checkFramework,
   closeAnalysis,
   closeIteration,
+  convertOverlayToStandalone,
   createAdr,
   createAnalysis,
   deprecateAdr,
@@ -64,6 +65,7 @@ import {
   formatAdrRecord,
   formatAttachResult,
   formatCheckResult,
+  formatConvertResult,
   formatInitResult,
   formatMigrationResult,
   formatProjectList,
@@ -311,6 +313,30 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         privacy: commandOptions.privacy as WorkspacePrivacy,
       });
       writeLine(output, "stdout", formatAttachResult(result));
+    });
+
+  program
+    .command("convert")
+    .description("Convert an overlay workspace to a sibling standalone workbench (detach-copy)")
+    .option("--root <target-dir>", "overlay workspace root to convert", process.cwd())
+    .requiredOption("--to <mode>", "target layout mode (standalone)")
+    .requiredOption("--target <dir>", "target directory for the new standalone workspace")
+    .addOption(
+      new Option("--move", "move overlay work folders instead of copying").conflicts("copy"),
+    )
+    .addOption(new Option("--copy", "copy overlay work folders (default)").conflicts("move"))
+    .option("--no-keep-overlay", "remove the source overlay work folders after a successful move")
+    .action(async (commandOptions) => {
+      if (commandOptions.to !== "standalone") {
+        throw new Error(`--to currently only supports 'standalone'; got '${commandOptions.to}'`);
+      }
+      const result = await convertOverlayToStandalone({
+        root: commandOptions.root,
+        target: commandOptions.target,
+        move: commandOptions.move === true,
+        keepOverlay: commandOptions.keepOverlay !== false,
+      });
+      writeLine(output, "stdout", formatConvertResult(result));
     });
 
   program

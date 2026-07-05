@@ -5,6 +5,7 @@ export * from "./agents.js";
 export * from "./adoption.js";
 export * from "./attach.js";
 export * from "./constants.js";
+export * from "./convert.js";
 export * from "./errors.js";
 export * from "./events.js";
 export * from "./governance.js";
