@@ -74,7 +74,7 @@ describe("adoptExistingProject", () => {
       ]),
     );
     expect(await exists(path.join(root, ".old"))).toBe(false);
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(false);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(false);
     expect(await readFile(path.join(root, "README.md"), "utf8")).toBe("# Existing\n");
   });
 
@@ -104,7 +104,7 @@ describe("adoptExistingProject", () => {
     expect(await readFile(path.join(root, "README.md"), "utf8")).toContain("# Adopted Project");
     expect(await exists(path.join(root, ".old", "20260615-040506", "README.md"))).toBe(true);
     expect(await exists(path.join(root, ".old", "20260615-040506", "src", "index.ts"))).toBe(true);
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(true);
     expect((await loadManifest(root))?.project).toMatchObject({
       name: "Adopted Project",
       archetype: "study",
@@ -142,7 +142,7 @@ describe("adoptExistingProject", () => {
       });
 
       expect(result.failures).toEqual([]);
-      expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+      expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(true);
       expect(await exists(registryRoot)).toBe(false);
     } finally {
       if (previousRegistryRoot === undefined) {

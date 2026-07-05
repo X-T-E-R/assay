@@ -93,7 +93,7 @@ describe("Assay AGENTS.md managed block", () => {
     expect(content).toContain("# Local Rules\n\nBefore.\n");
     expect(content).toContain("\nAfter.\n");
     expect(content).not.toContain("stale content");
-    expect(content).toContain("Use Assay commands for `.framework/` state.");
+    expect(content).toContain("Use Assay commands for `.assay/` state.");
   });
 
   it("skips default refresh when AGENTS.md is missing or lacks the Assay block", async () => {

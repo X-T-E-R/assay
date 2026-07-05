@@ -66,8 +66,8 @@ describe("ADR index", () => {
       date: "2026-06-17",
       related_analysis: "analyses/references/example.md",
     });
-    expect(result.eventFile).toContain(".framework/events/");
-    expect(await exists(path.join(root, ".framework", "adrs.json"))).toBe(true);
+    expect(result.eventFile).toContain(".assay/events/");
+    expect(await exists(path.join(root, ".assay", "adrs.json"))).toBe(true);
 
     const content = await readFile(path.join(root, result.adr.path), "utf8");
     expect(content).toContain("adr: ADR-0001-use-registry-backed-decisions");

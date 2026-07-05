@@ -179,12 +179,12 @@ describe("assay CLI subprocess behavior", () => {
     expect(init.stdout).toContain("Initialized framework:");
     expect(init.stdout).toContain("Project: Assay Smoke");
     expect(init.stderr).toBe("");
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(true);
 
     const check = await runCli(["check", "--root", root]);
     expect(check.exitCode).toBe(0);
     expect(check.stdout).toContain("Framework check: ok");
-    expect(check.stdout).toContain("[ok] .framework/VERSION");
+    expect(check.stdout).toContain("[ok] .assay/VERSION");
     expect(check.stderr).toBe("");
 
     await mkdir(source, { recursive: true });
@@ -392,7 +392,7 @@ describe("assay CLI subprocess behavior", () => {
         expect(await exists(path.join(root, expectedPath))).toBe(true);
       }
       const manifest = JSON.parse(
-        await readFile(path.join(root, ".framework", "manifest.json"), "utf8"),
+        await readFile(path.join(root, ".assay", "manifest.json"), "utf8"),
       );
       expect(manifest.project).toMatchObject({ archetype, mode: expectation.mode });
 
@@ -405,7 +405,7 @@ describe("assay CLI subprocess behavior", () => {
 
   it("accepts project-local and user-global custom init archetypes", async () => {
     const projectRoot = path.join(await tempDir(), "project-custom");
-    await writeCustomArchetype(path.join(projectRoot, ".framework", "archetypes", "foo.yaml"), {
+    await writeCustomArchetype(path.join(projectRoot, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
       mode: "absorption",
       modules: ["iteration"],
@@ -424,7 +424,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(project.stderr).toBe("");
     expect(await exists(path.join(projectRoot, "project-zone"))).toBe(true);
     const projectManifest = JSON.parse(
-      await readFile(path.join(projectRoot, ".framework", "manifest.json"), "utf8"),
+      await readFile(path.join(projectRoot, ".assay", "manifest.json"), "utf8"),
     );
     expect(projectManifest.project).toMatchObject({ archetype: "foo", mode: "absorption" });
 
@@ -445,7 +445,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(user.stderr).toBe("");
     expect(await exists(path.join(userRoot, "user-zone"))).toBe(true);
     const userManifest = JSON.parse(
-      await readFile(path.join(userRoot, ".framework", "manifest.json"), "utf8"),
+      await readFile(path.join(userRoot, ".assay", "manifest.json"), "utf8"),
     );
     expect(userManifest.project).toMatchObject({ archetype: "bar", mode: "learning" });
   });
@@ -489,13 +489,13 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("unsupported mode 'typo'");
     expect(result.stderr).toContain("supported modes: learning, absorption");
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(false);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(false);
   });
 
   it("lists built-in and custom archetypes with source labels", async () => {
     const root = path.join(await tempDir(), "list-root");
     const home = path.join(await tempDir(), "home");
-    await writeCustomArchetype(path.join(root, ".framework", "archetypes", "foo.yaml"), {
+    await writeCustomArchetype(path.join(root, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
     });
     await writeCustomArchetype(path.join(home, ".assay", "archetypes", "bar.yaml"), {
@@ -547,7 +547,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stderr).toBe("");
     expect(await exists(path.join(root, ".old"))).toBe(false);
     expect(await readFile(path.join(root, "README.md"), "utf8")).toBe("# Existing\n");
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(false);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(false);
   });
 
   it("applies adopt, preserves .git, archives old files, and registers the new scaffold", async () => {
@@ -567,7 +567,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stdout).toContain("Adoption manifest: .old/");
     expect(result.stderr).toBe("");
     expect(await exists(path.join(root, ".git"))).toBe(true);
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(true);
     expect(await readFile(path.join(root, "README.md"), "utf8")).toContain("# Adopt CLI Apply");
 
     const projects = await runCli(["projects", "show", root, "--json"]);
@@ -634,7 +634,7 @@ describe("assay CLI subprocess behavior", () => {
     const root = path.join(await tempDir(), "demo");
     await runCli(["init", root, "--name", "Archetype CLI"]);
     await writeFile(
-      path.join(root, ".framework", "config.yaml"),
+      path.join(root, ".assay", "config.yaml"),
       "profile: solve\nprofile_version: 99\nmode: absorption\n",
       "utf8",
     );
@@ -719,19 +719,19 @@ describe("assay CLI subprocess behavior", () => {
       "Captured from CLI test",
     ]);
     expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.stdout).toContain("Captured event: .assay/events/");
     expect(event.stderr).toBe("");
   });
 
   it("returns non-zero for failed checks", async () => {
     const root = await tempDir();
-    await mkdir(path.join(root, ".framework"), { recursive: true });
+    await mkdir(path.join(root, ".assay"), { recursive: true });
 
     const result = await runCli(["check", "--root", root]);
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain("Framework check: failed");
-    expect(result.stdout).toContain("[missing] .framework/VERSION");
+    expect(result.stdout).toContain("[missing] .assay/VERSION");
     expect(result.stderr).toBe("");
   });
 
@@ -816,7 +816,7 @@ describe("assay CLI subprocess behavior", () => {
       root,
     ]);
     expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.stdout).toContain("Captured event: .assay/events/");
     expect(event.stderr).toBe("");
 
     const migration = await runCli(["migrate-layout", "--root", root, "--dry-run"]);
@@ -841,7 +841,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(
       await readFile(path.join(root, "references", "frozen", "202401", "source.md"), "utf8"),
     ).toBe("# Source\n");
-    expect(await readdir(path.join(root, ".framework", "backups"))).toEqual([".gitkeep"]);
+    expect(await readdir(path.join(root, ".assay", "backups"))).toEqual([".gitkeep"]);
   });
 
   it("lists, shows, scans, forgets, and prunes project registry records", async () => {
@@ -883,7 +883,7 @@ describe("assay CLI subprocess behavior", () => {
     const forget = await runCli(["projects", "forget", record.id]);
     expect(forget.exitCode).toBe(0);
     expect(forget.stdout).toContain(`Forgot ${record.id}`);
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(true);
 
     const scan = await runCli(["projects", "scan", path.dirname(root), "--json"]);
     expect(scan.exitCode).toBe(0);
@@ -892,7 +892,7 @@ describe("assay CLI subprocess behavior", () => {
       scanned.some((candidate: { path?: string }) => candidate.path === path.resolve(root)),
     ).toBe(true);
 
-    await rm(path.join(root, ".framework"), { recursive: true, force: true });
+    await rm(path.join(root, ".assay"), { recursive: true, force: true });
     const dryRunPrune = await runCli(["projects", "prune", "--dry-run", "--json"]);
     expect(dryRunPrune.exitCode).toBe(0);
     expect(JSON.parse(dryRunPrune.stdout)).toEqual(

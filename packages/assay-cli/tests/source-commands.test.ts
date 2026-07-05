@@ -105,7 +105,7 @@ describe("assay source CLI", () => {
     const sync = await runCli(["source", "sync", "demo-source", "--root", root]);
     expect(sync.exitCode).toBe(0);
     expect(sync.stdout).toContain("Source sync: demo-source");
-    expect(sync.stdout).toContain("Observation: references/demo-source/.assay/observations/");
+    expect(sync.stdout).toContain("Observation: references/demo-source/observations/");
 
     const diff = await runCli(["source", "diff", "demo-source", "--root", root]);
     expect(diff.exitCode).toBe(0);
@@ -176,7 +176,7 @@ describe("assay source CLI", () => {
       expect(sync.exitCode).toBe(0);
       expect(sync.stdout).toContain("Source sync: local-git");
       expect(sync.stdout).not.toContain("Change: same");
-      expect(sync.stdout).toContain("Observation: references/local-git/.assay/observations/");
+      expect(sync.stdout).toContain("Observation: references/local-git/observations/");
 
       const diff = await runCli(["source", "diff", "local-git", "--root", root]);
       expect(diff.exitCode).toBe(0);

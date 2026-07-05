@@ -100,8 +100,8 @@ describe("assay system CLI", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Registered system: demo-core");
     expect(result.stdout).toContain("Status: primary");
-    expect(result.stdout).toContain("Event: .framework/events/");
-    expect(await exists(path.join(root, ".framework", "systems-registry.json"))).toBe(true);
+    expect(result.stdout).toContain("Event: .assay/events/");
+    expect(await exists(path.join(root, ".assay", "systems-registry.json"))).toBe(true);
   });
 
   it("register rejects duplicate system names", async () => {
