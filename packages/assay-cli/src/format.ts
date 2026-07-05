@@ -3,6 +3,7 @@ import type {
   AdrRecord,
   ApplyUpdateResult,
   AssayProjectRecord,
+  AttachResult,
   CheckFrameworkResult,
   FrameworkStatusResult,
   InitFrameworkResult,
@@ -64,6 +65,21 @@ export function formatInitResult(result: InitFrameworkResult): string {
     `Project: ${result.project}`,
     ...semantics,
     formatReport(result.report),
+  ].join("\n");
+}
+
+export function formatAttachResult(result: AttachResult): string {
+  return [
+    `Attached Assay overlay: ${result.root}`,
+    `Project: ${result.project}`,
+    "Mode: overlay",
+    `Privacy: ${result.privacy}`,
+    `Primary system: ${result.system.name} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
+    `Contract: ${result.system.contract_file}`,
+    result.excludeUpdated
+      ? "Git: added /.assay/ to .git/info/exclude"
+      : "Git: .assay/ already ignored",
+    `Event: ${result.eventFile}`,
   ].join("\n");
 }
 

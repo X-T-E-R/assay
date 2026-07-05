@@ -129,7 +129,7 @@ export function standalonePaths() {
     analyses: "analyses",
     iterations: "iterations",
     knowledge: "knowledge",
-    systems_contracts: `${MANAGED_DIR}/systems`,
+    systems_contracts: "systems",
   };
 }
 
@@ -181,7 +181,7 @@ function legacyStandaloneLayout(layoutVersion: number): WorkspaceLayout {
       analyses: "analyses",
       iterations: "iterations",
       knowledge: "knowledge",
-      systems_contracts: `${stateRoot}/systems`,
+      systems_contracts: "systems",
     },
   };
 }

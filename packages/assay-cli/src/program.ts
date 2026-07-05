@@ -11,6 +11,7 @@ import {
   type SourceCaptureMode,
   type SourceChangeClass,
   type SystemVcs,
+  type WorkspacePrivacy,
   absorbReference,
   acceptAdr,
   addKnowledge,
@@ -19,6 +20,7 @@ import {
   adoptExistingProject,
   applyUpdate,
   archiveSystem,
+  attachExistingRepo,
   captureEvent,
   checkFramework,
   closeAnalysis,
@@ -60,6 +62,7 @@ import {
   formatAdoptionResult,
   formatAdrList,
   formatAdrRecord,
+  formatAttachResult,
   formatCheckResult,
   formatInitResult,
   formatMigrationResult,
@@ -280,6 +283,34 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       if (!result.dryRun && result.failures.length > 0) {
         output.setExitCode(1);
       }
+    });
+
+  program
+    .command("attach")
+    .description("Attach Assay privately to an existing product repository (overlay mode)")
+    .option("--root <target-dir>", "existing repository root to attach", process.cwd())
+    .option("--name <project-name>", "project name (defaults to directory basename)")
+    .addOption(
+      new Option("--archetype <archetype>", "project archetype name (run `assay archetype list`)"),
+    )
+    .addOption(
+      new Option(
+        "--privacy <privacy>",
+        "overlay Git privacy: private (default), private-git, tracked",
+      )
+        .choices(["private", "private-git", "tracked"])
+        .default("private"),
+    )
+    .option("--no-track", "do not update the Assay project registry")
+    .option("--no-agents", "do not write the Assay managed block to root AGENTS.md")
+    .action(async (commandOptions) => {
+      const result = await attachExistingRepo({
+        root: commandOptions.root,
+        ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
+        ...(commandOptions.archetype === undefined ? {} : { archetype: commandOptions.archetype }),
+        privacy: commandOptions.privacy as WorkspacePrivacy,
+      });
+      writeLine(output, "stdout", formatAttachResult(result));
     });
 
   program

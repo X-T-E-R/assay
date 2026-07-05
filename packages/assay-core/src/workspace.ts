@@ -19,6 +19,12 @@ import {
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
+import {
+  type WorkspaceArea,
+  defaultStandaloneLayout,
+  resolveWorkspaceLayout,
+  workspacePath,
+} from "./layout.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
@@ -617,14 +623,30 @@ export async function checkFramework(
   options: CheckFrameworkOptions,
 ): Promise<CheckFrameworkResult> {
   const root = path.resolve(options.root);
+
+  // Resolve the workspace layout up front so checks point at the right paths
+  // for both standalone (work folders at root) and overlay (work folders
+  // under .assay/). If the manifest cannot be read, fall back to standalone.
+  let manifestForLayout: FrameworkManifest | null = null;
+  try {
+    manifestForLayout = await loadManifest(root);
+  } catch {
+    // invalid manifest is reported below; use standalone fallback for paths
+  }
+  const layout = resolveWorkspaceLayout(manifestForLayout) ?? defaultStandaloneLayout();
+  const relativeArea = (area: WorkspaceArea): string =>
+    workspacePath("", layout, area).split(path.sep).join("/");
+
   // Base structure check targets: always-required runtime files plus the
-  // archetype-declared primary directories.
+  // archetype-declared primary directories. systems/ and knowledge/ resolve
+  // through the layout: standalone keeps them at root, overlay keeps them
+  // under .assay/.
   const checkTargets: Array<readonly [string, string]> = [
     [`${MANAGED_DIR} directory`, MANAGED_DIR],
     [`${MANAGED_DIR}/VERSION`, `${MANAGED_DIR}/VERSION`],
     [`${MANAGED_DIR}/manifest.json`, `${MANAGED_DIR}/manifest.json`],
-    ["systems directory", "systems"],
-    ["knowledge directory", "knowledge"],
+    ["systems directory", relativeArea("systemsContracts")],
+    ["knowledge directory", relativeArea("knowledge")],
   ];
 
   // If a workspace declares its archetype, augment checks with that archetype's
@@ -643,7 +665,7 @@ export async function checkFramework(
       }
     }
     for (const dir of topLevels) {
-      checkTargets.push([`${dir} directory`, dir]);
+      checkTargets.push([`${dir} directory`, relativeArea(dir as WorkspaceArea)]);
     }
   } catch {
     // unreadable manifest/archetype; fall back to base targets only

@@ -3,6 +3,7 @@ export const CORE_PACKAGE_NAME = "assay-core";
 export * from "./adrs.js";
 export * from "./agents.js";
 export * from "./adoption.js";
+export * from "./attach.js";
 export * from "./constants.js";
 export * from "./errors.js";
 export * from "./events.js";
