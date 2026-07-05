@@ -4,6 +4,7 @@ import path from "node:path";
 import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
 import { InvalidManifestError } from "./errors.js";
 import { computeHash } from "./hashing.js";
+import { defaultStandaloneLayout } from "./layout.js";
 import {
   type FrameworkManifest,
   type ManagedFileRecord,
@@ -59,6 +60,9 @@ export function defaultManifest(
     managed_files: {},
     user_deleted: [],
     applied_migrations: [],
+    // Fresh workspaces always carry a v4 layout block. Standalone is the
+    // default; `assay attach` overrides this with an overlay layout.
+    layout: defaultStandaloneLayout(),
   };
 }
 

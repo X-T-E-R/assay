@@ -8,6 +8,7 @@ export * from "./errors.js";
 export * from "./events.js";
 export * from "./governance.js";
 export * from "./hashing.js";
+export * from "./layout.js";
 export * from "./manifest.js";
 export * from "./paths.js";
 export * from "./profile.js";
