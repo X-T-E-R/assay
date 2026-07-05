@@ -54,6 +54,6 @@ Do not commit:
 - real external-system snapshots, private references, customer or project data, generated releases, or runtime logs;
 - `.env` files, API keys, tokens, credentials, or local absolute paths;
 - one-off delivery reports, temporary validation output, caches, or compiled artifacts;
-- runtime contents under `.framework/backups/`, `.framework/events/`, or `.framework/.runtime/`.
+- runtime contents under `.assay/backups/`, `.assay/events/`, or `.assay/.runtime/`.
 
 Use sanitized examples when a workflow needs demonstration data. Public docs should explain product behavior and reader actions, not private context, temporary acceptance criteria, or implementation diary notes.

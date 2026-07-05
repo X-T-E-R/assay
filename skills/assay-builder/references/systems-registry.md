@@ -1,6 +1,6 @@
 # Systems registry
 
-Layout v3+ introduces a per-workspace systems registry at `.framework/systems-registry.json` plus a contract file at `systems/<name>/system.yaml` for each registered system. This separates **system contracts** (managed by the framework) from **system source** (managed by the system itself, possibly in an independent git repository).
+Layout v3+ introduces a per-workspace systems registry at `.assay/systems-registry.json` plus a contract file at `systems/<name>/system.yaml` for each registered system. This separates **system contracts** (managed by the framework) from **system source** (managed by the system itself, possibly in an independent git repository).
 
 ## Why contracts and not full templates
 
@@ -13,7 +13,7 @@ Layout v3 fixes both by recording each system as a registry entry with explicit 
 
 ## Registry schema
 
-`.framework/systems-registry.json`:
+`.assay/systems-registry.json`:
 
 ```jsonc
 {

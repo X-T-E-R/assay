@@ -100,12 +100,12 @@ The structured events emitted by these commands:
 | `adr.deprecated` | `adr deprecate` | `id`, `path` |
 | `knowledge.added` | `knowledge add` | `path`, `type`, `title`, `from_analysis`, `from_iteration` |
 
-These events flow into `.framework/events/<YYYY-MM>.jsonl` and are intended to be machine-readable for future audits, dashboards, or migrations.
+These events flow into `.assay/events/<YYYY-MM>.jsonl` and are intended to be machine-readable for future audits, dashboards, or migrations.
 
 ## Anti-patterns
 
 - Do not hand-edit `Status: open` to `Status: closed` in `plan.md`. Use `iteration close` so the event ledger stays consistent.
 - Do not check decision-exit checkboxes by hand. Use `analysis close --exit ...`.
-- Do not hand-edit `.framework/adrs.json`. Use `adr new`, `adr accept`, `adr supersede`, and `adr deprecate` so the index, markdown frontmatter, and event ledger stay consistent.
+- Do not hand-edit `.assay/adrs.json`. Use `adr new`, `adr accept`, `adr supersede`, and `adr deprecate` so the index, markdown frontmatter, and event ledger stay consistent.
 - Do not create `knowledge/<type>/<file>.md` by hand. Use `knowledge add` so the back-references and event are recorded.
 - Do not leave iterations open across long pauses. If you need to pause, close with `--result retest` and create a follow-up iteration when work resumes.

@@ -84,22 +84,22 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 
 ## Framework structure
 
-Target projects use an archetype-specific layout over a shared base (`.framework/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), `hypotheses/` + `experiments/` (`science`), `candidates/` + `scorecards/` (`evaluation`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.framework/` managed files, read `references/framework-structure.md`.
+Target projects use an archetype-specific layout over a shared base (`.assay/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), `hypotheses/` + `experiments/` (`science`), `candidates/` + `scorecards/` (`evaluation`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
 
 ## Systems and version control
 
-Each system under `systems/` may be an independently version-controlled repository. The framework manages a **systems registry** (`.framework/systems-registry.json`) and per-system **contract files** (`systems/<name>/system.yaml`), not the system's source files.
+Each system under `systems/` may be an independently version-controlled repository. The framework manages a **systems registry** (`.assay/systems-registry.json`) and per-system **contract files** (`systems/<name>/system.yaml`), not the system's source files.
 
 - `vcs: independent-git` — the system path is its own git repository; the root repo `.gitignore` should ignore the system directory but allow `system.yaml`. Framework `check` skips internals.
 - `vcs: embedded` — system files live in the root repo directly.
 - Exactly one system has `status: primary` at any time. Use `system promote` to switch; the previous primary becomes `superseded` automatically.
 - Archive non-primary systems with `system archive --apply` (copy-first move into `systems/archive/`).
 
-Never hand-edit `.framework/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration from layout v2, read `references/systems-registry.md`.
+Never hand-edit `.assay/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration from layout v2, read `references/systems-registry.md`.
 
 ## Decisions and ADRs
 
-Use ADRs for durable architecture decisions that need status, numbering, and supersede history. The framework stores ADR markdown under `knowledge/decisions/` and tracks the index in `.framework/adrs.json`.
+Use ADRs for durable architecture decisions that need status, numbering, and supersede history. The framework stores ADR markdown under `knowledge/decisions/` and tracks the index in `.assay/adrs.json`.
 
 - `adr new` creates a proposed ADR draft with required frontmatter.
 - `adr accept` marks a proposed ADR as accepted.
@@ -107,7 +107,7 @@ Use ADRs for durable architecture decisions that need status, numbering, and sup
 - `adr deprecate` closes a proposed or accepted ADR without replacement.
 - `check` validates dangling ADR links, non-bidirectional supersede chains, cycles, and missing ADR frontmatter.
 
-Never hand-edit `.framework/adrs.json`. Use `adr` commands for lifecycle transitions. Read `references/adr-workflow.md` before creating or changing ADRs.
+Never hand-edit `.assay/adrs.json`. Use `adr` commands for lifecycle transitions. Read `references/adr-workflow.md` before creating or changing ADRs.
 
 ## Update policy
 
@@ -150,7 +150,7 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 - Do not overwrite existing user files by default.
 - Do not adopt an already initialized Assay workspace; use `update` or `migrate-layout` instead.
 - Do not put external project source under `systems/`; in learning mode add it as a living source under `references/<alias>/` with `source add`, or use frozen references only for explicit full-capture/legacy evidence. In absorption mode land project-owned material under `problem/` via `absorb`.
-- Do not hand-edit `.framework/manifest.json`, `.framework/systems-registry.json`, or `.framework/adrs.json`; use the CLI.
+- Do not hand-edit `.assay/manifest.json`, `.assay/systems-registry.json`, or `.assay/adrs.json`; use the CLI.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
 - Do not leave iterations open indefinitely; `check` flags `Status: open` plans as warnings.
@@ -194,7 +194,7 @@ Report:
 
 - Target root and CLI command used.
 - Created/updated/skipped/conflicted files.
-- Current `.framework/VERSION` and layout version.
+- Current `.assay/VERSION` and layout version.
 - Whether migration was only planned or applied.
 - Which reference/analysis/iteration/knowledge artifacts were produced.
 - Which ADRs were created, accepted, superseded, deprecated, or left proposed.

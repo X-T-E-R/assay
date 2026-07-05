@@ -1,14 +1,14 @@
 # ADR workflow
 
-Assay ADRs are numbered architecture decision records stored as markdown under `knowledge/decisions/` and indexed in `.framework/adrs.json`. Use ADRs for durable decisions that need status, replacement history, and validation. Use `knowledge add decision` only for reusable decision notes that do not need an ADR lifecycle.
+Assay ADRs are numbered architecture decision records stored as markdown under `knowledge/decisions/` and indexed in `.assay/adrs.json`. Use ADRs for durable decisions that need status, replacement history, and validation. Use `knowledge add decision` only for reusable decision notes that do not need an ADR lifecycle.
 
 ## Files
 
-- `.framework/adrs.json` — managed ADR index with `__schema: 1`, `next_number`, ADR status, supersede links, and markdown paths.
+- `.assay/adrs.json` — managed ADR index with `__schema: 1`, `next_number`, ADR status, supersede links, and markdown paths.
 - `knowledge/decisions/ADR-NNNN-<slug>.md` — human-readable ADR body with required frontmatter.
 - `knowledge/decisions/ADR-TEMPLATE.md` — authoring template for manual drafting.
 
-Do not hand-edit `.framework/adrs.json`. Use the CLI so numbering, status changes, and event records stay consistent.
+Do not hand-edit `.assay/adrs.json`. Use the CLI so numbering, status changes, and event records stay consistent.
 
 ## Frontmatter
 

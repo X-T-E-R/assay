@@ -41,15 +41,15 @@ Breaking directory-layout changes require `assay migrate-layout`. The default is
 
 ### v2 → v3 (systems registry)
 
-Layout v3 introduces `.framework/systems-registry.json` and per-system `system.yaml` contracts. When `migrate-layout` detects a v2 workspace (manifest exists, registry does not), the plan adds these step types:
+Layout v3 introduces `.assay/systems-registry.json` and per-system `system.yaml` contracts. When `migrate-layout` detects a v2 workspace (manifest exists, registry does not), the plan adds these step types:
 
 - `create-systems-registry` — initialize registry from `manifest.project.core` and scan `systems/` plus `systems/archive/` for active and archived systems.
 - `generate-contract` — write `systems/<name>/system.yaml` for each active system, reading legacy `framework.yaml` for status/version/supersedes hints.
 - `mark-user-deleted` — remove legacy `systems/<core>/README.md`, `framework.yaml`, `CHANGELOG.md`, and `docs/*` template entries from `manifest.managed_files`. `systems/<core>/system.yaml` remains the framework-managed contract.
-- `upgrade-manifest` — bump `layout_version` and record the migration in `.framework/migrations/`.
+- `upgrade-manifest` — bump `layout_version` and record the migration in `.assay/migrations/`.
 
 After v2→v3 migration, run `assay check`. Existing managed-file warnings for system internals should disappear, and the new `Systems` section in `status` should show the registered primary.
 
 ## Backup
 
-`assay update` creates a timestamped backup under `.framework/backups/` before apply writes. `assay migrate-layout --apply` does **not** create a backup by default; pass `--backup` to save only the concrete pre-existing files that migration would overwrite. Copy-only steps that create new destinations do not back up whole directories.
+`assay update` creates a timestamped backup under `.assay/backups/` before apply writes. `assay migrate-layout --apply` does **not** create a backup by default; pass `--backup` to save only the concrete pre-existing files that migration would overwrite. Copy-only steps that create new destinations do not back up whole directories.

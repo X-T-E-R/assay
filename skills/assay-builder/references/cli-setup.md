@@ -56,7 +56,7 @@ A global `assay` command (via `npm link` in `packages/assay-cli`) is optional an
 
 ## Working directory conventions
 
-All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `source add|sync|switch|status|diff|log`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.framework/manifest.json`.
+All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `source add|sync|switch|status|diff|log`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.assay/manifest.json`.
 
 Use `cd <target-dir>` before running commands, or pass `--root <path>` / `[target-dir]` only when operating on a workspace from another directory.
 
@@ -76,7 +76,7 @@ These commands operate on registry metadata only and never modify project files.
 
 ## Systems registry (per-workspace)
 
-Distinct from the project registry, each workspace has a per-workspace systems registry at `.framework/systems-registry.json` introduced in layout v3. Manage it with the `system` command group rather than editing the JSON directly:
+Distinct from the project registry, each workspace has a per-workspace systems registry at `.assay/systems-registry.json` introduced in layout v3. Manage it with the `system` command group rather than editing the JSON directly:
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]
@@ -90,7 +90,7 @@ Selectors can be the full system name or a unique name prefix.
 
 ## ADR index (per-workspace)
 
-Each workspace can track architecture decision records in `.framework/adrs.json` with markdown files under `knowledge/decisions/`. Manage ADRs with the `adr` command group rather than editing the JSON directly:
+Each workspace can track architecture decision records in `.assay/adrs.json` with markdown files under `knowledge/decisions/`. Manage ADRs with the `adr` command group rather than editing the JSON directly:
 
 ```bash
 assay adr new "Title" [--from-analysis <path>] [--from-iteration <path>]

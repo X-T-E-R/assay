@@ -13,7 +13,7 @@ human-facing workspace
 
 ## Project Infrastructure, Not a Prompt Pack
 
-A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. Assay therefore gives each managed workspace a `.framework/` directory that stores version state, a manifest, events, migrations, and backups.
+A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. Assay therefore gives each managed workspace a `.assay/` directory that stores version state, a manifest, events, migrations, and backups.
 
 That managed layer sits beside the visible workspace:
 
@@ -21,7 +21,7 @@ That managed layer sits beside the visible workspace:
 references/ -> analyses/ -> systems/ -> iterations/ -> knowledge/
 ```
 
-The visible folders hold user artifacts. The hidden `.framework/` layer holds lifecycle metadata. This split keeps daily work readable while still allowing the framework to evolve safely.
+The visible folders hold user artifacts. The hidden `.assay/` layer holds lifecycle metadata. This split keeps daily work readable while still allowing the framework to evolve safely.
 
 ## Indexes Should Be Discovery Surfaces
 
@@ -37,7 +37,7 @@ This is why the framework separates:
 
 ## Updates Need File Ownership
 
-Safe updates require the framework to know which files it owns. Assay uses `.framework/manifest.json` to record managed files, template identifiers, installed versions, and hashes.
+Safe updates require the framework to know which files it owns. Assay uses `.assay/manifest.json` to record managed files, template identifiers, installed versions, and hashes.
 
 That enables update behavior such as:
 

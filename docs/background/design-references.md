@@ -20,8 +20,8 @@ Assay distinguishes three version layers:
 | Layer | Location | Meaning |
 | --- | --- | --- |
 | CLI/package version | `package.json` and package constants | Capability version of the tool |
-| Installed framework version | `.framework/VERSION` | Template version installed in a workspace |
-| Layout/schema version | `.framework/manifest.json` | Manifest and directory-layout compatibility |
+| Installed framework version | `.assay/VERSION` | Template version installed in a workspace |
+| Layout/schema version | `.assay/manifest.json` | Manifest and directory-layout compatibility |
 
 Updates should compare the installed workspace version, not just the currently installed CLI package.
 
