@@ -1,6 +1,8 @@
 # Assay
 
-Turn AI research into decisions your repo can remember.
+**Study many. Grow your own.**
+
+Assay turns sources, experiments, and AI-assisted research into decisions your repo can remember.
 
 Run it as a standalone workbench, or attach it privately to the repo you already ship.
 
@@ -10,7 +12,7 @@ Run it as a standalone workbench, or attach it privately to the repo you already
 
 Your agent can inspect twenty repositories in an afternoon. Without a workbench, the useful parts disappear into chat scrollback: what mattered, what failed, what was adopted, and why the next agent should not start over.
 
-Assay is a CLI workbench for evidence-driven AI-assisted building. It keeps sources, experiments, analyses, ADRs, and reusable knowledge in plain files so decisions survive context resets.
+Assay is a CLI workbench for turning evidence into better systems. It keeps sources, experiments, analyses, ADRs, and reusable knowledge in plain files so decisions survive context resets.
 
 The loop is simple:
 
@@ -23,7 +25,7 @@ sources / experiments / goals
 
 It is not a notes app, not an agent runtime, and not a prompt collection. It is the place where "this project does something interesting" becomes "we copied this pattern, rejected that claim, and can explain the decision later."
 
-## Layout modes
+## Choose how to start
 
 Assay fits the way your code already lives.
 
@@ -32,7 +34,20 @@ Assay fits the way your code already lives.
 | `standalone` | You want a dedicated research / evaluation / solve workspace. | `.assay/` for Assay state, with work folders such as `references/`, `analyses/`, `iterations/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
 | `overlay` | You already have a product repo and want its root to be the primary system. | One private `.assay/` folder containing Assay state and work folders. Product files stay where they are. | Product Git ignores `.assay/` by default; Assay state can optionally have its own Git inside `.assay/`. |
 
-The hidden state directory is `.assay/`. Older docs and layouts used `.framework/`; new layouts treat that as legacy migration input.
+## Choose what you're building
+
+Archetypes shape the workspace structure and defaults. They are **structure + conventions + common verbs**, not separate command families.
+
+| If you want to... | Start with | Assay gives you |
+| --- | --- | --- |
+| Study external projects without losing provenance | `study` | living sources, reference analyses, pattern notes, decision exits |
+| Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, iterations |
+| Run evidence-oriented experiments | `science` | hypotheses, experiments, datasets, findings |
+| Compare tools, libraries, or approaches | `evaluation` | candidates, criteria, scorecards, ADR-ready decisions |
+| Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
+| Keep durable reusable knowledge | `library` | shared systems and knowledge as the base layer |
+
+Most work starts as `study`, `solve`, or `explore`: study outside examples, solve a measurable target, or explore when the target shape is still open. The command surface stays small: `source`, `analysis`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
 
 ## Quick start
 
@@ -74,27 +89,6 @@ If you later want to separate the overlay into a standalone workbench, detach it
 assay convert --to standalone --target ../existing-repo-assay
 ```
 
-## What you can build with it
-
-| If you want to... | Start with | Assay gives you |
-| --- | --- | --- |
-| Study external projects without losing provenance | `study` | living sources, reference analyses, pattern notes, decision exits |
-| Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, iterations |
-| Run evidence-oriented experiments | `science` | hypotheses, experiments, datasets, findings |
-| Compare tools, libraries, or approaches | `evaluation` | candidates, criteria, scorecards, ADR-ready decisions |
-| Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
-| Keep durable reusable knowledge | `library` | shared systems and knowledge as the base layer |
-
-The command surface stays small: `source`, `analysis`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
-
-## Git model
-
-Assay separates system code from Assay memory.
-
-In `standalone` mode, the workspace Git is optional. Use it when analyses, ADRs, observations, and knowledge need review or team history. Keep independent systems in their own Git repositories; the workbench records contracts and decisions, not their source history.
-
-In `overlay` mode, Assay should not enter your product repo by default. `assay attach --privacy private` writes `/.assay/` to the repo-local `.git/info/exclude` and leaves tracked project files alone. If you want versioned Assay memory without polluting product commits, use `--privacy private-git` to initialize a separate Git repository inside `.assay/`.
-
 ## Use it with an agent
 
 The repo ships an agent-facing Skill at `skills/assay-builder`. It calls this clone's CLI directly, so keep the cloned repo in place after installing:
@@ -108,6 +102,14 @@ node scripts/install.mjs
 Then ask your agent to use the Assay Builder skill when a task needs source study, evidence capture, ADRs, iterations, or reusable knowledge. The useful mental model is simple: do not just "look at examples"; open a source, analyze it, close the decision, and promote durable findings.
 
 See `skills/assay-builder/references/cli-setup.md` for setup flags and invocation details.
+
+## Git model
+
+Assay separates system code from Assay memory.
+
+In `standalone` mode, the workspace Git is optional. Use it when analyses, ADRs, observations, and knowledge need review or team history. Keep independent systems in their own Git repositories; the workbench records contracts and decisions, not their source history.
+
+In `overlay` mode, Assay should not enter your product repo by default. `assay attach --privacy private` writes `/.assay/` to the repo-local `.git/info/exclude` and leaves tracked project files alone. If you want versioned Assay memory without polluting product commits, use `--privacy private-git` to initialize a separate Git repository inside `.assay/`.
 
 ## What Assay deliberately does not do
 

@@ -1,6 +1,8 @@
 # Assay
 
-把 AI 研究变成你的仓库能记住的决策。
+**Study many. Grow your own.**
+
+Assay 把来源研究、实验和 AI 辅助构建变成你的仓库能记住的决策。
 
 可以作为独立工作台运行，也可以私有地 attach 到你正在发布的仓库上。
 
@@ -10,7 +12,7 @@
 
 你的 agent 一个下午能看二十个仓库。没有工作台，有价值的东西会消失在聊天记录里：什么重要、什么失败、采纳了什么、为什么下一个 agent 不该从零开始。
 
-Assay 是一个面向证据驱动、AI 辅助构建的 CLI 工作台。它把来源、实验、分析、ADR 和可复用知识保存在普通文件里，让决策能撑过上下文重置。
+Assay 是一个把证据变成更好系统的 CLI 工作台。它把来源、实验、分析、ADR 和可复用知识保存在普通文件里，让决策能撑过上下文重置。
 
 循环很简单：
 
@@ -23,7 +25,7 @@ Assay 是一个面向证据驱动、AI 辅助构建的 CLI 工作台。它把来
 
 它不是笔记应用，不是 agent 运行时，也不是 prompt 集合。它是"这个项目有点意思"变成"我们抄了这个模式、否了那个说法、并且以后能解释为什么"的地方。
 
-## 布局模式
+## 选择启动方式
 
 Assay 适配你代码现有的存在方式。
 
@@ -32,7 +34,20 @@ Assay 适配你代码现有的存在方式。
 | `standalone` | 你想要一个独立的研究 / 评估 / 攻关工作区。 | `.assay/` 存 Assay 状态，`references/`、`analyses/`、`iterations/`、`knowledge/`、`systems/` 在工作区根目录。 | 工作区 Git 可选。独立系统保留自己的 Git。 |
 | `overlay` | 你已经有产品仓库，想让它的根目录作为主系统。 | 一个私有的 `.assay/` 文件夹，包含 Assay 状态和工作目录。产品文件不动。 | 产品 Git 默认忽略 `.assay/`；Assay 状态可选地在 `.assay/` 里建自己的 Git。 |
 
-隐藏状态目录是 `.assay/`。旧文档和旧布局用 `.framework/`；新布局把它当作遗留迁移输入。
+## 选择要构建的工作区
+
+Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通用动词**，不是一组单独命令。
+
+| 想做的事 | 起步 archetype | Assay 给你 |
+| --- | --- | --- |
+| 学习外部项目且不丢失来源 | `study` | 活体来源、参考分析、模式笔记、决策出口 |
+| 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、迭代 |
+| 跑证据导向实验 | `science` | hypotheses、experiments、datasets、findings |
+| 比较工具、库或方案 | `evaluation` | candidates、criteria、scorecards、可转 ADR 的决策 |
+| 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
+| 保存持久的可复用知识 | `library` | 共享 systems 和 knowledge 作为基座 |
+
+多数工作从 `study`、`solve` 或 `explore` 开始：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。命令面很小：`source`、`analysis`、`iteration`、`adr`、`knowledge`、`system`、`check`。
 
 ## 快速开始
 
@@ -74,27 +89,6 @@ overlay 模式下，产品仓库还是产品仓库。Assay 把仓库根目录注
 assay convert --to standalone --target ../existing-repo-assay
 ```
 
-## 能用来做什么
-
-| 想做的事 | 起步 archetype | Assay 给你 |
-| --- | --- | --- |
-| 学习外部项目且不丢失来源 | `study` | 活体来源、参考分析、模式笔记、决策出口 |
-| 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、迭代 |
-| 跑证据导向实验 | `science` | hypotheses、experiments、datasets、findings |
-| 比较工具、库或方案 | `evaluation` | candidates、criteria、scorecards、可转 ADR 的决策 |
-| 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
-| 保存持久的可复用知识 | `library` | 共享 systems 和 knowledge 作为基座 |
-
-命令面很小：`source`、`analysis`、`iteration`、`adr`、`knowledge`、`system`、`check`。
-
-## Git 模型
-
-Assay 把系统代码和 Assay 记忆分开。
-
-`standalone` 模式下，工作区 Git 是可选的。当分析、ADR、观察和知识需要评审或团队历史时再用。独立系统保留在自己的 Git 仓库里；工作台记录契约和决策，不记录它们的源码历史。
-
-`overlay` 模式下，Assay 默认不进入你的产品仓库。`assay attach --privacy private` 把 `/.assay/` 写入仓库本地的 `.git/info/exclude`，不动已跟踪的项目文件。如果想让 Assay 记忆有版本历史又不污染产品提交，用 `--privacy private-git` 在 `.assay/` 里初始化一个独立的 Git 仓库。
-
 ## 作为 Agent Skill 使用
 
 仓库提供面向 agent 的 Skill：`skills/assay-builder`。它直接调用当前克隆仓库里的 CLI，所以安装后要保留这个克隆目录：
@@ -105,9 +99,17 @@ cd assay
 node scripts/install.mjs
 ```
 
-让 agent 在任务需要来源研究、证据捕获、ADR、迭代或可复用知识时使用 Assay Builder skill。心智模型很简单：别只是"看几个例子"；打开一个来源、分析它、关闭决策、把持久的发现沉淀成知识。
+让 agent 在任务需要来源研究、证据捕获、ADR、迭代或可复用知识时使用 Assay Builder skill。心智模型很简单：别只是"看几个例子"；打开一个来源、分析它、关闭决策、把持久发现保存为知识。
 
 安装参数和调用细节见 `skills/assay-builder/references/cli-setup.zh.md`。
+
+## Git 模型
+
+Assay 把系统代码和 Assay 记忆分开。
+
+`standalone` 模式下，工作区 Git 是可选的。当分析、ADR、观察和知识需要评审或团队历史时再用。独立系统保留在自己的 Git 仓库里；工作台记录契约和决策，不记录它们的源码历史。
+
+`overlay` 模式下，Assay 默认不进入你的产品仓库。`assay attach --privacy private` 把 `/.assay/` 写入仓库本地的 `.git/info/exclude`，不动已跟踪的项目文件。如果想让 Assay 记忆有版本历史又不污染产品提交，用 `--privacy private-git` 在 `.assay/` 里初始化一个独立的 Git 仓库。
 
 ## Assay 故意不做的事
 
