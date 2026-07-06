@@ -39,4 +39,6 @@ printf 'export const legacy = true;\n' >"$adopted/src/index.ts"
   test -f .old/*/src/index.ts
 )
 
+node "$repo_root/scripts/check-public-example.mjs"
+
 echo "Assay checks passed."

@@ -108,6 +108,8 @@ references/**/observations/
 analyses/
 iterations/
 knowledge/
+systems/**/system.yaml
+.assay/systems/*.yaml
 ```
 
 Recommended ignored content:
@@ -118,7 +120,7 @@ references/*/checkout/
 references/*/captures/
 ```
 
-For independent systems, prefer sidecar contracts under `.assay/systems/<name>.yaml` or system-owned contracts inside the system repo. Do not rely on an outer repo ignoring `systems/<name>/` while trying to re-include `systems/<name>/system.yaml`; that pattern breaks once the parent directory is ignored or the child is an independent Git repository.
+For independent systems that live under the workbench `systems/` tree, keep the contract at `systems/<name>/system.yaml` and avoid tracking the rest of that system's source tree in the outer workbench Git unless you intentionally treat it as embedded or a submodule. When the primary system lives outside the workbench root (for example after `assay convert --to standalone`), Assay keeps the sidecar contract under `.assay/systems/<name>.yaml`.
 
 ### Overlay Git
 
@@ -225,4 +227,4 @@ For overlay privacy:
 For standalone Git hygiene:
 
 - Warn when a `references/*/checkout/` directory is staged or tracked.
-- Warn when an independent system stored under `systems/` is tracked by the outer workbench Git as source files rather than as a sidecar contract or explicit submodule.
+- Warn when an independent system stored under `systems/` is tracked by the outer workbench Git as source files rather than just `systems/<name>/system.yaml`, unless the repo intentionally treats that system as embedded or as a submodule.

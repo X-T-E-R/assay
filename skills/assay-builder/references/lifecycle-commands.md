@@ -4,7 +4,7 @@ The common Assay evidence loop is `evidence in → structured checks → decisio
 
 ## Why explicit close
 
-In layout v2, iterations and analyses were created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to surface "this work is open" or to flag work that should have been promoted into reusable knowledge. Layout v3 makes close explicit and `assay check` flags open iterations as warnings.
+Earlier layouts let iterations and analyses be created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to surface "this work is open" or to flag work that should have been promoted into reusable knowledge. The current CLI makes close explicit and `assay check` flags open iterations as warnings.
 
 ## Iterations
 

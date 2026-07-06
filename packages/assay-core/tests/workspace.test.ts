@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -43,24 +43,10 @@ const USER_FACING_BUILT_INS = [
   "evaluation",
   "explore",
 ] as const;
-const tempRoots: string[] = [];
+const tempDirs = createTempDirectoryFixture("assay-core-workspace");
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-core-workspace-"));
-  tempRoots.push(root);
-  return root;
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
+  return tempDirs.createTempDir();
 }
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
@@ -98,7 +84,7 @@ async function fillAnalysisSections(
 }
 
 afterEach(async () => {
-  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await tempDirs.cleanup();
 });
 
 describe("desiredRuntimeTemplates", () => {

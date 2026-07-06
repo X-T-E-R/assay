@@ -47,7 +47,6 @@ import {
   migrateLayout,
   promoteSystem,
   pruneProjects,
-  recordProjectLifecycleBestEffort,
   registerSystem,
   requireAdrIndex,
   requireSystemsRegistry,
@@ -58,6 +57,7 @@ import {
   syncSource,
 } from "assay-core";
 
+import { recordCommandProjectLifecycle } from "./command-lifecycle.js";
 import { mapCliError } from "./errors.js";
 import {
   formatAdoptionResult,
@@ -243,7 +243,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         archetype,
       };
       const result = await initFramework(initOptions);
-      await recordProjectLifecycleBestEffort(result.root, "init", {
+      await recordCommandProjectLifecycle(result.root, "init", {
         noTrack: commandOptions.track === false,
       });
       writeLine(output, "stdout", formatInitResult(result));
@@ -313,7 +313,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         privacy: commandOptions.privacy as WorkspacePrivacy,
         noTrack: commandOptions.track === false,
       });
-      await recordProjectLifecycleBestEffort(result.root, "attach", {
+      await recordCommandProjectLifecycle(result.root, "attach", {
         noTrack: commandOptions.track === false,
       });
       writeLine(output, "stdout", formatAttachResult(result));
@@ -400,7 +400,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         action,
         ...(commandOptions.agents === true ? { agents: true } : {}),
       });
-      await recordProjectLifecycleBestEffort(root, "update", {
+      await recordCommandProjectLifecycle(root, "update", {
+        dryRun: commandOptions.dryRun === true,
         noTrack: commandOptions.track === false,
       });
       writeLine(output, "stdout", formatUpdateResult(result));

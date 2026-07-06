@@ -76,7 +76,7 @@ These commands operate on registry metadata only and never modify project files.
 
 ## Systems registry (per-workspace)
 
-Distinct from the project registry, each workspace has a per-workspace systems registry at `.assay/systems-registry.json` introduced in layout v3. Manage it with the `system` command group rather than editing the JSON directly:
+Distinct from the project registry, each current workspace has a per-workspace systems registry at `.assay/systems-registry.json`. Manage it with the `system` command group rather than editing the JSON directly:
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]
@@ -87,6 +87,20 @@ assay system show <selector>
 ```
 
 Selectors can be the full system name or a unique name prefix.
+
+## Repository validation
+
+When maintaining the Assay repository, validate through the release scripts rather than a weaker ad hoc command:
+
+```bash
+./scripts/check.sh
+```
+
+```powershell
+.\scripts\check.ps1
+```
+
+Those scripts build the TypeScript packages, run typecheck/lint/tests/smoke, and verify the committed `examples/framework-template` workspace with the built CLI.
 
 ## ADR index (per-workspace)
 

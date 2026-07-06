@@ -1,70 +1,38 @@
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
+import {
+  type BuiltCliRunner,
+  createBuiltCliRunner,
+  createInitializedCliWorkspace,
+  createIsolatedRegistryRoot,
+  createTempDirectoryFixture,
+  pathExists,
+} from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const execFileAsync = promisify(execFile);
-const packageRoot = process.cwd();
-const cliPath = path.join(packageRoot, "dist", "cli.js");
-const tempRoots: string[] = [];
+const tempDirs = createTempDirectoryFixture("assay-system-cli");
 let registryRoot = "";
-
-interface CliResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
+let cliRunner: BuiltCliRunner;
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-system-cli-"));
-  tempRoots.push(root);
-  return root;
+  return tempDirs.createTempDir();
 }
 
-async function runCli(args: readonly string[]): Promise<CliResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      env: { ...process.env, ASSAY_PROJECT_REGISTRY_ROOT: registryRoot },
-    });
-    return { exitCode: 0, stdout, stderr };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && typeof error.code === "number") {
-      return {
-        exitCode: error.code,
-        stdout: "stdout" in error && typeof error.stdout === "string" ? error.stdout : "",
-        stderr: "stderr" in error && typeof error.stderr === "string" ? error.stderr : "",
-      };
-    }
-    throw error;
-  }
+async function runCli(args: readonly string[]) {
+  return cliRunner.runCli(args);
 }
 
 afterEach(async () => {
-  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await tempDirs.cleanup();
 });
 
 beforeEach(async () => {
-  registryRoot = await tempDir();
+  registryRoot = await createIsolatedRegistryRoot(tempDirs);
+  cliRunner = createBuiltCliRunner({ registryRoot });
 });
 
 async function initWorkspace(name: string): Promise<string> {
-  const root = path.join(await tempDir(), name);
-  await runCli(["init", root, "--name", name]);
-  return root;
+  return createInitializedCliWorkspace({ tempDirs, runner: cliRunner, directoryName: name });
 }
 
 describe("assay system CLI", () => {
@@ -101,7 +69,7 @@ describe("assay system CLI", () => {
     expect(result.stdout).toContain("Registered system: demo-core");
     expect(result.stdout).toContain("Status: primary");
     expect(result.stdout).toContain("Event: .assay/events/");
-    expect(await exists(path.join(root, ".assay", "systems-registry.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "systems-registry.json"))).toBe(true);
   });
 
   it("register rejects duplicate system names", async () => {
@@ -289,7 +257,7 @@ describe("assay system CLI", () => {
     expect(result.stdout).toContain("Would move to");
     expect(result.stdout).toContain("systems/archive/");
     // Source still present
-    expect(await exists(path.join(root, "systems", "old", "marker.txt"))).toBe(true);
+    expect(await pathExists(path.join(root, "systems", "old", "marker.txt"))).toBe(true);
   });
 
   it("archive apply moves the directory and marks system archived", async () => {
@@ -315,7 +283,7 @@ describe("assay system CLI", () => {
     expect(result.stdout).toContain("applied");
     expect(result.stdout).toContain("Moved to");
     // Source removed
-    expect(await exists(path.join(root, "systems", "old"))).toBe(false);
+    expect(await pathExists(path.join(root, "systems", "old"))).toBe(false);
 
     const list = await runCli(["system", "list", "--root", root, "--json"]);
     const parsed = JSON.parse(list.stdout);

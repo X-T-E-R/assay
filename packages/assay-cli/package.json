@@ -16,6 +16,9 @@
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "devDependencies": {
+    "assay-test-support": "workspace:*"
+  },
   "dependencies": {
     "@commander-js/extra-typings": "^12.1.0",
     "commander": "^12.1.0",
