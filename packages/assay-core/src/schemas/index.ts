@@ -86,6 +86,45 @@ export const adrIndexSchema = z
   })
   .strict();
 
+// --- Workspace layout (layout v4) -------------------------------------------
+//
+// The layout block tells every command where Assay-owned state and work
+// folders live for this workspace. Layout v3 manifests carry no `layout`
+// block; `resolveWorkspaceLayout` supplies a standalone-compatible fallback
+// when reading them, so v3 workspaces keep working until migrated.
+
+export const workspaceLayoutModeSchema = z.enum(["standalone", "overlay"]);
+export const workspacePrivacySchema = z.enum(["tracked", "private", "private-git"]);
+
+export const workspaceLayoutPathsSchema = z
+  .object({
+    manifest: z.string().min(1),
+    events: z.string().min(1),
+    backups: z.string().min(1),
+    systems_registry: z.string().min(1),
+    adrs_index: z.string().min(1),
+    references: z.string().min(1),
+    analyses: z.string().min(1),
+    iterations: z.string().min(1),
+    knowledge: z.string().min(1),
+    systems_contracts: z.string().min(1),
+  })
+  .strict();
+
+export const workspaceLayoutSchema = z
+  .object({
+    version: z.literal(4),
+    mode: workspaceLayoutModeSchema,
+    // `.assay` for v4 workspaces; `.framework` only appears in the in-memory
+    // fallback for v3 manifests being read before migration and is never
+    // written to a fresh manifest.
+    state_root: z.enum([".assay", ".framework"]),
+    work_root: z.enum([".", ".assay"]),
+    privacy: workspacePrivacySchema,
+    paths: workspaceLayoutPathsSchema,
+  })
+  .strict();
+
 export const frameworkManifestSchema = z
   .object({
     __schema: z.literal(1),
@@ -97,6 +136,10 @@ export const frameworkManifestSchema = z
     managed_files: z.record(managedFileRecordSchema),
     user_deleted: z.array(z.string()),
     applied_migrations: z.array(z.string()),
+    // Layout v4+: path map and privacy policy. Optional so v3 manifests (which
+    // have no layout block) still validate; resolveWorkspaceLayout fills in a
+    // standalone fallback when this is absent.
+    layout: workspaceLayoutSchema.optional(),
   })
   .strict();
 
@@ -237,6 +280,10 @@ export type ProjectArchetype = z.infer<typeof projectArchetypeSchema>;
 export type ProjectMode = z.infer<typeof projectModeSchema>;
 export type FrameworkProject = z.infer<typeof frameworkProjectSchema>;
 export type FrameworkManifest = z.infer<typeof frameworkManifestSchema>;
+export type WorkspaceLayoutMode = z.infer<typeof workspaceLayoutModeSchema>;
+export type WorkspacePrivacy = z.infer<typeof workspacePrivacySchema>;
+export type WorkspaceLayoutPaths = z.infer<typeof workspaceLayoutPathsSchema>;
+export type WorkspaceLayout = z.infer<typeof workspaceLayoutSchema>;
 export type SystemVcs = z.infer<typeof systemVcsSchema>;
 export type SystemStatus = z.infer<typeof systemStatusSchema>;
 export type SystemRecord = z.infer<typeof systemRecordSchema>;

@@ -104,14 +104,13 @@ describe("source observations", () => {
       "utf8",
     );
     expect(sourceYaml).toContain("lineage_id: source-project");
-    expect(sourceYaml).toContain("latest_observation: .assay/observations/");
+    expect(sourceYaml).toContain("latest_observation: observations/");
 
     const observationYaml = await readFile(
       path.join(
         root,
         "references",
         "source-project",
-        ".assay",
         "observations",
         `${result.observation.observation_id}.yaml`,
       ),
@@ -125,7 +124,6 @@ describe("source observations", () => {
         root,
         "references",
         "source-project",
-        ".assay",
         "manifests",
         `${result.observation.observation_id}.json`,
       ),
@@ -161,7 +159,7 @@ describe("source observations", () => {
     expect(result.checkoutPath).toBeNull();
     expect(result.observation.capture_mode).toBe("archive");
     expect(result.observation.capture_path).toBe(
-      `.assay/captures/${result.observation.observation_id}/source`,
+      `captures/${result.observation.observation_id}/source`,
     );
     expect(
       await exists(path.join(root, "references", "archive-source", "checkout", "README.md")),
@@ -172,7 +170,6 @@ describe("source observations", () => {
           root,
           "references",
           "archive-source",
-          ".assay",
           "captures",
           result.observation.observation_id,
           "source",
@@ -186,7 +183,6 @@ describe("source observations", () => {
         root,
         "references",
         "archive-source",
-        ".assay",
         "observations",
         `${result.observation.observation_id}.yaml`,
       ),
@@ -194,7 +190,7 @@ describe("source observations", () => {
     );
     expect(observationYaml).toContain("capture_mode: archive");
     expect(observationYaml).toContain(
-      `capture_path: .assay/captures/${result.observation.observation_id}/source`,
+      `capture_path: captures/${result.observation.observation_id}/source`,
     );
     expect(observationYaml).not.toContain("checkout_path:");
 
@@ -255,7 +251,7 @@ describe("source observations", () => {
       now: new Date("2026-07-01T10:00:00"),
     });
     expect(changed.observation?.previous_observation).toBe(
-      `.assay/observations/${added.observation.observation_id}.yaml`,
+      `observations/${added.observation.observation_id}.yaml`,
     );
     expect(changed.changeClass).not.toBe("same");
     expect(
@@ -264,7 +260,6 @@ describe("source observations", () => {
           root,
           "references",
           "sync-source",
-          ".assay",
           "observations",
           `${added.observation.observation_id}.yaml`,
         ),
@@ -278,7 +273,7 @@ describe("source observations", () => {
     expect(
       check.rows.some(
         (row) =>
-          row.path.includes("references/sync-source/.assay/observations/") &&
+          row.path.includes("references/sync-source/observations/") &&
           row.message?.includes("needs revalidation analysis"),
       ),
     ).toBe(true);
@@ -320,7 +315,7 @@ describe("source observations", () => {
       expect(changed.changeClass).not.toBe("same");
       expect(changed.observation).not.toBeNull();
       expect(changed.observation?.previous_observation).toBe(
-        `.assay/observations/${added.observation.observation_id}.yaml`,
+        `observations/${added.observation.observation_id}.yaml`,
       );
       expect(changed.observation?.vcs?.commit).toBe(sourceHeadBeforeSync);
 

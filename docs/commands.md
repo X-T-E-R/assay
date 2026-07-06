@@ -1,20 +1,56 @@
 # Commands
 
-Run workspace commands from inside an Assay workspace. Most commands walk up to find `.framework/manifest.json`; pass `--root <dir>` when operating on another workspace.
+Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`; legacy `.framework/manifest.json` is a migration fallback only. Pass `--root <dir>` to operate on another workspace.
 
-## Common Commands
+## Workspace lifecycle
 
 ```bash
-# Workspace lifecycle
 assay init [target-dir] --name <project> --archetype <name> [--git] [--force] [--create-new] [--no-track] [--no-agents]
+assay attach [--root <dir>] --name <project> --archetype <name> [--privacy private|private-git|tracked] [--no-track] [--no-agents]
+assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overlay]
 assay check [--root <dir>]
 assay status [--root <dir>]
 assay update [--root <dir>] [--dry-run] [--agents] [--force | --skip-all | --create-new] [--no-track]
 assay migrate-layout [--root <dir>] [--dry-run | --apply] [--backup]
 assay archetype [--root <dir>] [--json]
 assay archetype list [--root <dir>] [--json]
+```
 
-# Sources, analyses, and iterations
+`init` creates a standalone workspace: Assay state in `.assay/`, work folders at the root. `attach` creates an overlay inside an existing product repository: everything Assay-owned lives under `.assay/`, product files stay where they are, and product Git ignores `.assay/` by default. `convert --to standalone` detaches an overlay into a sibling standalone workbench without moving the product repo.
+
+`init`, successful `update`, and successful `adopt --apply` write a user-local project registry under `~/.assay/projects` by default. Use `--no-track` on those commands, or set `ASSAY_NO_TRACK=1`, to skip registry writes. The `assay projects` commands manage registry metadata only; they never delete workspace files.
+
+`init` and successful `adopt --apply` also add a short Assay-managed block to root `AGENTS.md` by default. Use `--no-agents` on those commands to skip it. Ordinary `assay update` refreshes the block only when it already exists; `assay update --agents` creates or re-enables it.
+
+If `AGENTS.md` contains incomplete `<!-- ASSAY:START -->` / `<!-- ASSAY:END -->` markers, Assay leaves the file unchanged and reports the malformed block so you can fix or remove it manually.
+
+## Attach an existing repository
+
+Use `attach` when a product repository already exists and its root should remain the primary system. Assay writes one `.assay/` folder, registers the repo root as the primary system, and leaves tracked product files alone.
+
+```bash
+cd /path/to/existing-repo
+assay attach --name ExistingRepo --archetype study --privacy private
+```
+
+Default privacy is `private`: Assay appends `/.assay/` to the repo-local `.git/info/exclude`, so `.assay/` never enters product commits. `private-git` does the same and also initializes a separate Git repository inside `.assay/` so Assay state gets its own history. `tracked` opts into committing `.assay/` with the product repo; this is never the default because it puts research material in product PRs.
+
+`attach` does not write root `README.md`, root `.gitignore`, or root `AGENTS.md`. Tracked product files stay untouched.
+
+## Convert overlay to standalone
+
+Detach an overlay into a sibling standalone workbench without moving the product repo:
+
+```bash
+cd /path/to/existing-repo
+assay convert --to standalone --target ../existing-repo-assay
+```
+
+The new workbench hoists `.assay/references` to `references`, `.assay/analyses` to `analyses`, and so on. The original product repo is registered as the primary independent system by relative path (`../existing-repo`). Use `--move` to move instead of copy; use `--no-keep-overlay` to remove the source overlay work folders after a successful move. The product repo and its `.git/` are never modified.
+
+## Sources, analyses, and iterations
+
+```bash
 assay source add <repo-or-dir> [alias] [--root <dir>] [--branch <branch>] [--capture checkout|archive]
 assay source sync [alias] [--root <dir>] [--branch <branch>] [--ref <ref>] [--class same|patch|normal|major|replacement]
 assay source switch <alias> <branch-or-ref> [--root <dir>] [--sync]
@@ -29,9 +65,15 @@ assay iteration start <title> [--root <dir>]
 assay iteration close <selector> --result applied|rejected|retest [--note <note>] [--root <dir>]
 assay event capture --kind observation|analysis|decision|gotcha|note --text <text> [--root <dir>]
 assay knowledge add <type> <title> [--from-analysis <path>] [--from-iteration <path>] [--root <dir>]
+```
 
-# Systems, ADRs, and project registry
+Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`; `migrate-layout --apply` flattens them.
+
+## Systems, ADRs, and project registry
+
+```bash
 assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>]
+assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
 assay system promote <selector> [--root <dir>]
 assay system archive <selector> [--root <dir>] [--dry-run | --apply]
 assay system list [--root <dir>] [--status primary|active|superseded|archived] [--json]
@@ -50,17 +92,13 @@ assay projects forget <selector>
 assay projects prune [--dry-run] [--json]
 ```
 
+Use `system register` only for first-time registration; it rejects duplicate names so accidental re-registration is visible. Use `system update <selector>` to correct metadata on an existing record, such as changing `vcs` from `embedded` to `independent-git` and setting `--vcs-ref main`. Omitted update fields are preserved. `--primary` uses the same one-primary behavior as `system promote`, and archived systems are read-only.
+
 The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
 
-`init`, successful `update`, and successful `adopt --apply` write a user-local project registry under `~/.assay/projects` by default. Use `--no-track` on those commands, or set `ASSAY_NO_TRACK=1`, to skip registry writes. The `assay projects` commands manage registry metadata only; they never delete workspace files.
+## Adopt an existing project
 
-`init` and successful `adopt --apply` also add a short Assay-managed block to root `AGENTS.md` by default. Use `--no-agents` on those commands to skip it. Ordinary `assay update` refreshes the block only when it already exists; `assay update --agents` creates or re-enables it.
-
-If `AGENTS.md` contains incomplete `<!-- ASSAY:START -->` / `<!-- ASSAY:END -->` markers, Assay leaves the file unchanged and reports the malformed block so you can fix or remove it manually.
-
-## Adopt Existing Project
-
-Use `adopt` when an ordinary project already occupies the directory where you want an Assay workspace. Always inspect the plan first:
+Use `adopt` when an ordinary project already occupies the directory where you want a standalone Assay workspace and you want to archive the existing content first. Always inspect the plan first:
 
 ```bash
 cd /path/to/existing-project

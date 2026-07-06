@@ -1,11 +1,17 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  createInitializedCoreWorkspace,
+  createTempDirectoryFixture,
+  pathExists,
+} from "assay-test-support";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  LAYOUT_VERSION,
   applyUpdate,
   buildLayoutMigrationPlan,
+  checkFramework,
   computeHash,
   desiredRuntimeTemplates,
   initFramework,
@@ -15,24 +21,10 @@ import {
   saveManifest,
 } from "../src/index.js";
 
-const tempRoots: string[] = [];
+const tempDirs = createTempDirectoryFixture("assay-core-update");
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-core-update-"));
-  tempRoots.push(root);
-  return root;
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
+  return tempDirs.createTempDir();
 }
 
 async function readmeTemplate() {
@@ -46,9 +38,30 @@ async function readmeTemplate() {
 }
 
 async function initUpdateFixture(): Promise<string> {
-  const root = path.join(await tempDir(), "demo");
-  await initFramework({ target: root, name: "Demo" });
+  const { root } = await createInitializedCoreWorkspace({
+    tempDirs,
+    directoryName: "demo",
+    initialize: (target) => initFramework({ target, name: "Demo" }),
+  });
   return root;
+}
+
+async function convertCurrentFixtureToLegacyFramework(root: string): Promise<void> {
+  const manifestPath = path.join(root, ".assay", "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+  const managedFiles = manifest.managed_files as Record<string, unknown>;
+  const legacyManifest = Object.fromEntries(
+    Object.entries(manifest).filter(([key]) => key !== "layout"),
+  ) as Record<string, unknown>;
+  legacyManifest.layout_version = 3;
+  legacyManifest.managed_files = Object.fromEntries(
+    Object.entries(managedFiles).map(([relativePath, record]) => [
+      relativePath.replace(/^\.assay\//, ".framework/"),
+      record,
+    ]),
+  );
+  await writeFile(manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, "utf8");
+  await rename(path.join(root, ".assay"), path.join(root, ".framework"));
 }
 
 async function addLegacySystemManagedFiles(root: string): Promise<void> {
@@ -63,10 +76,10 @@ async function addLegacySystemManagedFiles(root: string): Promise<void> {
   };
   for (const [relativePath, content] of Object.entries(legacyFiles)) {
     const absolutePath = path.join(root, relativePath);
-    const finalContent = (await exists(absolutePath))
+    const finalContent = (await pathExists(absolutePath))
       ? await readFile(absolutePath, "utf8")
       : content;
-    if (!(await exists(absolutePath))) {
+    if (!(await pathExists(absolutePath))) {
       await writeFile(absolutePath, finalContent, "utf8");
     }
     manifest.managed_files[relativePath] = {
@@ -84,7 +97,7 @@ async function addLegacySystemManagedFiles(root: string): Promise<void> {
 }
 
 afterEach(async () => {
-  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await tempDirs.cleanup();
 });
 
 describe("applyUpdate", () => {
@@ -117,7 +130,7 @@ describe("applyUpdate", () => {
     expect(result.report.updated_files).toContain("README.md");
     expect(await readFile(readme, "utf8")).toBe(template.content);
     expect(result.backup?.copied).toEqual(
-      expect.arrayContaining([".framework/manifest.json", ".framework/VERSION", "README.md"]),
+      expect.arrayContaining([".assay/manifest.json", ".assay/VERSION", "README.md"]),
     );
     expect(
       await readFile(path.join(root, result.backup?.relativePath ?? "", "README.md"), "utf8"),
@@ -178,7 +191,7 @@ describe("applyUpdate", () => {
       "README.md",
     );
     expect(result.report.skipped_files).toContain("README.md (user-deleted)");
-    expect(await exists(readme)).toBe(false);
+    expect(await pathExists(readme)).toBe(false);
     expect(manifest?.user_deleted).toContain("README.md");
   });
 
@@ -215,15 +228,13 @@ describe("applyUpdate", () => {
     const readme = path.join(root, "README.md");
     await writeFile(readme, "# User modified README\n", "utf8");
 
-    const beforeManifest = await readFile(path.join(root, ".framework", "manifest.json"), "utf8");
+    const beforeManifest = await readFile(path.join(root, ".assay", "manifest.json"), "utf8");
     const result = await applyUpdate({ root, action: "force", dryRun: true });
 
     expect(result.report.notes).toContain("dry-run: no changes applied");
     expect(await readFile(readme, "utf8")).toBe("# User modified README\n");
-    expect(await readFile(path.join(root, ".framework", "manifest.json"), "utf8")).toBe(
-      beforeManifest,
-    );
-    expect(await readdir(path.join(root, ".framework", "backups"))).toEqual([".gitkeep"]);
+    expect(await readFile(path.join(root, ".assay", "manifest.json"), "utf8")).toBe(beforeManifest);
+    expect(await readdir(path.join(root, ".assay", "backups"))).toEqual([".gitkeep"]);
   });
 });
 
@@ -270,13 +281,15 @@ describe("layout migration", () => {
 
     expect(result.backup).toBeUndefined();
     expect("backup_dir" in result.plan).toBe(false);
-    expect(await exists(path.join(root, ".framework", "backups", "20260614-080910"))).toBe(false);
-    expect(await exists(path.join(root, "references", "202401", "source.md"))).toBe(true);
-    expect(await exists(path.join(root, "references", "frozen", "202401", "source.md"))).toBe(true);
-    expect(await exists(path.join(root, "experiments", "trial", "plan.md"))).toBe(true);
-    expect(await exists(path.join(root, "iterations", "trial", "plan.md"))).toBe(true);
-    expect(await exists(path.join(root, ".assay", "queue.json"))).toBe(true);
-    expect(await exists(path.join(root, ".framework", "legacy-assay", "queue.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "backups", "20260614-080910"))).toBe(false);
+    expect(await pathExists(path.join(root, "references", "202401", "source.md"))).toBe(true);
+    expect(await pathExists(path.join(root, "references", "frozen", "202401", "source.md"))).toBe(
+      true,
+    );
+    expect(await pathExists(path.join(root, "experiments", "trial", "plan.md"))).toBe(true);
+    expect(await pathExists(path.join(root, "iterations", "trial", "plan.md"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "queue.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "legacy-assay", "queue.json"))).toBe(true);
     if (!result.eventFile) {
       throw new Error("layout migration event missing");
     }
@@ -285,6 +298,59 @@ describe("layout migration", () => {
       .split("\n");
     const event = JSON.parse(eventLines[eventLines.length - 1] ?? "{}");
     expect(event.backup).toBeUndefined();
+  });
+
+  it("migrates a legacy .framework workspace into .assay state", async () => {
+    const root = await initUpdateFixture();
+    await convertCurrentFixtureToLegacyFramework(root);
+
+    const plan = await buildLayoutMigrationPlan({ root, dryRun: true });
+
+    expect(await pathExists(path.join(root, ".assay", "manifest.json"))).toBe(false);
+    expect(await pathExists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(plan.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "copy-dir",
+          from: ".framework",
+          to: ".assay",
+        }),
+        expect.objectContaining({
+          type: "upgrade-manifest",
+          from: ".framework/manifest.json",
+          to: ".assay/manifest.json",
+        }),
+      ]),
+    );
+
+    const result = await migrateLayout({
+      root,
+      apply: true,
+      now: new Date("2026-07-06T09:30:00"),
+    });
+    const manifest = await loadManifest(root);
+    const check = await checkFramework({ root });
+
+    expect(result.backup).toBeUndefined();
+    expect("backup_dir" in result.plan).toBe(false);
+    expect(await pathExists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "manifest.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "VERSION"))).toBe(true);
+    expect(result.eventFile).toMatch(/^\.assay\/events\//);
+    expect(manifest?.layout_version).toBe(LAYOUT_VERSION);
+    expect(manifest?.layout).toMatchObject({
+      mode: "standalone",
+      state_root: ".assay",
+      work_root: ".",
+    });
+    expect(Object.keys(manifest?.managed_files ?? {})).toContain(".assay/VERSION");
+    expect(Object.keys(manifest?.managed_files ?? {})).not.toContain(".framework/VERSION");
+    expect(check.rows).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: ".assay/manifest.json", status: "missing" }),
+      ]),
+    );
+    expect(check.ok).toBe(true);
   });
 });
 
@@ -331,7 +397,7 @@ describe("v2 to v3 layout migration", () => {
     await initFramework({ target: root, name: "Demo" });
     // Create registry file to simulate v3 already applied
     await writeFile(
-      path.join(root, ".framework", "systems-registry.json"),
+      path.join(root, ".assay", "systems-registry.json"),
       JSON.stringify({
         __schema: 1,
         primary: "demo-core",
@@ -351,7 +417,7 @@ describe("v2 to v3 layout migration", () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
     await writeFile(
-      path.join(root, ".framework", "systems-registry.json"),
+      path.join(root, ".assay", "systems-registry.json"),
       JSON.stringify({
         __schema: 1,
         primary: "demo-core",
@@ -399,7 +465,7 @@ describe("v2 to v3 layout migration", () => {
 
     expect(result.backup).toBeUndefined();
     expect("backup_dir" in result.plan).toBe(false);
-    expect(upgradedManifest?.layout_version).toBe(3);
+    expect(upgradedManifest?.layout_version).toBe(LAYOUT_VERSION);
     expect(registry?.primary).toBe("demo-core");
     expect(Object.keys(registry?.systems ?? {})).toEqual(["demo-core"]);
   });
@@ -427,17 +493,17 @@ describe("v2 to v3 layout migration", () => {
       now: new Date("2026-06-17T10:00:00"),
     });
 
-    expect(result.backup?.relativePath).toBe(".framework/backups/20260617-100000");
+    expect(result.backup?.relativePath).toBe(".assay/backups/20260617-100000");
     expect(result.backup?.copied).toEqual([
-      ".framework/manifest.json",
+      ".assay/manifest.json",
       "systems/demo-core/system.yaml",
     ]);
-    expect(result.plan.backup_dir).toBe(".framework/backups/20260617-100000");
+    expect(result.plan.backup_dir).toBe(".assay/backups/20260617-100000");
     expect(
       await readFile(
         path.join(
           root,
-          ".framework",
+          ".assay",
           "backups",
           "20260617-100000",
           "systems",
@@ -448,10 +514,10 @@ describe("v2 to v3 layout migration", () => {
       ),
     ).toBe("system:\n  name: user-owned-contract\n");
     expect(
-      await exists(
+      await pathExists(
         path.join(
           root,
-          ".framework",
+          ".assay",
           "backups",
           "20260617-100000",
           "systems",
@@ -461,8 +527,8 @@ describe("v2 to v3 layout migration", () => {
       ),
     ).toBe(false);
     expect(
-      await exists(
-        path.join(root, ".framework", "backups", "20260617-100000", ".framework", "VERSION"),
+      await pathExists(
+        path.join(root, ".assay", "backups", "20260617-100000", ".assay", "VERSION"),
       ),
     ).toBe(false);
     if (!result.eventFile) {
@@ -472,7 +538,7 @@ describe("v2 to v3 layout migration", () => {
       .trim()
       .split("\n");
     const event = JSON.parse(eventLines[eventLines.length - 1] ?? "{}");
-    expect(event.backup).toBe(".framework/backups/20260617-100000");
+    expect(event.backup).toBe(".assay/backups/20260617-100000");
   });
 
   it("applies migration: creates registry, contracts, removes stale managed files", async () => {
@@ -502,7 +568,7 @@ describe("v2 to v3 layout migration", () => {
 
     // Registry created
     const registryContent = await readFile(
-      path.join(root, ".framework", "systems-registry.json"),
+      path.join(root, ".assay", "systems-registry.json"),
       "utf8",
     );
     const registry = JSON.parse(registryContent);
@@ -516,7 +582,7 @@ describe("v2 to v3 layout migration", () => {
     expect(registry.systems["old-system"]).toMatchObject({ status: "archived" });
 
     // Contract file generated
-    expect(await exists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
+    expect(await pathExists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
 
     // Stale managed files removed from manifest
     const manifest = await loadManifest(root);

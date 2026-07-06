@@ -15,7 +15,7 @@ export const ASSAY_AGENTS_BLOCK = [
   "",
   "- Before changing workspace structure, start from the installed `assay-builder` skill if the agent environment exposes it. Otherwise use `assay --help` / `assay help <command>` and inspect the workspace with `assay status`.",
   "- Do not assume the repository root is the system being built. The root is the Assay workspace/control surface. Systems live under `systems/` and registered systems are managed with `assay system ...`.",
-  "- Use Assay commands for `.framework/` state. Edits outside this block are preserved.",
+  "- Use Assay commands for `.assay/` state. Edits outside this block are preserved.",
   "",
   ASSAY_AGENTS_END_MARKER,
 ].join("\n");

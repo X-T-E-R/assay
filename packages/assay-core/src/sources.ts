@@ -1,15 +1,27 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { execa } from "execa";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { MANAGED_DIR } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { resolveWorkspaceLayout, workspacePath, workspaceRelativePath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import type { CheckRow } from "./results.js";
+import type { FrameworkManifest } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
+import {
+  assertManagedCheckout,
+  checkoutGitRef,
+  cloneGitSource,
+  collectGitMetadata,
+  isGitCheckout,
+  refreshLocalGitCheckout,
+  refreshRemoteGitCheckout,
+  syncTargetForCheckout,
+} from "./sources/git.js";
 import { nowIso } from "./time.js";
 
 export const SOURCE_CAPTURE_MODES = ["checkout", "archive"] as const;
@@ -234,10 +246,6 @@ interface SourceEntry {
   readonly lineage: SourceLineage;
 }
 
-type SourceSyncGitTarget =
-  | { readonly kind: "branch"; readonly value: string }
-  | { readonly kind: "ref"; readonly value: string };
-
 interface MaterializedObservation {
   readonly observation: SourceObservation;
   readonly manifest: SourceManifest;
@@ -286,12 +294,32 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-function requireManifestPresent(manifest: unknown, root: string): void {
+function requireManifestPresent(
+  manifest: FrameworkManifest | null,
+  root: string,
+): FrameworkManifest {
   if (!manifest) {
     throw new FrameworkNotFoundError(
-      `No framework manifest found at ${path.join(root, ".framework", "manifest.json")}.`,
+      `No Assay manifest found at ${path.join(root, MANAGED_DIR, "manifest.json")}.`,
     );
   }
+  return manifest;
+}
+
+function layoutForManifest(manifest: FrameworkManifest) {
+  const layout = resolveWorkspaceLayout(manifest);
+  if (!layout) {
+    throw new FrameworkNotFoundError("Assay workspace layout could not be resolved.");
+  }
+  return layout;
+}
+
+function referencesRootForManifest(root: string, manifest: FrameworkManifest): string {
+  return workspacePath(root, layoutForManifest(manifest), "references");
+}
+
+function referencesRelativeForManifest(manifest: FrameworkManifest): string {
+  return workspaceRelativePath(layoutForManifest(manifest), "references");
 }
 
 function assertCaptureMode(value: SourceCaptureMode): void {
@@ -359,12 +387,31 @@ async function writeYamlFile(file: string, value: unknown): Promise<void> {
   await writeFile(file, stringifyYaml(value), "utf8");
 }
 
+// Source-entry ledger directories live directly under references/<alias>/.
+// Layout v3 nested these under references/<alias>/.assay/, but once the
+// workspace state dir became .assay (v4) that nesting produced confusing
+// paths like .assay/references/foo/.assay/observations/. The ledger is now
+// flat; LEGACY_SOURCE_LEDGER is read only as a migration fallback.
+const OBSERVATIONS_DIR = "observations";
+const MANIFESTS_DIR = "manifests";
+const CAPTURES_DIR = "captures";
+const COMPARISONS_DIR = "comparisons";
+const LEGACY_SOURCE_LEDGER = ".assay";
+
 function observationPath(observationId: string): string {
-  return `.assay/observations/${observationId}.yaml`;
+  return `${OBSERVATIONS_DIR}/${observationId}.yaml`;
+}
+
+function legacyObservationPath(observationId: string): string {
+  return `${LEGACY_SOURCE_LEDGER}/${OBSERVATIONS_DIR}/${observationId}.yaml`;
 }
 
 function manifestPath(observationId: string): string {
-  return `.assay/manifests/${observationId}.json`;
+  return `${MANIFESTS_DIR}/${observationId}.json`;
+}
+
+function legacyManifestPath(observationId: string): string {
+  return `${LEGACY_SOURCE_LEDGER}/${MANIFESTS_DIR}/${observationId}.json`;
 }
 
 function analysisStatusForChange(
@@ -378,256 +425,6 @@ function analysisStatusForChange(
 
 function isGitMetadata(value: SourceVcsMetadata | undefined): value is SourceVcsMetadata {
   return value !== undefined && value.type === "git" && value.commit.length > 0;
-}
-
-function gitCommandOutput(result: {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}): string {
-  return (result.stderr || result.stdout).trim() || `exit code ${result.exitCode}`;
-}
-
-async function tryGit(
-  cwd: string,
-  args: readonly string[],
-): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
-  const result = await execa("git", [...args], { cwd, reject: false });
-  return { exitCode: result.exitCode ?? 0, stdout: result.stdout, stderr: result.stderr };
-}
-
-async function runGit(cwd: string, args: readonly string[], failureLabel: string): Promise<string> {
-  const result = await tryGit(cwd, args);
-  if (result.exitCode !== 0) {
-    throw new FrameworkError(`${failureLabel} failed: ${gitCommandOutput(result)}`, {
-      code: "IO_ERROR",
-    });
-  }
-  return result.stdout.trim();
-}
-
-function assertManagedCheckout(entryRoot: string, checkout: string): void {
-  const relative = toPosixPath(path.relative(path.resolve(entryRoot), path.resolve(checkout)));
-  if (relative !== "checkout") {
-    throw new FrameworkError(`refusing to mutate unmanaged checkout path: ${checkout}`, {
-      code: "IO_ERROR",
-    });
-  }
-}
-
-async function isGitCheckout(checkout: string): Promise<boolean> {
-  return exists(path.join(checkout, ".git"));
-}
-
-async function currentCheckoutBranch(checkout: string): Promise<string | null> {
-  if (!(await isGitCheckout(checkout))) {
-    return null;
-  }
-  const branch = await tryGit(checkout, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (branch.exitCode !== 0) {
-    return null;
-  }
-  const value = branch.stdout.trim();
-  return value && value !== "HEAD" ? value : null;
-}
-
-async function syncTargetForCheckout(
-  options: Pick<SourceSyncOptions, "branch" | "ref">,
-  checkout: string,
-  lineage: SourceLineage,
-): Promise<SourceSyncGitTarget | null> {
-  if (options.ref) {
-    return { kind: "ref", value: options.ref };
-  }
-  if (options.branch) {
-    return { kind: "branch", value: options.branch };
-  }
-
-  const checkoutBranch = await currentCheckoutBranch(checkout);
-  if (checkoutBranch) {
-    return { kind: "branch", value: checkoutBranch };
-  }
-
-  if (lineage.checkout?.ref && lineage.checkout.ref !== "HEAD") {
-    return { kind: "branch", value: lineage.checkout.ref };
-  }
-
-  return null;
-}
-
-async function gitRemoteOrigin(checkout: string): Promise<string | null> {
-  const remote = await tryGit(checkout, ["config", "--get", "remote.origin.url"]);
-  return remote.exitCode === 0 && remote.stdout.trim() !== "" ? remote.stdout.trim() : null;
-}
-
-async function resetManagedGitCheckout(checkout: string, target?: string): Promise<void> {
-  await runGit(checkout, target ? ["reset", "--hard", target] : ["reset", "--hard"], "git reset");
-  await runGit(checkout, ["clean", "-fd"], "git clean");
-}
-
-async function checkoutGitRef(checkout: string, ref: string): Promise<void> {
-  const checkedOut = await tryGit(checkout, ["checkout", ref]);
-  if (checkedOut.exitCode === 0) {
-    return;
-  }
-
-  const fetched = await tryGit(checkout, ["fetch", "origin", ref]);
-  if (fetched.exitCode === 0) {
-    await runGit(checkout, ["checkout", "FETCH_HEAD"], "git checkout");
-    return;
-  }
-
-  throw new FrameworkError(
-    `git checkout failed: ${gitCommandOutput(checkedOut)}; git fetch failed: ${gitCommandOutput(fetched)}`,
-    { code: "IO_ERROR" },
-  );
-}
-
-async function cloneGitSource(
-  source: string,
-  checkout: string,
-  target: SourceSyncGitTarget | null,
-  shallow: boolean,
-): Promise<void> {
-  await mkdir(path.dirname(checkout), { recursive: true });
-  const args = ["clone"];
-  if (shallow) {
-    args.push("--depth", "1");
-  }
-  if (target?.kind === "branch") {
-    args.push("--branch", target.value);
-  }
-  args.push(source, checkout);
-  await runGit(path.dirname(checkout), args, "git clone");
-
-  if (target?.kind === "ref") {
-    await checkoutGitRef(checkout, target.value);
-  }
-  await resetManagedGitCheckout(checkout);
-}
-
-async function refreshLocalGitCheckout(
-  entryRoot: string,
-  sourceUri: string,
-  target: SourceSyncGitTarget | null,
-): Promise<string> {
-  const checkout = path.join(entryRoot, "checkout");
-  assertManagedCheckout(entryRoot, checkout);
-  if (await isGitCheckout(checkout)) {
-    const remote = await gitRemoteOrigin(checkout);
-    if (remote) {
-      await runGit(checkout, ["remote", "set-url", "origin", sourceUri], "git remote set-url");
-    } else {
-      await runGit(checkout, ["remote", "add", "origin", sourceUri], "git remote add");
-    }
-    await refreshRemoteGitCheckout(entryRoot, checkout, target);
-    return checkout;
-  }
-  await rm(checkout, { recursive: true, force: true });
-  await cloneGitSource(sourceUri, checkout, target, false);
-  return checkout;
-}
-
-async function refreshRemoteGitCheckout(
-  entryRoot: string,
-  checkout: string,
-  target: SourceSyncGitTarget | null,
-): Promise<void> {
-  assertManagedCheckout(entryRoot, checkout);
-  if (!(await isGitCheckout(checkout))) {
-    return;
-  }
-
-  const remote = await gitRemoteOrigin(checkout);
-  if (!remote) {
-    if (target) {
-      await runGit(checkout, ["checkout", target.value], "git checkout");
-      await resetManagedGitCheckout(checkout);
-    }
-    return;
-  }
-
-  await resetManagedGitCheckout(checkout);
-
-  if (target?.kind === "branch") {
-    const remoteRef = `refs/remotes/origin/${target.value}`;
-    await runGit(
-      checkout,
-      ["fetch", "--prune", "origin", `+refs/heads/${target.value}:${remoteRef}`],
-      "git fetch",
-    );
-    await runGit(checkout, ["checkout", "-B", target.value, remoteRef], "git checkout");
-    await resetManagedGitCheckout(checkout, remoteRef);
-    return;
-  }
-
-  if (target?.kind === "ref") {
-    await runGit(checkout, ["fetch", "--prune", "origin"], "git fetch");
-    await checkoutGitRef(checkout, target.value);
-    await resetManagedGitCheckout(checkout);
-    return;
-  }
-
-  await runGit(checkout, ["fetch", "--prune", "origin"], "git fetch");
-  const branch = await currentCheckoutBranch(checkout);
-  if (branch) {
-    const remoteRef = `refs/remotes/origin/${branch}`;
-    await runGit(checkout, ["checkout", "-B", branch, remoteRef], "git checkout");
-    await resetManagedGitCheckout(checkout, remoteRef);
-    return;
-  }
-  await resetManagedGitCheckout(checkout);
-}
-
-async function collectGitMetadata(
-  cwd: string,
-  previous?: SourceVcsMetadata,
-): Promise<SourceVcsMetadata | undefined> {
-  const inside = await execa("git", ["rev-parse", "--is-inside-work-tree"], {
-    cwd,
-    reject: false,
-  });
-  if (inside.exitCode !== 0 || inside.stdout.trim() !== "true") {
-    return undefined;
-  }
-
-  const remote = await execa("git", ["config", "--get", "remote.origin.url"], {
-    cwd,
-    reject: false,
-  });
-  const ref = await execa("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, reject: false });
-  const commit = await execa("git", ["rev-parse", "HEAD"], { cwd, reject: false });
-  const dirty = await execa("git", ["status", "--porcelain"], { cwd, reject: false });
-  const commitDate = await execa("git", ["show", "-s", "--format=%cI", "HEAD"], {
-    cwd,
-    reject: false,
-  });
-
-  if (commit.exitCode !== 0) {
-    return undefined;
-  }
-
-  let commonAncestor: boolean | undefined;
-  if (previous?.commit) {
-    const mergeBase = await execa("git", ["merge-base", "--is-ancestor", previous.commit, "HEAD"], {
-      cwd,
-      reject: false,
-    });
-    commonAncestor = mergeBase.exitCode === 0;
-  }
-
-  return {
-    type: "git",
-    remote: remote.exitCode === 0 && remote.stdout.trim() !== "" ? remote.stdout.trim() : null,
-    ref: ref.exitCode === 0 ? ref.stdout.trim() : "HEAD",
-    commit: commit.stdout.trim(),
-    dirty: dirty.stdout.trim().length > 0,
-    commit_date:
-      commitDate.exitCode === 0 && commitDate.stdout.trim() !== ""
-        ? commitDate.stdout.trim()
-        : null,
-    ...(commonAncestor === undefined ? {} : { common_ancestor_with_previous: commonAncestor }),
-  };
 }
 
 async function collectManifest(sourceRoot: string, generatedOn: string): Promise<SourceManifest> {
@@ -745,7 +542,7 @@ async function materializeArchiveCapture(
   observationId: string,
   captureRoot: string,
 ): Promise<string> {
-  const relativePath = `.assay/captures/${observationId}/source`;
+  const relativePath = `${CAPTURES_DIR}/${observationId}/source`;
   const destination = path.join(entryRoot, relativePath);
   await cp(captureRoot, destination, {
     recursive: true,
@@ -847,15 +644,15 @@ async function refreshCheckoutBeforeObservation(
 
 async function ensureSourceScaffold(entryRoot: string): Promise<void> {
   await mkdir(path.join(entryRoot, "materials"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "observations"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "manifests"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "comparisons"), { recursive: true });
-  await mkdir(path.join(entryRoot, ".assay", "captures"), { recursive: true });
+  await mkdir(path.join(entryRoot, OBSERVATIONS_DIR), { recursive: true });
+  await mkdir(path.join(entryRoot, MANIFESTS_DIR), { recursive: true });
+  await mkdir(path.join(entryRoot, COMPARISONS_DIR), { recursive: true });
+  await mkdir(path.join(entryRoot, CAPTURES_DIR), { recursive: true });
 }
 
 async function nextObservationId(entryRoot: string, now: Date, suffix: string): Promise<string> {
   const base = `${dateCompact(now)}-${suffix.slice(0, 12)}`;
-  const obsDir = path.join(entryRoot, ".assay", "observations");
+  const obsDir = path.join(entryRoot, OBSERVATIONS_DIR);
   if (!(await exists(path.join(obsDir, `${base}.yaml`)))) {
     return base;
   }
@@ -1004,7 +801,7 @@ async function recordObservation(input: {
     manifest: manifestPath(id),
     materials_path: "materials",
     ...(input.captureMode === "checkout" ? { checkout_path: "checkout" } : {}),
-    ...(input.captureMode === "archive" ? { capture_path: `.assay/captures/${id}/source` } : {}),
+    ...(input.captureMode === "archive" ? { capture_path: `${CAPTURES_DIR}/${id}/source` } : {}),
   };
 
   const obsFile = path.join(input.entryRoot, observationPath(id));
@@ -1063,7 +860,7 @@ async function writeSourceCard(
     "- `source.yaml`: durable lineage identity",
     "- `checkout/`: current materialized source when capture mode is `checkout`",
     "- `materials/`: selected extracts and supporting files",
-    "- `.assay/`: observation ledger, manifests, comparisons, and optional captures",
+    "- `observations/`, `manifests/`, `comparisons/`, `captures/`: source observation ledger",
     "",
   ];
   await writeFile(path.join(entryRoot, "README.md"), lines.join("\n"), "utf8");
@@ -1086,9 +883,11 @@ async function appendHistory(
 }
 
 async function sourceEntryForAlias(root: string, alias?: string): Promise<SourceEntry> {
-  const referencesRoot = path.join(root, "references");
+  const manifest = requireManifestPresent(await loadManifest(root), root);
+  const referencesRoot = referencesRootForManifest(root, manifest);
+  const referencesRelative = referencesRelativeForManifest(manifest);
   if (!(await exists(referencesRoot))) {
-    throw new FrameworkNotFoundError("no references directory found");
+    throw new FrameworkNotFoundError(`no references directory found: ${referencesRelative}`);
   }
 
   if (alias) {
@@ -1100,7 +899,7 @@ async function sourceEntryForAlias(root: string, alias?: string): Promise<Source
     }
     return {
       alias: normalized,
-      relativePath: `references/${normalized}`,
+      relativePath: `${referencesRelative}/${normalized}`,
       absolutePath: entryRoot,
       lineage: await readYamlFile<SourceLineage>(sourceFile),
     };
@@ -1123,7 +922,9 @@ async function sourceEntryForAlias(root: string, alias?: string): Promise<Source
 }
 
 async function listSourceEntries(root: string): Promise<SourceEntry[]> {
-  const referencesRoot = path.join(root, "references");
+  const manifest = requireManifestPresent(await loadManifest(root), root);
+  const referencesRoot = referencesRootForManifest(root, manifest);
+  const referencesRelative = referencesRelativeForManifest(manifest);
   if (!(await exists(referencesRoot))) return [];
   const entries = await readdir(referencesRoot, { withFileTypes: true });
   const sources: SourceEntry[] = [];
@@ -1134,7 +935,7 @@ async function listSourceEntries(root: string): Promise<SourceEntry[]> {
     if (!(await exists(sourceFile))) continue;
     sources.push({
       alias: entry.name,
-      relativePath: `references/${entry.name}`,
+      relativePath: `${referencesRelative}/${entry.name}`,
       absolutePath: entryRoot,
       lineage: await readYamlFile<SourceLineage>(sourceFile),
     });
@@ -1148,9 +949,18 @@ async function loadObservation(
 ): Promise<SourceObservation | null> {
   if (!observationRef) return null;
   const normalized = observationRef.replace(/\\/g, "/");
-  const file = normalized.endsWith(".yaml")
-    ? path.join(entryRoot, normalized)
-    : path.join(entryRoot, ".assay", "observations", `${normalized}.yaml`);
+  // Resolve three selector shapes: a full path (flat or legacy), or a bare
+  // observation id. Bare ids and flat paths prefer the v4 flat layout; legacy
+  // .assay/observations/ paths are read as-is for migration compatibility.
+  let file: string;
+  if (normalized.endsWith(".yaml")) {
+    file = path.join(entryRoot, normalized);
+  } else {
+    file = path.join(entryRoot, OBSERVATIONS_DIR, `${normalized}.yaml`);
+    if (!(await exists(file))) {
+      file = path.join(entryRoot, legacyObservationPath(normalized));
+    }
+  }
   if (!(await exists(file))) return null;
   return readYamlFile<SourceObservation>(file);
 }
@@ -1161,8 +971,17 @@ async function loadObservationManifest(
 ): Promise<SourceManifest | null> {
   if (!observation) return null;
   const file = path.join(entryRoot, observation.manifest);
-  if (!(await exists(file))) return null;
-  return readManifest(file);
+  if (await exists(file)) {
+    return readManifest(file);
+  }
+  // Migration fallback: v3 stored manifests under .assay/manifests/. If the
+  // manifest path points at the flat layout but the file is missing, try the
+  // legacy location derived from the observation id.
+  const legacyFile = path.join(entryRoot, legacyManifestPath(observation.observation_id));
+  if (await exists(legacyFile)) {
+    return readManifest(legacyFile);
+  }
+  return null;
 }
 
 async function writeLineage(entryRoot: string, lineage: SourceLineage): Promise<void> {
@@ -1177,7 +996,7 @@ async function materializeMaterials(captureRoot: string, materialsDir: string): 
 
 export async function addSource(options: SourceAddOptions): Promise<SourceAddResult> {
   const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  const manifest = requireManifestPresent(await loadManifest(root), root);
   const now = options.now ?? new Date();
   const captureMode = options.capture ?? "checkout";
   assertCaptureMode(captureMode);
@@ -1187,7 +1006,7 @@ export async function addSource(options: SourceAddOptions): Promise<SourceAddRes
       ? options.source
       : path.resolve(options.source);
   const alias = aliasForSource(options.source, options.alias);
-  const relativePath = `references/${alias}`;
+  const relativePath = `${referencesRelativeForManifest(manifest)}/${alias}`;
   const entryRoot = path.join(root, relativePath);
   if (await exists(entryRoot)) {
     throw new FrameworkAlreadyExistsError(`source already exists: ${relativePath}`);
@@ -1341,8 +1160,7 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
   await writeFile(
     path.join(
       entry.absolutePath,
-      ".assay",
-      "comparisons",
+      COMPARISONS_DIR,
       `${previousObservation?.observation_id ?? "none"}--${recorded.observation.observation_id}.md`,
     ),
     formatDiffMarkdown(comparisonResult),
@@ -1468,12 +1286,14 @@ export async function getSourceLog(options: {
   const root = path.resolve(options.root);
   requireManifestPresent(await loadManifest(root), root);
   const entry = await sourceEntryForAlias(root, options.alias);
-  const observationsDir = path.join(entry.absolutePath, ".assay", "observations");
+  const flatDir = path.join(entry.absolutePath, OBSERVATIONS_DIR);
+  const legacyDir = path.join(entry.absolutePath, LEGACY_SOURCE_LEDGER, OBSERVATIONS_DIR);
+  const observationsDir = (await exists(flatDir)) ? flatDir : legacyDir;
   const entries = await readdir(observationsDir, { withFileTypes: true });
   const observations: SourceLogEntry[] = [];
   for (const file of entries) {
     if (!file.isFile() || !file.name.endsWith(".yaml")) continue;
-    const relative = `.assay/observations/${file.name}`;
+    const relative = `${OBSERVATIONS_DIR}/${file.name}`;
     observations.push({
       observation: await readYamlFile<SourceObservation>(path.join(observationsDir, file.name)),
       path: relative,
@@ -1486,8 +1306,13 @@ export async function getSourceLog(options: {
 function normalizeObservationSelector(selector: string): string {
   const normalized = selector.replace(/\\/g, "/");
   if (normalized.endsWith(".yaml")) return normalized;
-  if (normalized.startsWith(".assay/observations/")) return `${normalized}.yaml`;
-  return `.assay/observations/${normalized}.yaml`;
+  // Accept both flat (observations/<id>) and legacy (.assay/observations/<id>)
+  // selectors; readers resolve both against the source entry root.
+  if (normalized.startsWith(`${OBSERVATIONS_DIR}/`)) return `${normalized}.yaml`;
+  if (normalized.startsWith(`${LEGACY_SOURCE_LEDGER}/${OBSERVATIONS_DIR}/`)) {
+    return `${normalized}.yaml`;
+  }
+  return `${OBSERVATIONS_DIR}/${normalized}.yaml`;
 }
 
 function observationIdFromPath(observationRef: string | null): string | null {
@@ -1522,11 +1347,17 @@ export async function resolveSourceObservation(
   const entry = await resolveSourceObservationEntry(root, options.alias, options.observation);
   const observationFile = observationPath(entry.observation.observation_id);
   const previousId = observationIdFromPath(entry.observation.previous_observation);
-  const diffFile = previousId
-    ? `.assay/comparisons/${previousId}--${entry.observation.observation_id}.md`
-    : null;
-  const diffExists =
-    diffFile !== null && (await exists(path.join(entry.absolutePath, diffFile))) ? diffFile : null;
+  const diffName = previousId ? `${previousId}--${entry.observation.observation_id}.md` : null;
+  let diffExists: string | null = null;
+  if (diffName) {
+    const flat = `${COMPARISONS_DIR}/${diffName}`;
+    const legacy = `${LEGACY_SOURCE_LEDGER}/${COMPARISONS_DIR}/${diffName}`;
+    if (await exists(path.join(entry.absolutePath, flat))) {
+      diffExists = flat;
+    } else if (await exists(path.join(entry.absolutePath, legacy))) {
+      diffExists = legacy;
+    }
+  }
 
   return {
     root,

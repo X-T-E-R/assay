@@ -24,7 +24,7 @@ What happens:
 3. A standard Assay scaffold is created.
 4. An adoption manifest is written to `.old/<timestamp>/.adoption-manifest.json`.
 
-If the target already has a `.framework/manifest.json`, the CLI refuses to adopt — use `update` or `migrate-layout` instead. If it has a v2 manifest but no `systems-registry.json`, run `migrate-layout --dry-run` first to plan the v2→v3 upgrade.
+If the target already has a `.assay/manifest.json`, the CLI refuses to adopt — use `update` or `migrate-layout` instead. If it has a legacy manifest shape with no `systems-registry.json`, run `migrate-layout --dry-run` first to plan the registry/contract upgrade.
 
 ## Post-adoption steps
 

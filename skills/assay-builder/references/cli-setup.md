@@ -56,7 +56,7 @@ A global `assay` command (via `npm link` in `packages/assay-cli`) is optional an
 
 ## Working directory conventions
 
-All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `source add|sync|switch|status|diff|log`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.framework/manifest.json`.
+All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `source add|sync|switch|status|diff|log`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|update|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.assay/manifest.json`.
 
 Use `cd <target-dir>` before running commands, or pass `--root <path>` / `[target-dir]` only when operating on a workspace from another directory.
 
@@ -76,21 +76,38 @@ These commands operate on registry metadata only and never modify project files.
 
 ## Systems registry (per-workspace)
 
-Distinct from the project registry, each workspace has a per-workspace systems registry at `.framework/systems-registry.json` introduced in layout v3. Manage it with the `system` command group rather than editing the JSON directly:
+Distinct from the project registry, each current workspace has a per-workspace systems registry at `.assay/systems-registry.json`. Manage it with the `system` command group rather than editing the JSON directly:
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]
+assay system update <selector> [--path ...] [--vcs ...] [--vcs-ref ...] [--system-version ...] [--contract-file ... | --no-contract-file] [--primary] [--supersedes ...]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status ...] [--json]
 assay system show <selector>
 ```
 
+Use `system register` for first-time records. If a system already exists and its metadata is wrong, use `system update <selector>` instead; for example, correct a system from `embedded` to `independent-git` with `assay system update skill-creator --vcs independent-git --vcs-ref main`. Omitted fields are preserved.
+
 Selectors can be the full system name or a unique name prefix.
+
+## Repository validation
+
+When maintaining the Assay repository, validate through the release scripts rather than a weaker ad hoc command:
+
+```bash
+./scripts/check.sh
+```
+
+```powershell
+.\scripts\check.ps1
+```
+
+Those scripts build the TypeScript packages, run typecheck/lint/tests/smoke, and verify the committed `examples/framework-template` workspace with the built CLI.
 
 ## ADR index (per-workspace)
 
-Each workspace can track architecture decision records in `.framework/adrs.json` with markdown files under `knowledge/decisions/`. Manage ADRs with the `adr` command group rather than editing the JSON directly:
+Each workspace can track architecture decision records in `.assay/adrs.json` with markdown files under `knowledge/decisions/`. Manage ADRs with the `adr` command group rather than editing the JSON directly:
 
 ```bash
 assay adr new "Title" [--from-analysis <path>] [--from-iteration <path>]

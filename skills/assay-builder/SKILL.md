@@ -11,7 +11,8 @@ Build and maintain an Assay evidence workbench — a versioned project layer tha
 
 - Node.js >= 18, `pnpm`
 - This skill lives inside the `assay` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running the repo-root installer from the cloned repository; it builds the workspace and links this skill into the selected skills directory so it resolves back to the repo.
-- Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
+- Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs the built TypeScript CLI at `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
+- When maintaining this repository itself, use the release scripts (`scripts/check.sh` on POSIX, `scripts/check.ps1` on Windows). They run the built CLI checks and the committed public-example gate.
 - Read `references/cli-setup.md` for install, build, and invocation details. Use `references/cli-setup.zh.md` when Chinese setup instructions are needed.
 
 ## Evidence loop
@@ -38,7 +39,7 @@ assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adop
 assay check                                  # semantic + structural + content-health validation
 assay status                                 # systems + living source summary + open iterations + knowledge counts
 assay update --dry-run                       # always dry-run first
-assay migrate-layout --dry-run               # always dry-run first; v2→v3 included
+assay migrate-layout --dry-run               # always dry-run first; legacy layouts are migration input only
 
 # Living sources / reference analysis / iteration / knowledge
 assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|archive]
@@ -63,8 +64,9 @@ assay adr deprecate <selector>
 assay adr list [--status proposed|accepted|superseded|deprecated] [--json]
 assay adr show <selector> [--json]
 
-# System registry (layout v3+)
+# System registry
 assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
+assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status primary|active|superseded|archived] [--json]
@@ -84,22 +86,23 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 
 ## Framework structure
 
-Target projects use an archetype-specific layout over a shared base (`.framework/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), `hypotheses/` + `experiments/` (`science`), `candidates/` + `scorecards/` (`evaluation`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.framework/` managed files, read `references/framework-structure.md`.
+Target projects use an archetype-specific layout over a shared base (`.assay/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), `hypotheses/` + `experiments/` (`science`), `candidates/` + `scorecards/` (`evaluation`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
 
 ## Systems and version control
 
-Each system under `systems/` may be an independently version-controlled repository. The framework manages a **systems registry** (`.framework/systems-registry.json`) and per-system **contract files** (`systems/<name>/system.yaml`), not the system's source files.
+Each system under `systems/` may be an independently version-controlled repository. The framework manages a **systems registry** (`.assay/systems-registry.json`) and per-system **contract files** (`systems/<name>/system.yaml`), not the system's source files.
 
 - `vcs: independent-git` — the system path is its own git repository; the root repo `.gitignore` should ignore the system directory but allow `system.yaml`. Framework `check` skips internals.
 - `vcs: embedded` — system files live in the root repo directly.
 - Exactly one system has `status: primary` at any time. Use `system promote` to switch; the previous primary becomes `superseded` automatically.
+- Use `system update <selector>` to correct metadata for an existing record, for example `assay system update skill-creator --vcs independent-git --vcs-ref main` after a system was registered as `embedded` by mistake. Do not re-run `system register`; duplicate registration is intentionally rejected.
 - Archive non-primary systems with `system archive --apply` (copy-first move into `systems/archive/`).
 
-Never hand-edit `.framework/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration from layout v2, read `references/systems-registry.md`.
+Never hand-edit `.assay/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration notes for legacy layouts, read `references/systems-registry.md`.
 
 ## Decisions and ADRs
 
-Use ADRs for durable architecture decisions that need status, numbering, and supersede history. The framework stores ADR markdown under `knowledge/decisions/` and tracks the index in `.framework/adrs.json`.
+Use ADRs for durable architecture decisions that need status, numbering, and supersede history. The framework stores ADR markdown under `knowledge/decisions/` and tracks the index in `.assay/adrs.json`.
 
 - `adr new` creates a proposed ADR draft with required frontmatter.
 - `adr accept` marks a proposed ADR as accepted.
@@ -107,7 +110,7 @@ Use ADRs for durable architecture decisions that need status, numbering, and sup
 - `adr deprecate` closes a proposed or accepted ADR without replacement.
 - `check` validates dangling ADR links, non-bidirectional supersede chains, cycles, and missing ADR frontmatter.
 
-Never hand-edit `.framework/adrs.json`. Use `adr` commands for lifecycle transitions. Read `references/adr-workflow.md` before creating or changing ADRs.
+Never hand-edit `.assay/adrs.json`. Use `adr` commands for lifecycle transitions. Read `references/adr-workflow.md` before creating or changing ADRs.
 
 ## Update policy
 
@@ -116,7 +119,7 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.
-2. Run `init` if empty (use `--archetype solve` when the whole project exists to work toward a specific measurable objective — e.g. a benchmark target, a paper implementation, or a repo you are rebuilding — so official materials land in `problem/` instead of the frozen-reference area). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace is layout v2, run `migrate-layout --dry-run` then `--apply`.
+2. Run `init` if empty (use `--archetype solve` when the whole project exists to work toward a specific measurable objective — e.g. a benchmark target, a paper implementation, or a repo you are rebuilding — so official materials land in `problem/` instead of the frozen-reference area). Run `adopt --dry-run` then `--apply --analyze` if the directory already has existing content. Run `check`/`status` if it already has an Assay manifest. If the workspace uses a legacy layout, run `migrate-layout --dry-run` then `--apply`.
 3. Use `projects list` or `projects scan <parent-dir>` to locate existing workspaces.
 
 ### Study/absorption pipeline (the loop made executable)
@@ -130,14 +133,14 @@ absorb <source>                      # freeze + write case file + OPEN a pre-fil
   → (adr | knowledge | iteration against systems/)              # the decision lands somewhere durable
 ```
 
-4. **Add a living external source with `source add <repo-or-dir> [alias]`** when the source may change over time. The preferred human entrance is `references/<alias>/` with `source.yaml`, current `checkout/`, selected `materials/`, `history.md`, and the internal `.assay/` observation ledger. For Git-backed sources, `checkout/` itself is the repository root (`checkout/.git`), not `checkout/<repo-name>/`.
+4. **Add a living external source with `source add <repo-or-dir> [alias]`** when the source may change over time. The preferred human entrance is `references/<alias>/` with `source.yaml`, current `checkout/`, selected `materials/`, `history.md`, and the flat observation ledger (`observations/`, `manifests/`, `comparisons/`, `captures/`). For Git-backed sources, `checkout/` itself is the repository root (`checkout/.git`), not `checkout/<repo-name>/`.
 5. **Sync living sources with `source sync [alias]`** when the external system changes. For Git-backed sources, sync refreshes the managed checkout before observing. Use change classes as workflow gates: `same` writes an event only, `patch`/`normal` need delta analysis, `major` needs revalidation/stale-risk review, and `replacement` should become a new lineage instead of pretending it is a refresh.
 6. **Use `absorb <source> [--name <name>]`** when you intentionally want the old freeze-and-open-analysis flow. This freezes the source, writes a case file (`reference.yaml` in learning mode, `source.yaml` in absorption mode), AND opens a pre-filled analysis in one step. Prefer `absorb` over `reference add` followed by a separate `analysis new`, because `absorb` guarantees the analysis is opened in the same step and cannot be forgotten.
 7. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]` for living source observations, or `analysis new "Title" --for-reference <path>` for frozen references. When `--observation` is omitted, the latest observation for that source is used.
 8. **Fill the analysis body**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next iteration`) with real content drawn from the source. `check` flags draft analyses with empty Key observations, and `analysis close` rejects empty shells by default.
 9. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This flips the bound frozen reference's `analyzed` flag to `true` or marks the bound source observation `analysis_status: closed`, then writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
 10. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
-11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate).
+11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered system's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, contract file, supersedes, or primary status.
 12. Close every started iteration with `iteration close --result ...`. `check` flags `Status: open` plans as warnings.
 13. Run `update --dry-run` before applying framework upgrades.
 
@@ -150,7 +153,7 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 - Do not overwrite existing user files by default.
 - Do not adopt an already initialized Assay workspace; use `update` or `migrate-layout` instead.
 - Do not put external project source under `systems/`; in learning mode add it as a living source under `references/<alias>/` with `source add`, or use frozen references only for explicit full-capture/legacy evidence. In absorption mode land project-owned material under `problem/` via `absorb`.
-- Do not hand-edit `.framework/manifest.json`, `.framework/systems-registry.json`, or `.framework/adrs.json`; use the CLI.
+- Do not hand-edit `.assay/manifest.json`, `.assay/systems-registry.json`, or `.assay/adrs.json`; use the CLI.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
 - Do not leave iterations open indefinitely; `check` flags `Status: open` plans as warnings.
@@ -186,7 +189,7 @@ assay status
 
 The content-health warnings are the framework's defense against "freeze then forget": a frozen reference with no analysis, an analysis left as an empty draft, a lingering `.old/`, or a pending queue are all surfaced so they cannot hide behind an `[ok]`.
 
-`status` shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, `Open iterations`, and `Knowledge entries`. For update and migrate, always run `--dry-run` first and review the plan before `--apply`.
+`status` shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, `Open iterations`, and `Knowledge entries`. For update and migrate, always run `--dry-run` first and review the plan before `--apply`. Dry-run commands must not create project files or project-registry records.
 
 ## Final response checklist
 
@@ -194,7 +197,7 @@ Report:
 
 - Target root and CLI command used.
 - Created/updated/skipped/conflicted files.
-- Current `.framework/VERSION` and layout version.
+- Current `.assay/VERSION` and layout version.
 - Whether migration was only planned or applied.
 - Which reference/analysis/iteration/knowledge artifacts were produced.
 - Which ADRs were created, accepted, superseded, deprecated, or left proposed.

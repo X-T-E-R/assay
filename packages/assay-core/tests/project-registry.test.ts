@@ -58,7 +58,7 @@ describe("project registry paths and ids", () => {
 });
 
 describe("project registry records", () => {
-  it("registers, lists, and refreshes active records from .framework/manifest.json", async () => {
+  it("registers, lists, and refreshes active records from .assay/manifest.json", async () => {
     const root = path.join(await tempDir(), "demo");
     const registryRoot = path.join(await tempDir(), "registry");
     await initFramework({ target: root, name: "Registry Demo" });
@@ -237,7 +237,7 @@ describe("project registry scan and cleanup", () => {
     expect(await exists(path.join(root, MANIFEST_FILE))).toBe(true);
 
     const stale = await registerProject(root, "scan", { registryRoot });
-    await rm(path.join(root, ".framework"), { recursive: true, force: true });
+    await rm(path.join(root, ".assay"), { recursive: true, force: true });
     const dryRun = await pruneProjects({ registryRoot, dryRun: true });
     expect(dryRun.map((record) => record.id)).toEqual([stale.id]);
     expect(await exists(projectRecordPath(stale.id, { registryRoot }))).toBe(true);

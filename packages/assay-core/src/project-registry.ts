@@ -10,7 +10,13 @@ import { loadManifest } from "./manifest.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
 
-export type AssayProjectRegistryCommand = "init" | "adopt" | "update" | "scan" | "uninstall";
+export type AssayProjectRegistryCommand =
+  | "init"
+  | "adopt"
+  | "attach"
+  | "update"
+  | "scan"
+  | "uninstall";
 export type AssayProjectRegistryStatus = "active" | "missing" | "uninstalled";
 
 export interface ProjectRegistryOptions {
@@ -468,6 +474,7 @@ function isRegistryCommand(value: unknown): value is AssayProjectRegistryCommand
   return (
     value === "init" ||
     value === "adopt" ||
+    value === "attach" ||
     value === "update" ||
     value === "scan" ||
     value === "uninstall"

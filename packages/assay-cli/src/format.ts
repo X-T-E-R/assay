@@ -3,7 +3,9 @@ import type {
   AdrRecord,
   ApplyUpdateResult,
   AssayProjectRecord,
+  AttachResult,
   CheckFrameworkResult,
+  ConvertOverlayResult,
   FrameworkStatusResult,
   InitFrameworkResult,
   MigrateLayoutResult,
@@ -64,6 +66,35 @@ export function formatInitResult(result: InitFrameworkResult): string {
     `Project: ${result.project}`,
     ...semantics,
     formatReport(result.report),
+  ].join("\n");
+}
+
+export function formatAttachResult(result: AttachResult): string {
+  return [
+    `Attached Assay overlay: ${result.root}`,
+    `Project: ${result.project}`,
+    "Mode: overlay",
+    `Privacy: ${result.privacy}`,
+    `Primary system: ${result.system.name} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
+    `Contract: ${result.system.contract_file}`,
+    result.excludeUpdated
+      ? "Git: added /.assay/ to .git/info/exclude"
+      : "Git: .assay/ already ignored",
+    `Event: ${result.eventFile}`,
+  ].join("\n");
+}
+
+export function formatConvertResult(result: ConvertOverlayResult): string {
+  return [
+    `Converted overlay to standalone: ${result.targetRoot}`,
+    `Source: ${result.sourceRoot}`,
+    "Mode: standalone",
+    `Transfer: ${result.moved ? "move" : "copy"}`,
+    `Overlay: ${result.keepOverlay ? "kept" : "removed"}`,
+    `Primary system: ${result.system.name} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
+    `Contract: ${result.system.contract_file}`,
+    `Manifest: ${result.targetManifestPath}`,
+    `Event: ${result.eventFile}`,
   ].join("\n");
 }
 

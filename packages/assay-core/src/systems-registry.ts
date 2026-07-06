@@ -37,6 +37,42 @@ export interface RegisterSystemResult {
   readonly eventFile: string;
 }
 
+export interface UpdateSystemInput {
+  readonly path?: string;
+  readonly vcs?: SystemVcs;
+  readonly vcsRef?: string;
+  readonly version?: string;
+  readonly primary?: boolean;
+  readonly supersedes?: readonly string[];
+  readonly contractFile?: string | null;
+}
+
+export type SystemUpdateField =
+  | "path"
+  | "vcs"
+  | "vcs_ref"
+  | "version"
+  | "contract_file"
+  | "supersedes"
+  | "status";
+
+export type SystemUpdateValue = string | readonly string[] | null;
+
+export interface SystemUpdateChange {
+  readonly field: SystemUpdateField;
+  readonly previous: SystemUpdateValue;
+  readonly current: SystemUpdateValue;
+}
+
+export interface UpdateSystemResult {
+  readonly root: string;
+  readonly registry: SystemsRegistry;
+  readonly previous: SystemRecord;
+  readonly system: SystemRecord;
+  readonly changes: readonly SystemUpdateChange[];
+  readonly eventFile: string;
+}
+
 export interface PromoteSystemResult {
   readonly root: string;
   readonly registry: SystemsRegistry;
@@ -171,6 +207,53 @@ function setPrimaryInPlace(registry: SystemsRegistry, name: string): void {
   registry.primary = name;
 }
 
+function cloneSystemRecord(system: SystemRecord): SystemRecord {
+  return { ...system, supersedes: [...system.supersedes] };
+}
+
+function normalizeRegistryPath(root: string, value: string): string {
+  return relativeDisplayPath(path.resolve(root, value), root);
+}
+
+function updateValuesEqual(previous: SystemUpdateValue, current: SystemUpdateValue): boolean {
+  if (Array.isArray(previous) || Array.isArray(current)) {
+    if (!Array.isArray(previous) || !Array.isArray(current)) {
+      return false;
+    }
+    return (
+      previous.length === current.length &&
+      previous.every((value, index) => current[index] === value)
+    );
+  }
+  return previous === current;
+}
+
+function collectSystemUpdateChanges(
+  previous: SystemRecord,
+  current: SystemRecord,
+): readonly SystemUpdateChange[] {
+  const changes: SystemUpdateChange[] = [];
+  const addChange = (
+    field: SystemUpdateField,
+    previousValue: SystemUpdateValue,
+    currentValue: SystemUpdateValue,
+  ): void => {
+    if (!updateValuesEqual(previousValue, currentValue)) {
+      changes.push({ field, previous: previousValue, current: currentValue });
+    }
+  };
+
+  addChange("path", previous.path, current.path);
+  addChange("vcs", previous.vcs, current.vcs);
+  addChange("vcs_ref", previous.vcs_ref, current.vcs_ref);
+  addChange("version", previous.version, current.version);
+  addChange("contract_file", previous.contract_file, current.contract_file);
+  addChange("supersedes", previous.supersedes, current.supersedes);
+  addChange("status", previous.status, current.status);
+
+  return changes;
+}
+
 async function exists(target: string): Promise<boolean> {
   try {
     await stat(target);
@@ -236,6 +319,86 @@ export async function registerSystem(
   );
 
   return { root, registry, system: record, eventFile: relativeDisplayPath(eventFile, root) };
+}
+
+export async function updateSystem(
+  root: string,
+  selector: string,
+  input: UpdateSystemInput,
+  options: SystemsRegistryOptions = {},
+): Promise<UpdateSystemResult> {
+  const now = options.now ?? new Date();
+  const registry = await requireSystemsRegistry(root);
+  const system = await findSystem(registry, selector);
+
+  if (system.status === "archived") {
+    throw new FrameworkError(`cannot update an archived system: ${system.name}`);
+  }
+
+  const previous = cloneSystemRecord(system);
+  let updated = cloneSystemRecord(system);
+
+  if (input.path !== undefined) {
+    updated = { ...updated, path: normalizeRegistryPath(root, input.path) };
+  }
+  if (input.vcs !== undefined) {
+    updated = { ...updated, vcs: input.vcs };
+  }
+  if (input.vcsRef !== undefined) {
+    updated = { ...updated, vcs_ref: input.vcsRef };
+  }
+  if (input.version !== undefined) {
+    updated = { ...updated, version: input.version };
+  }
+  if (input.contractFile !== undefined) {
+    updated = {
+      ...updated,
+      contract_file:
+        input.contractFile === null ? null : normalizeRegistryPath(root, input.contractFile),
+    };
+  }
+  if (input.supersedes !== undefined) {
+    updated = { ...updated, supersedes: [...input.supersedes] };
+  }
+
+  registry.systems[system.name] = updated;
+
+  const previousPrimary =
+    input.primary && registry.primary && registry.primary !== system.name ? registry.primary : null;
+  if (input.primary) {
+    setPrimaryInPlace(registry, system.name);
+  }
+
+  const savedRegistry = await saveSystemsRegistry(root, registry);
+  const savedSystem = savedRegistry.systems[system.name];
+  if (!savedSystem) {
+    throw new FrameworkError(
+      `internal error: updated system missing from registry: ${system.name}`,
+    );
+  }
+
+  const changes = collectSystemUpdateChanges(previous, savedSystem);
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "system.updated",
+      name: system.name,
+      changed_fields: changes.map((change) => change.field),
+      changes,
+      primary: savedSystem.status === "primary",
+      previous_primary: previousPrimary,
+    },
+    now,
+  );
+
+  return {
+    root,
+    registry: savedRegistry,
+    previous,
+    system: savedSystem,
+    changes,
+    eventFile: relativeDisplayPath(eventFile, root),
+  };
 }
 
 export async function promoteSystem(

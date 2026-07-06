@@ -19,12 +19,12 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Framework runtime/private material
-**/.framework/backups/*
-!**/.framework/backups/.gitkeep
-**/.framework/events/*
-!**/.framework/events/.gitkeep
-**/.framework/.runtime/
+# Assay runtime/private material
+**/.assay/backups/*
+!**/.assay/backups/.gitkeep
+**/.assay/events/*
+!**/.assay/events/.gitkeep
+**/.assay/.runtime/
 **/references/frozen/*
 !**/references/frozen/README.md
 

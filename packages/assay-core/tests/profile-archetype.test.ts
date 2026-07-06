@@ -14,7 +14,7 @@ import {
 
 const configTemplateId = "framework" + ".config";
 const coreContractTemplateId = "system.core" + ".contract";
-const frameworkConfigPath = ".framework/" + "config.yaml";
+const frameworkConfigPath = ".assay/" + "config.yaml";
 const USER_FACING_BUILT_INS = ["evaluation", "explore", "library", "science", "solve", "study"];
 const tempRoots: string[] = [];
 
@@ -112,7 +112,7 @@ describe("archetype loader", () => {
       dirs: ["user-zone"],
       mode: "learning",
     });
-    await writeCustomArchetype(path.join(root, ".framework", "archetypes", "foo.yaml"), {
+    await writeCustomArchetype(path.join(root, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
       mode: "absorption",
       modules: ["iteration"],
@@ -142,8 +142,8 @@ describe("archetype loader", () => {
     expect(dirsForArchetype(custom, custom.mode)).toContain("user-zone");
     expect(builtIn.name).toBe("library");
     expect(dirsForArchetype(builtIn, builtIn.mode)).toEqual([
-      ".framework/backups",
-      ".framework/migrations",
+      ".assay/backups",
+      ".assay/migrations",
       "systems",
       "knowledge",
     ]);
@@ -152,7 +152,7 @@ describe("archetype loader", () => {
   it("lists available archetypes with source labels and omits internal base", async () => {
     const root = path.join(await tempDir(), "workspace");
     const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
-    await writeCustomArchetype(path.join(root, ".framework", "archetypes", "project-only.yaml"), {
+    await writeCustomArchetype(path.join(root, ".assay", "archetypes", "project-only.yaml"), {
       dirs: ["project-zone"],
     });
     await writeCustomArchetype(path.join(userArchetypesDir, "user-only.yaml"), {
@@ -370,14 +370,14 @@ describe("archetype data shapes", () => {
 
     expect(library.mode).toBe("learning");
     expect(library.modules).toEqual([]);
-    expect(dirs).toEqual([".framework/backups", ".framework/migrations", "systems", "knowledge"]);
+    expect(dirs).toEqual([".assay/backups", ".assay/migrations", "systems", "knowledge"]);
     expect(paths).toEqual([
       "README.md",
       ".gitignore",
-      ".framework/README.md",
-      ".framework/VERSION",
-      ".framework/migrations/README.md",
-      ".framework/backups/.gitkeep",
+      ".assay/README.md",
+      ".assay/VERSION",
+      ".assay/migrations/README.md",
+      ".assay/backups/.gitkeep",
       "systems/README.md",
       "knowledge/README.md",
     ]);

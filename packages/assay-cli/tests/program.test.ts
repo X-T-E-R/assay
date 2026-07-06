@@ -1,41 +1,31 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  type BuiltCliRunner,
+  createBuiltCliRunner,
+  createIsolatedRegistryRoot,
+  createTempDirectoryFixture,
+  pathExists,
+  readRegistrySnapshot,
+} from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createProgram } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
-const packageRoot = process.cwd();
-const cliPath = path.join(packageRoot, "dist", "cli.js");
 const USER_FACING_BUILT_INS = ["evaluation", "explore", "library", "science", "solve", "study"];
-const tempRoots: string[] = [];
+const tempDirs = createTempDirectoryFixture("assay-cli");
 let registryRoot = "";
-
-interface CliResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
+let cliRunner: BuiltCliRunner;
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-cli-"));
-  tempRoots.push(root);
-  return root;
+  return tempDirs.createTempDir();
+}
+
+async function registrySnapshot(): Promise<Record<string, string>> {
+  return readRegistrySnapshot(registryRoot);
 }
 
 async function writeCustomArchetype(
@@ -69,43 +59,26 @@ async function writeCustomArchetype(
   );
 }
 
-async function runCli(args: readonly string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
-  return runCliIn(packageRoot, args, env);
+async function runCli(args: readonly string[], env: NodeJS.ProcessEnv = {}) {
+  return cliRunner.runCli(args, { env });
 }
 
-async function runCliIn(
-  cwd: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv = {},
-): Promise<CliResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd,
-      env: {
-        ...process.env,
-        ASSAY_PROJECT_REGISTRY_ROOT: registryRoot,
-        ...env,
-      },
-    });
-    return { exitCode: 0, stdout, stderr };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && typeof error.code === "number") {
-      return {
-        exitCode: error.code,
-        stdout: "stdout" in error && typeof error.stdout === "string" ? error.stdout : "",
-        stderr: "stderr" in error && typeof error.stderr === "string" ? error.stderr : "",
-      };
-    }
-    throw error;
-  }
+async function runCliIn(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = {}) {
+  return cliRunner.runCliIn(cwd, args, { env });
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", [...args], { cwd });
+  return stdout;
 }
 
 afterEach(async () => {
-  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await tempDirs.cleanup();
 });
 
 beforeEach(async () => {
-  registryRoot = path.join(await tempDir(), "registry");
+  registryRoot = await createIsolatedRegistryRoot(tempDirs);
+  cliRunner = createBuiltCliRunner({ registryRoot });
 });
 
 describe("assay Commander registration", () => {
@@ -179,12 +152,12 @@ describe("assay CLI subprocess behavior", () => {
     expect(init.stdout).toContain("Initialized framework:");
     expect(init.stdout).toContain("Project: Assay Smoke");
     expect(init.stderr).toBe("");
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "manifest.json"))).toBe(true);
 
     const check = await runCli(["check", "--root", root]);
     expect(check.exitCode).toBe(0);
     expect(check.stdout).toContain("Framework check: ok");
-    expect(check.stdout).toContain("[ok] .framework/VERSION");
+    expect(check.stdout).toContain("[ok] .assay/VERSION");
     expect(check.stderr).toBe("");
 
     await mkdir(source, { recursive: true });
@@ -214,9 +187,38 @@ describe("assay CLI subprocess behavior", () => {
     expect(JSON.parse(projects.stdout)).toMatchObject({
       path: path.resolve(root),
       name: "Assay Smoke",
-      lastCommand: "update",
+      lastCommand: "init",
       status: "active",
     });
+  });
+
+  it("does not create or mutate project registry records for update dry-run", async () => {
+    const untrackedRoot = path.join(await tempDir(), "untracked-dry-run");
+    const untrackedInit = await runCli([
+      "init",
+      untrackedRoot,
+      "--name",
+      "Untracked Dry Run",
+      "--no-track",
+    ]);
+    expect(untrackedInit.exitCode).toBe(0);
+    expect(await registrySnapshot()).toEqual({});
+
+    const untrackedDryRun = await runCli(["update", "--root", untrackedRoot, "--dry-run"]);
+    expect(untrackedDryRun.exitCode).toBe(0);
+    expect(untrackedDryRun.stdout).toContain("Framework update: dry-run");
+    expect(await registrySnapshot()).toEqual({});
+
+    const trackedRoot = path.join(await tempDir(), "tracked-dry-run");
+    const trackedInit = await runCli(["init", trackedRoot, "--name", "Tracked Dry Run"]);
+    expect(trackedInit.exitCode).toBe(0);
+    const beforeDryRun = await registrySnapshot();
+    expect(Object.keys(beforeDryRun)).toHaveLength(1);
+
+    const trackedDryRun = await runCli(["update", "--root", trackedRoot, "--dry-run"]);
+    expect(trackedDryRun.exitCode).toBe(0);
+    expect(trackedDryRun.stdout).toContain("Framework update: dry-run");
+    expect(await registrySnapshot()).toEqual(beforeDryRun);
   });
 
   it("prints adopt help with dry-run and apply options", async () => {
@@ -243,7 +245,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("supports lifecycle registry opt-out for init, update, and adopt", async () => {
+  it("supports lifecycle registry opt-out for init, update, adopt, and attach", async () => {
     const untrackedInitRoot = path.join(await tempDir(), "untracked-init");
     const init = await runCli([
       "init",
@@ -253,14 +255,14 @@ describe("assay CLI subprocess behavior", () => {
       "--no-track",
     ]);
     expect(init.exitCode).toBe(0);
-    expect(await exists(registryRoot)).toBe(false);
+    expect(await pathExists(registryRoot)).toBe(false);
 
     const envUntrackedRoot = path.join(await tempDir(), "env-untracked-init");
     const envInit = await runCli(["init", envUntrackedRoot, "--name", "Env Untracked Init"], {
       ASSAY_NO_TRACK: "1",
     });
     expect(envInit.exitCode).toBe(0);
-    expect(await exists(registryRoot)).toBe(false);
+    expect(await pathExists(registryRoot)).toBe(false);
 
     const trackedRoot = path.join(await tempDir(), "tracked");
     const trackedInit = await runCli(["init", trackedRoot, "--name", "Tracked Init"]);
@@ -289,7 +291,47 @@ describe("assay CLI subprocess behavior", () => {
     const adoptRecord = await runCli(["projects", "show", adoptRoot, "--json"]);
     expect(adoptRecord.exitCode).toBe(1);
     expect(adoptRecord.stderr).toContain("project not found");
-  });
+
+    const trackedAttachRoot = path.join(await tempDir(), "tracked-attach");
+    await mkdir(trackedAttachRoot, { recursive: true });
+    await writeFile(path.join(trackedAttachRoot, "package.json"), '{"name":"product"}\n', "utf8");
+    await git(trackedAttachRoot, ["init"]);
+    await git(trackedAttachRoot, ["config", "user.email", "assay@example.test"]);
+    await git(trackedAttachRoot, ["config", "user.name", "Assay Test"]);
+    await git(trackedAttachRoot, ["add", "package.json"]);
+    await git(trackedAttachRoot, ["commit", "-m", "initial"]);
+    const trackedAttach = await runCli([
+      "attach",
+      "--root",
+      trackedAttachRoot,
+      "--name",
+      "Tracked Attach",
+    ]);
+    expect(trackedAttach.exitCode).toBe(0);
+    const attachRecord = await runCli(["projects", "show", trackedAttachRoot, "--json"]);
+    expect(JSON.parse(attachRecord.stdout)).toMatchObject({ lastCommand: "attach" });
+
+    const untrackedAttachRoot = path.join(await tempDir(), "untracked-attach");
+    await mkdir(untrackedAttachRoot, { recursive: true });
+    await writeFile(path.join(untrackedAttachRoot, "package.json"), '{"name":"product"}\n', "utf8");
+    await git(untrackedAttachRoot, ["init"]);
+    await git(untrackedAttachRoot, ["config", "user.email", "assay@example.test"]);
+    await git(untrackedAttachRoot, ["config", "user.name", "Assay Test"]);
+    await git(untrackedAttachRoot, ["add", "package.json"]);
+    await git(untrackedAttachRoot, ["commit", "-m", "initial"]);
+    const untrackedAttach = await runCli([
+      "attach",
+      "--root",
+      untrackedAttachRoot,
+      "--name",
+      "Untracked Attach",
+      "--no-track",
+    ]);
+    expect(untrackedAttach.exitCode).toBe(0);
+    const untrackedAttachRecord = await runCli(["projects", "show", untrackedAttachRoot, "--json"]);
+    expect(untrackedAttachRecord.exitCode).toBe(1);
+    expect(untrackedAttachRecord.stderr).toContain("project not found");
+  }, 45_000);
 
   it("prints migrate-layout help with explicit backup mode", async () => {
     const result = await runCli(["migrate-layout", "--help"]);
@@ -313,9 +355,9 @@ describe("assay CLI subprocess behavior", () => {
     expect(solve.stdout).toContain("Project: Solve CLI");
     expect(solve.stdout).not.toContain("Core:");
     expect(solve.stderr).toBe("");
-    expect(await exists(path.join(solveRoot, "problem"))).toBe(true);
-    expect(await exists(path.join(solveRoot, "attempts"))).toBe(true);
-    expect(await exists(path.join(solveRoot, "objective.json"))).toBe(true);
+    expect(await pathExists(path.join(solveRoot, "problem"))).toBe(true);
+    expect(await pathExists(path.join(solveRoot, "attempts"))).toBe(true);
+    expect(await pathExists(path.join(solveRoot, "objective.json"))).toBe(true);
 
     const profile = await runCli([
       "init",
@@ -389,10 +431,10 @@ describe("assay CLI subprocess behavior", () => {
       expect(init.exitCode).toBe(0);
       expect(init.stderr).toBe("");
       for (const expectedPath of expectation.paths) {
-        expect(await exists(path.join(root, expectedPath))).toBe(true);
+        expect(await pathExists(path.join(root, expectedPath))).toBe(true);
       }
       const manifest = JSON.parse(
-        await readFile(path.join(root, ".framework", "manifest.json"), "utf8"),
+        await readFile(path.join(root, ".assay", "manifest.json"), "utf8"),
       );
       expect(manifest.project).toMatchObject({ archetype, mode: expectation.mode });
 
@@ -405,7 +447,7 @@ describe("assay CLI subprocess behavior", () => {
 
   it("accepts project-local and user-global custom init archetypes", async () => {
     const projectRoot = path.join(await tempDir(), "project-custom");
-    await writeCustomArchetype(path.join(projectRoot, ".framework", "archetypes", "foo.yaml"), {
+    await writeCustomArchetype(path.join(projectRoot, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
       mode: "absorption",
       modules: ["iteration"],
@@ -422,9 +464,9 @@ describe("assay CLI subprocess behavior", () => {
 
     expect(project.exitCode).toBe(0);
     expect(project.stderr).toBe("");
-    expect(await exists(path.join(projectRoot, "project-zone"))).toBe(true);
+    expect(await pathExists(path.join(projectRoot, "project-zone"))).toBe(true);
     const projectManifest = JSON.parse(
-      await readFile(path.join(projectRoot, ".framework", "manifest.json"), "utf8"),
+      await readFile(path.join(projectRoot, ".assay", "manifest.json"), "utf8"),
     );
     expect(projectManifest.project).toMatchObject({ archetype: "foo", mode: "absorption" });
 
@@ -443,9 +485,9 @@ describe("assay CLI subprocess behavior", () => {
 
     expect(user.exitCode).toBe(0);
     expect(user.stderr).toBe("");
-    expect(await exists(path.join(userRoot, "user-zone"))).toBe(true);
+    expect(await pathExists(path.join(userRoot, "user-zone"))).toBe(true);
     const userManifest = JSON.parse(
-      await readFile(path.join(userRoot, ".framework", "manifest.json"), "utf8"),
+      await readFile(path.join(userRoot, ".assay", "manifest.json"), "utf8"),
     );
     expect(userManifest.project).toMatchObject({ archetype: "bar", mode: "learning" });
   });
@@ -489,13 +531,13 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("unsupported mode 'typo'");
     expect(result.stderr).toContain("supported modes: learning, absorption");
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(false);
+    expect(await pathExists(path.join(root, ".assay", "manifest.json"))).toBe(false);
   });
 
   it("lists built-in and custom archetypes with source labels", async () => {
     const root = path.join(await tempDir(), "list-root");
     const home = path.join(await tempDir(), "home");
-    await writeCustomArchetype(path.join(root, ".framework", "archetypes", "foo.yaml"), {
+    await writeCustomArchetype(path.join(root, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
     });
     await writeCustomArchetype(path.join(home, ".assay", "archetypes", "bar.yaml"), {
@@ -545,9 +587,9 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stdout).toContain("README.md -> .old/");
     expect(result.stdout).toContain("Adoption manifest: .old/");
     expect(result.stderr).toBe("");
-    expect(await exists(path.join(root, ".old"))).toBe(false);
+    expect(await pathExists(path.join(root, ".old"))).toBe(false);
     expect(await readFile(path.join(root, "README.md"), "utf8")).toBe("# Existing\n");
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(false);
+    expect(await pathExists(path.join(root, ".assay", "manifest.json"))).toBe(false);
   });
 
   it("applies adopt, preserves .git, archives old files, and registers the new scaffold", async () => {
@@ -566,8 +608,8 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stdout).not.toContain("core:");
     expect(result.stdout).toContain("Adoption manifest: .old/");
     expect(result.stderr).toBe("");
-    expect(await exists(path.join(root, ".git"))).toBe(true);
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".git"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "manifest.json"))).toBe(true);
     expect(await readFile(path.join(root, "README.md"), "utf8")).toContain("# Adopt CLI Apply");
 
     const projects = await runCli(["projects", "show", root, "--json"]);
@@ -585,12 +627,12 @@ describe("assay CLI subprocess behavior", () => {
 
     const noAgentsInit = await runCli(["init", root, "--name", "Agents CLI", "--no-agents"]);
     expect(noAgentsInit.exitCode).toBe(0);
-    expect(await exists(path.join(root, "AGENTS.md"))).toBe(false);
+    expect(await pathExists(path.join(root, "AGENTS.md"))).toBe(false);
 
     const dryRun = await runCli(["update", "--root", root, "--agents", "--dry-run"]);
     expect(dryRun.exitCode).toBe(0);
     expect(dryRun.stdout).toContain("AGENTS.md: would create Assay managed block");
-    expect(await exists(path.join(root, "AGENTS.md"))).toBe(false);
+    expect(await pathExists(path.join(root, "AGENTS.md"))).toBe(false);
 
     const updateAgents = await runCli(["update", "--root", root, "--agents"]);
     expect(updateAgents.exitCode).toBe(0);
@@ -612,7 +654,7 @@ describe("assay CLI subprocess behavior", () => {
     await rm(path.join(root, "AGENTS.md"));
     const ordinaryUpdate = await runCli(["update", "--root", root]);
     expect(ordinaryUpdate.exitCode).toBe(0);
-    expect(await exists(path.join(root, "AGENTS.md"))).toBe(false);
+    expect(await pathExists(path.join(root, "AGENTS.md"))).toBe(false);
 
     const adoptRoot = path.join(await tempDir(), "adopt-no-agents");
     await mkdir(path.join(adoptRoot, "src"), { recursive: true });
@@ -627,14 +669,14 @@ describe("assay CLI subprocess behavior", () => {
       "--no-agents",
     ]);
     expect(adopt.exitCode).toBe(0);
-    expect(await exists(path.join(adoptRoot, "AGENTS.md"))).toBe(false);
+    expect(await pathExists(path.join(adoptRoot, "AGENTS.md"))).toBe(false);
   });
 
   it("shows manifest archetype and mode through the archetype command only", async () => {
     const root = path.join(await tempDir(), "demo");
     await runCli(["init", root, "--name", "Archetype CLI"]);
     await writeFile(
-      path.join(root, ".framework", "config.yaml"),
+      path.join(root, ".assay", "config.yaml"),
       "profile: solve\nprofile_version: 99\nmode: absorption\n",
       "utf8",
     );
@@ -719,19 +761,19 @@ describe("assay CLI subprocess behavior", () => {
       "Captured from CLI test",
     ]);
     expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.stdout).toContain("Captured event: .assay/events/");
     expect(event.stderr).toBe("");
   });
 
   it("returns non-zero for failed checks", async () => {
     const root = await tempDir();
-    await mkdir(path.join(root, ".framework"), { recursive: true });
+    await mkdir(path.join(root, ".assay"), { recursive: true });
 
     const result = await runCli(["check", "--root", root]);
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain("Framework check: failed");
-    expect(result.stdout).toContain("[missing] .framework/VERSION");
+    expect(result.stdout).toContain("[missing] .assay/VERSION");
     expect(result.stderr).toBe("");
   });
 
@@ -816,7 +858,7 @@ describe("assay CLI subprocess behavior", () => {
       root,
     ]);
     expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .framework/events/");
+    expect(event.stdout).toContain("Captured event: .assay/events/");
     expect(event.stderr).toBe("");
 
     const migration = await runCli(["migrate-layout", "--root", root, "--dry-run"]);
@@ -841,7 +883,7 @@ describe("assay CLI subprocess behavior", () => {
     expect(
       await readFile(path.join(root, "references", "frozen", "202401", "source.md"), "utf8"),
     ).toBe("# Source\n");
-    expect(await readdir(path.join(root, ".framework", "backups"))).toEqual([".gitkeep"]);
+    expect(await readdir(path.join(root, ".assay", "backups"))).toEqual([".gitkeep"]);
   });
 
   it("lists, shows, scans, forgets, and prunes project registry records", async () => {
@@ -883,7 +925,7 @@ describe("assay CLI subprocess behavior", () => {
     const forget = await runCli(["projects", "forget", record.id]);
     expect(forget.exitCode).toBe(0);
     expect(forget.stdout).toContain(`Forgot ${record.id}`);
-    expect(await exists(path.join(root, ".framework", "manifest.json"))).toBe(true);
+    expect(await pathExists(path.join(root, ".assay", "manifest.json"))).toBe(true);
 
     const scan = await runCli(["projects", "scan", path.dirname(root), "--json"]);
     expect(scan.exitCode).toBe(0);
@@ -892,7 +934,7 @@ describe("assay CLI subprocess behavior", () => {
       scanned.some((candidate: { path?: string }) => candidate.path === path.resolve(root)),
     ).toBe(true);
 
-    await rm(path.join(root, ".framework"), { recursive: true, force: true });
+    await rm(path.join(root, ".assay"), { recursive: true, force: true });
     const dryRunPrune = await runCli(["projects", "prune", "--dry-run", "--json"]);
     expect(dryRunPrune.exitCode).toBe(0);
     expect(JSON.parse(dryRunPrune.stdout)).toEqual(
@@ -909,6 +951,6 @@ describe("assay CLI subprocess behavior", () => {
     expect(JSON.parse(prune.stdout)).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
     );
-    expect(await exists(path.join(root, "README.md"))).toBe(true);
+    expect(await pathExists(path.join(root, "README.md"))).toBe(true);
   });
 });

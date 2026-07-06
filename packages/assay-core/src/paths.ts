@@ -1,10 +1,19 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import { MANAGED_DIR } from "./constants.js";
+import { LEGACY_MANAGED_DIR, MANAGED_DIR } from "./constants.js";
 import { toPosixPath } from "./serialization.js";
 
-const ROOT_MARKERS = [MANAGED_DIR, "references", "analyses", "systems", "iterations"] as const;
+// `.assay` (v4+) is the primary marker; `.framework` is kept as a legacy
+// fallback so v3 workspaces are still discovered until they are migrated.
+const ROOT_MARKERS = [
+  MANAGED_DIR,
+  LEGACY_MANAGED_DIR,
+  "references",
+  "analyses",
+  "systems",
+  "iterations",
+] as const;
 
 async function pathExists(target: string): Promise<boolean> {
   try {

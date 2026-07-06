@@ -75,4 +75,6 @@ finally {
   }
 }
 
+Invoke-Checked "node" @((Join-Path $repoRoot "scripts\check-public-example.mjs"))
+
 Write-Host "Assay checks passed."

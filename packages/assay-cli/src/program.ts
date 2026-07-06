@@ -11,6 +11,7 @@ import {
   type SourceCaptureMode,
   type SourceChangeClass,
   type SystemVcs,
+  type WorkspacePrivacy,
   absorbReference,
   acceptAdr,
   addKnowledge,
@@ -19,10 +20,12 @@ import {
   adoptExistingProject,
   applyUpdate,
   archiveSystem,
+  attachExistingRepo,
   captureEvent,
   checkFramework,
   closeAnalysis,
   closeIteration,
+  convertOverlayToStandalone,
   createAdr,
   createAnalysis,
   deprecateAdr,
@@ -44,7 +47,6 @@ import {
   migrateLayout,
   promoteSystem,
   pruneProjects,
-  recordProjectLifecycleBestEffort,
   registerSystem,
   requireAdrIndex,
   requireSystemsRegistry,
@@ -53,14 +55,18 @@ import {
   supersedeAdr,
   switchSource,
   syncSource,
+  updateSystem,
 } from "assay-core";
 
+import { recordCommandProjectLifecycle } from "./command-lifecycle.js";
 import { mapCliError } from "./errors.js";
 import {
   formatAdoptionResult,
   formatAdrList,
   formatAdrRecord,
+  formatAttachResult,
   formatCheckResult,
+  formatConvertResult,
   formatInitResult,
   formatMigrationResult,
   formatProjectList,
@@ -238,7 +244,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         archetype,
       };
       const result = await initFramework(initOptions);
-      await recordProjectLifecycleBestEffort(result.root, "init", {
+      await recordCommandProjectLifecycle(result.root, "init", {
         noTrack: commandOptions.track === false,
       });
       writeLine(output, "stdout", formatInitResult(result));
@@ -280,6 +286,62 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       if (!result.dryRun && result.failures.length > 0) {
         output.setExitCode(1);
       }
+    });
+
+  program
+    .command("attach")
+    .description("Attach Assay privately to an existing product repository (overlay mode)")
+    .option("--root <target-dir>", "existing repository root to attach", process.cwd())
+    .option("--name <project-name>", "project name (defaults to directory basename)")
+    .addOption(
+      new Option("--archetype <archetype>", "project archetype name (run `assay archetype list`)"),
+    )
+    .addOption(
+      new Option(
+        "--privacy <privacy>",
+        "overlay Git privacy: private (default), private-git, tracked",
+      )
+        .choices(["private", "private-git", "tracked"])
+        .default("private"),
+    )
+    .option("--no-track", "do not update the Assay project registry")
+    .option("--no-agents", "do not write the Assay managed block to root AGENTS.md")
+    .action(async (commandOptions) => {
+      const result = await attachExistingRepo({
+        root: commandOptions.root,
+        ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
+        ...(commandOptions.archetype === undefined ? {} : { archetype: commandOptions.archetype }),
+        privacy: commandOptions.privacy as WorkspacePrivacy,
+        noTrack: commandOptions.track === false,
+      });
+      await recordCommandProjectLifecycle(result.root, "attach", {
+        noTrack: commandOptions.track === false,
+      });
+      writeLine(output, "stdout", formatAttachResult(result));
+    });
+
+  program
+    .command("convert")
+    .description("Convert an overlay workspace to a sibling standalone workbench (detach-copy)")
+    .option("--root <target-dir>", "overlay workspace root to convert", process.cwd())
+    .requiredOption("--to <mode>", "target layout mode (standalone)")
+    .requiredOption("--target <dir>", "target directory for the new standalone workspace")
+    .addOption(
+      new Option("--move", "move overlay work folders instead of copying").conflicts("copy"),
+    )
+    .addOption(new Option("--copy", "copy overlay work folders (default)").conflicts("move"))
+    .option("--no-keep-overlay", "remove the source overlay work folders after a successful move")
+    .action(async (commandOptions) => {
+      if (commandOptions.to !== "standalone") {
+        throw new Error(`--to currently only supports 'standalone'; got '${commandOptions.to}'`);
+      }
+      const result = await convertOverlayToStandalone({
+        root: commandOptions.root,
+        target: commandOptions.target,
+        move: commandOptions.move === true,
+        keepOverlay: commandOptions.keepOverlay !== false,
+      });
+      writeLine(output, "stdout", formatConvertResult(result));
     });
 
   program
@@ -339,7 +401,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         action,
         ...(commandOptions.agents === true ? { agents: true } : {}),
       });
-      await recordProjectLifecycleBestEffort(root, "update", {
+      await recordCommandProjectLifecycle(root, "update", {
+        dryRun: commandOptions.dryRun === true,
         noTrack: commandOptions.track === false,
       });
       writeLine(output, "stdout", formatUpdateResult(result));
@@ -400,7 +463,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   projects
     .command("scan")
-    .description("Scan directories for .framework/manifest.json projects and register them")
+    .description("Scan directories for .assay/manifest.json projects and register them")
     .argument("<roots...>", "directories to scan")
     .option("--json", "emit JSON")
     .action(async (roots: string[], commandOptions: ProjectJsonOptions) => {
@@ -628,7 +691,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Show file-level differences for the latest source observation")
     .argument("<alias>", "source alias")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--since <observation>", "observation id or .assay/observations path")
+    .option("--since <observation>", "observation id or observations/<id>.yaml path")
     .action(async (alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       writeLine(
@@ -938,7 +1001,61 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Registered system: ${result.system.name}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
-      writeLine(output, "stdout", "Registry: .framework/systems-registry.json");
+      writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  system
+    .command("update")
+    .description("Update metadata for an existing system registry record")
+    .argument("<selector>", "system name or unique name prefix")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--path <path>", "system directory (relative to workspace root)")
+    .addOption(
+      new Option("--vcs <vcs>", "version control mode").choices([
+        "independent-git",
+        "embedded",
+        "none",
+      ]),
+    )
+    .option("--vcs-ref <ref>", "branch, commit, or tag")
+    .option("--system-version <version>", "system semantic version")
+    .option("--contract-file <path>", "contract file path")
+    .option("--no-contract-file", "clear the contract file path")
+    .option("--primary", "set this system as the primary system")
+    .option("--supersedes <names>", "comma-separated superseded system names")
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const vcs = commandOptions.vcs as SystemVcs | undefined;
+      const supersedes =
+        commandOptions.supersedes === undefined
+          ? undefined
+          : commandOptions.supersedes
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean);
+      const contractFile =
+        commandOptions.contractFile === false
+          ? null
+          : typeof commandOptions.contractFile === "string"
+            ? commandOptions.contractFile
+            : undefined;
+      const result = await updateSystem(root, selector, {
+        ...(commandOptions.path === undefined ? {} : { path: commandOptions.path }),
+        ...(vcs === undefined ? {} : { vcs }),
+        ...(commandOptions.vcsRef === undefined ? {} : { vcsRef: commandOptions.vcsRef }),
+        ...(commandOptions.systemVersion === undefined
+          ? {}
+          : { version: commandOptions.systemVersion }),
+        ...(contractFile === undefined ? {} : { contractFile }),
+        ...(supersedes === undefined ? {} : { supersedes }),
+        ...(commandOptions.primary ? { primary: true } : {}),
+      });
+      const changedFields = result.changes.map((change) => change.field).join(", ");
+      writeLine(output, "stdout", `Updated system: ${result.system.name}`);
+      writeLine(output, "stdout", `Status: ${result.system.status}`);
+      writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
+      writeLine(output, "stdout", `Changed fields: ${changedFields || "(none)"}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 

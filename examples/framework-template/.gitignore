@@ -6,5 +6,5 @@ __pycache__/
 .venv/
 .secrets/
 *.log
-.framework/backups/*
-!.framework/backups/.gitkeep
+.assay/backups/*
+!.assay/backups/.gitkeep

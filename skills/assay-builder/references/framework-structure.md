@@ -1,10 +1,10 @@
 # Framework directory structure
 
-Every Assay workspace has a shared base, then the selected archetype adds its own working directories (layout v3):
+Every current Assay workspace has a shared base, then the selected archetype adds its own working directories:
 
 ```text
 <project-root>/
-├── .framework/       # version, manifest, registries, events, migrations, backups
+├── .assay/       # version, manifest, registries, events, migrations, backups
 ├── systems/          # registered systems and local implementations
 │   ├── <name>/             # active system (system.yaml + source; may be independent git repo)
 │   └── archive/            # archived prior systems, copy-first move
@@ -24,9 +24,9 @@ Every Assay workspace has a shared base, then the selected archetype adds its ow
 
 ## Project archetype and mode
 
-A workspace records `project.archetype` and `project.mode` in `.framework/manifest.json`. `assay init --archetype <archetype>` selects the archetype; the archetype YAML sets the mode. Use `assay archetype` to read the active values from the manifest.
+A workspace records `project.archetype` and `project.mode` in `.assay/manifest.json`. `assay init --archetype <archetype>` selects the archetype; the archetype YAML sets the mode. Use `assay archetype` to read the active values from the manifest.
 
-- **learning** (default): the project learns from external systems. Living external sources are added under `references/<alias>/` with `source.yaml`, current `checkout/`, bounded `materials/`, `history.md`, and an internal `.assay/` observation ledger. Use this when the external thing is something you study, not something you are.
+- **learning** (default): the project learns from external systems. Living external sources are added under `references/<alias>/` with `source.yaml`, current `checkout/`, bounded `materials/`, `history.md`, and a flat observation ledger (`observations/`, `manifests/`, `comparisons/`, `captures/`). Use this when the external thing is something you study, not something you are.
 - **absorption**: the project exists to absorb a specific external thing (a benchmark target, a paper, a repo you are rebuilding). Its official/source materials land under `problem/<name>/` with a `source.yaml` case file, because they ARE the project, not external references. `references/frozen/` is still available for genuine third-party side evidence.
 
 `source add` is the preferred learning-mode intake for external systems that may change. `absorb` still routes automatically based on mode for the freeze-and-open-analysis flow: legacy/full capture under `references/frozen/` in learning mode, `problem/` in absorption mode.
@@ -55,17 +55,17 @@ The evidence loop must produce content before it counts as complete — a file e
 | iterate local systems | `iterations/` |
 | promote accepted findings | `knowledge/` |
 
-## `.framework/` managed files
+## `.assay/` managed files
 
 The CLI writes and maintains these files automatically:
 
-- `.framework/VERSION` — installed framework template version.
-- `.framework/manifest.json` — managed file manifest with template IDs and SHA-256 hashes.
-- `.framework/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain (layout v3+).
-- `.framework/adrs.json` — ADR index: number allocator, status, supersedes chain, and file paths.
-- `.framework/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
-- `.framework/backups/` — pre-update and pre-migration backups.
-- `.framework/migrations/` — migration records.
+- `.assay/VERSION` — installed framework template version.
+- `.assay/manifest.json` — managed file manifest with template IDs and SHA-256 hashes.
+- `.assay/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain.
+- `.assay/adrs.json` — ADR index: number allocator, status, supersedes chain, and file paths.
+- `.assay/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
+- `.assay/backups/` — pre-update and pre-migration backups.
+- `.assay/migrations/` — migration records.
 
 Do not edit these files manually; use the CLI for all manifest, registry, ADR, and event operations.
 
@@ -78,4 +78,4 @@ Do not edit these files manually; use the CLI for all manifest, registry, ADR, a
 
 Each registered system has a `systems/<name>/system.yaml` contract file recording project, name, version, status, vcs, and supersedes. The contract is the only system-side file the framework receives; `README.md`, `CHANGELOG.md`, and `docs/*` belong to the system itself, not the framework.
 
-Read `systems-registry.md` for registry schema, status state machine, and migration from layout v2.
+Read `systems-registry.md` for registry schema, status state machine, and migration notes for legacy layouts.

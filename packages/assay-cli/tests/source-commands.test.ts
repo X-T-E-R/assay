@@ -1,57 +1,29 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  type BuiltCliRunner,
+  createBuiltCliRunner,
+  createInitializedCliWorkspace,
+  createIsolatedRegistryRoot,
+  createTempDirectoryFixture,
+  pathExists,
+} from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
-const packageRoot = process.cwd();
-const cliPath = path.join(packageRoot, "dist", "cli.js");
-const tempRoots: string[] = [];
+const tempDirs = createTempDirectoryFixture("assay-source-cli");
 let registryRoot = "";
+let cliRunner: BuiltCliRunner;
 const GIT_SOURCE_CLI_TIMEOUT_MS = 60_000;
 
-interface CliResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
-
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-source-cli-"));
-  tempRoots.push(root);
-  return root;
+  return tempDirs.createTempDir();
 }
 
-async function runCli(args: readonly string[]): Promise<CliResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      env: { ...process.env, ASSAY_PROJECT_REGISTRY_ROOT: registryRoot },
-    });
-    return { exitCode: 0, stdout, stderr };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && typeof error.code === "number") {
-      return {
-        exitCode: error.code,
-        stdout: "stdout" in error && typeof error.stdout === "string" ? error.stdout : "",
-        stderr: "stderr" in error && typeof error.stderr === "string" ? error.stderr : "",
-      };
-    }
-    throw error;
-  }
+async function runCli(args: readonly string[]) {
+  return cliRunner.runCli(args);
 }
 
 async function git(cwd: string, args: readonly string[]): Promise<void> {
@@ -67,18 +39,16 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
 }
 
 beforeEach(async () => {
-  registryRoot = await tempDir();
+  registryRoot = await createIsolatedRegistryRoot(tempDirs);
+  cliRunner = createBuiltCliRunner({ registryRoot });
 });
 
 afterEach(async () => {
-  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await tempDirs.cleanup();
 });
 
 async function initWorkspace(name: string): Promise<string> {
-  const root = path.join(await tempDir(), name);
-  const init = await runCli(["init", root, "--name", name]);
-  expect(init.exitCode).toBe(0);
-  return root;
+  return createInitializedCliWorkspace({ tempDirs, runner: cliRunner, directoryName: name });
 }
 
 describe("assay source CLI", () => {
@@ -93,7 +63,7 @@ describe("assay source CLI", () => {
     expect(add.stdout).toContain("Added source: references/demo-source");
     expect(add.stdout).toContain("Checkout: references/demo-source/checkout");
     expect(
-      await exists(path.join(root, "references", "demo-source", "checkout", "README.md")),
+      await pathExists(path.join(root, "references", "demo-source", "checkout", "README.md")),
     ).toBe(true);
 
     const status = await runCli(["source", "status", "demo-source", "--root", root]);
@@ -105,7 +75,7 @@ describe("assay source CLI", () => {
     const sync = await runCli(["source", "sync", "demo-source", "--root", root]);
     expect(sync.exitCode).toBe(0);
     expect(sync.stdout).toContain("Source sync: demo-source");
-    expect(sync.stdout).toContain("Observation: references/demo-source/.assay/observations/");
+    expect(sync.stdout).toContain("Observation: references/demo-source/observations/");
 
     const diff = await runCli(["source", "diff", "demo-source", "--root", root]);
     expect(diff.exitCode).toBe(0);
@@ -176,7 +146,7 @@ describe("assay source CLI", () => {
       expect(sync.exitCode).toBe(0);
       expect(sync.stdout).toContain("Source sync: local-git");
       expect(sync.stdout).not.toContain("Change: same");
-      expect(sync.stdout).toContain("Observation: references/local-git/.assay/observations/");
+      expect(sync.stdout).toContain("Observation: references/local-git/observations/");
 
       const diff = await runCli(["source", "diff", "local-git", "--root", root]);
       expect(diff.exitCode).toBe(0);
@@ -215,7 +185,7 @@ describe("assay source CLI", () => {
         "main",
       ]);
       expect(add.exitCode).toBe(0);
-      expect(await exists(path.join(root, "references", "git-proj", "checkout", ".git"))).toBe(
+      expect(await pathExists(path.join(root, "references", "git-proj", "checkout", ".git"))).toBe(
         true,
       );
 

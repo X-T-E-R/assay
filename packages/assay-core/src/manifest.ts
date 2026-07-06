@@ -1,9 +1,15 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
+import {
+  CURRENT_VERSION,
+  LAYOUT_VERSION,
+  LEGACY_MANIFEST_FILE,
+  MANIFEST_FILE,
+} from "./constants.js";
 import { InvalidManifestError } from "./errors.js";
 import { computeHash } from "./hashing.js";
+import { defaultStandaloneLayout } from "./layout.js";
 import {
   type FrameworkManifest,
   type ManagedFileRecord,
@@ -40,6 +46,10 @@ export function manifestPath(root: string): string {
   return path.join(root, MANIFEST_FILE);
 }
 
+export function legacyManifestPath(root: string): string {
+  return path.join(root, LEGACY_MANIFEST_FILE);
+}
+
 export function defaultManifest(
   project: string,
   manifestOptions: DefaultManifestOptions = {},
@@ -59,6 +69,9 @@ export function defaultManifest(
     managed_files: {},
     user_deleted: [],
     applied_migrations: [],
+    // Fresh workspaces always carry a v4 layout block. Standalone is the
+    // default; `assay attach` overrides this with an overlay layout.
+    layout: defaultStandaloneLayout(),
   };
 }
 
@@ -73,8 +86,7 @@ function parseManifest(data: unknown, manifestFile: string): FrameworkManifest {
   return result.data;
 }
 
-export async function loadManifest(root: string): Promise<FrameworkManifest | null> {
-  const file = manifestPath(root);
+async function loadManifestFromFile(file: string): Promise<FrameworkManifest | null> {
   let text: string;
   try {
     text = await readFile(file, "utf8");
@@ -93,6 +105,18 @@ export async function loadManifest(root: string): Promise<FrameworkManifest | nu
   }
 
   return parseManifest(data, file);
+}
+
+export async function loadManifest(root: string): Promise<FrameworkManifest | null> {
+  return loadManifestFromFile(manifestPath(root));
+}
+
+/**
+ * Migration-only reader for legacy v3 workspaces. Normal runtime code must
+ * continue to call {@link loadManifest}, which reads only `.assay/manifest.json`.
+ */
+export async function loadLegacyManifest(root: string): Promise<FrameworkManifest | null> {
+  return loadManifestFromFile(legacyManifestPath(root));
 }
 
 export async function saveManifest(

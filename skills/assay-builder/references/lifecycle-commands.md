@@ -4,7 +4,7 @@ The common Assay evidence loop is `evidence in → structured checks → decisio
 
 ## Why explicit close
 
-In layout v2, iterations and analyses were created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to surface "this work is open" or to flag work that should have been promoted into reusable knowledge. Layout v3 makes close explicit and `assay check` flags open iterations as warnings.
+Earlier layouts let iterations and analyses be created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to surface "this work is open" or to flag work that should have been promoted into reusable knowledge. The current CLI makes close explicit and `assay check` flags open iterations as warnings.
 
 ## Iterations
 
@@ -100,12 +100,12 @@ The structured events emitted by these commands:
 | `adr.deprecated` | `adr deprecate` | `id`, `path` |
 | `knowledge.added` | `knowledge add` | `path`, `type`, `title`, `from_analysis`, `from_iteration` |
 
-These events flow into `.framework/events/<YYYY-MM>.jsonl` and are intended to be machine-readable for future audits, dashboards, or migrations.
+These events flow into `.assay/events/<YYYY-MM>.jsonl` and are intended to be machine-readable for future audits, dashboards, or migrations.
 
 ## Anti-patterns
 
 - Do not hand-edit `Status: open` to `Status: closed` in `plan.md`. Use `iteration close` so the event ledger stays consistent.
 - Do not check decision-exit checkboxes by hand. Use `analysis close --exit ...`.
-- Do not hand-edit `.framework/adrs.json`. Use `adr new`, `adr accept`, `adr supersede`, and `adr deprecate` so the index, markdown frontmatter, and event ledger stay consistent.
+- Do not hand-edit `.assay/adrs.json`. Use `adr new`, `adr accept`, `adr supersede`, and `adr deprecate` so the index, markdown frontmatter, and event ledger stay consistent.
 - Do not create `knowledge/<type>/<file>.md` by hand. Use `knowledge add` so the back-references and event are recorded.
 - Do not leave iterations open across long pauses. If you need to pause, close with `--result retest` and create a follow-up iteration when work resumes.

@@ -208,9 +208,9 @@ describe("assay event capture CLI", () => {
       ]);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Captured event: .framework/events/");
+      expect(result.stdout).toContain("Captured event: .assay/events/");
       expect(result.stderr).toBe("");
-      expect(await exists(path.join(root, ".framework", "events", ".gitkeep"))).toBe(false);
+      expect(await exists(path.join(root, ".assay", "events", ".gitkeep"))).toBe(false);
     }
   }, 30_000);
 });
@@ -391,7 +391,7 @@ describe("assay analysis close CLI", () => {
     expect(close.exitCode).toBe(0);
 
     const observationYaml = await readFile(
-      path.join(root, "references", "live-src", ".assay", "observations", `${observationId}.yaml`),
+      path.join(root, "references", "live-src", "observations", `${observationId}.yaml`),
       "utf8",
     );
     expect(observationYaml).toContain("analysis_status: closed");

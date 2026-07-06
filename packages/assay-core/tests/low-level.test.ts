@@ -63,7 +63,7 @@ describe("discoverFrameworkRoot", () => {
   it("finds the nearest framework root from a nested directory", async () => {
     const root = await tempDir();
     const nested = path.join(root, "systems", "core", "docs");
-    await mkdir(path.join(root, ".framework"), { recursive: true });
+    await mkdir(path.join(root, ".assay"), { recursive: true });
     await mkdir(nested, { recursive: true });
 
     await expect(discoverFrameworkRoot(nested)).resolves.toBe(root);
@@ -72,7 +72,7 @@ describe("discoverFrameworkRoot", () => {
   it("starts from the parent when the start path is a file", async () => {
     const root = await tempDir();
     const file = path.join(root, "README.md");
-    await mkdir(path.join(root, ".framework"), { recursive: true });
+    await mkdir(path.join(root, ".assay"), { recursive: true });
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, "# Card\n", "utf8");
 
@@ -105,7 +105,7 @@ describe("manifest", () => {
       content: "# Demo\r\n",
     });
     recordTemplate(manifest, {
-      path: ".framework/VERSION",
+      path: ".assay/VERSION",
       template_id: "framework.version",
       content: "0.2.0\n",
       executable: false,

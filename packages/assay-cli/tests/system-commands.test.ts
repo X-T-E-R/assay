@@ -1,70 +1,38 @@
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
+import {
+  type BuiltCliRunner,
+  createBuiltCliRunner,
+  createInitializedCliWorkspace,
+  createIsolatedRegistryRoot,
+  createTempDirectoryFixture,
+  pathExists,
+} from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const execFileAsync = promisify(execFile);
-const packageRoot = process.cwd();
-const cliPath = path.join(packageRoot, "dist", "cli.js");
-const tempRoots: string[] = [];
+const tempDirs = createTempDirectoryFixture("assay-system-cli");
 let registryRoot = "";
-
-interface CliResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
+let cliRunner: BuiltCliRunner;
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-system-cli-"));
-  tempRoots.push(root);
-  return root;
+  return tempDirs.createTempDir();
 }
 
-async function runCli(args: readonly string[]): Promise<CliResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      env: { ...process.env, ASSAY_PROJECT_REGISTRY_ROOT: registryRoot },
-    });
-    return { exitCode: 0, stdout, stderr };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && typeof error.code === "number") {
-      return {
-        exitCode: error.code,
-        stdout: "stdout" in error && typeof error.stdout === "string" ? error.stdout : "",
-        stderr: "stderr" in error && typeof error.stderr === "string" ? error.stderr : "",
-      };
-    }
-    throw error;
-  }
+async function runCli(args: readonly string[]) {
+  return cliRunner.runCli(args);
 }
 
 afterEach(async () => {
-  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await tempDirs.cleanup();
 });
 
 beforeEach(async () => {
-  registryRoot = await tempDir();
+  registryRoot = await createIsolatedRegistryRoot(tempDirs);
+  cliRunner = createBuiltCliRunner({ registryRoot });
 });
 
 async function initWorkspace(name: string): Promise<string> {
-  const root = path.join(await tempDir(), name);
-  await runCli(["init", root, "--name", name]);
-  return root;
+  return createInitializedCliWorkspace({ tempDirs, runner: cliRunner, directoryName: name });
 }
 
 describe("assay system CLI", () => {
@@ -73,8 +41,27 @@ describe("assay system CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("System registry operations");
-    for (const sub of ["register", "promote", "archive", "list", "show"]) {
+    for (const sub of ["register", "update", "promote", "archive", "list", "show"]) {
       expect(result.stdout).toContain(sub);
+    }
+    expect(result.stderr).toBe("");
+  });
+
+  it("exposes system update help with metadata flags", async () => {
+    const result = await runCli(["system", "update", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    for (const flag of [
+      "--path",
+      "--vcs",
+      "--vcs-ref",
+      "--system-version",
+      "--contract-file",
+      "--no-contract-file",
+      "--supersedes",
+      "--primary",
+    ]) {
+      expect(result.stdout).toContain(flag);
     }
     expect(result.stderr).toBe("");
   });
@@ -100,8 +87,8 @@ describe("assay system CLI", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Registered system: demo-core");
     expect(result.stdout).toContain("Status: primary");
-    expect(result.stdout).toContain("Event: .framework/events/");
-    expect(await exists(path.join(root, ".framework", "systems-registry.json"))).toBe(true);
+    expect(result.stdout).toContain("Event: .assay/events/");
+    expect(await pathExists(path.join(root, ".assay", "systems-registry.json"))).toBe(true);
   });
 
   it("register rejects duplicate system names", async () => {
@@ -121,6 +108,58 @@ describe("assay system CLI", () => {
 
     expect(second.exitCode).toBe(1);
     expect(second.stderr).toContain("already registered");
+  });
+
+  it("update corrects vcs metadata and preserves omitted fields", async () => {
+    const root = await initWorkspace("UpdateVcs");
+    await mkdir(path.join(root, "systems", "skill-creator"), { recursive: true });
+    await runCli([
+      "system",
+      "register",
+      "systems/skill-creator",
+      "--root",
+      root,
+      "--name",
+      "skill-creator",
+      "--vcs",
+      "embedded",
+      "--system-version",
+      "0.2.0",
+      "--supersedes",
+      "old-skill",
+    ]);
+
+    const result = await runCli([
+      "system",
+      "update",
+      "skill",
+      "--root",
+      root,
+      "--vcs",
+      "independent-git",
+      "--vcs-ref",
+      "main",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Updated system: skill-creator");
+    expect(result.stdout).toContain("Status: active");
+    expect(result.stdout).toContain("Registry: .assay/systems-registry.json");
+    expect(result.stdout).toContain("Changed fields: vcs, vcs_ref");
+    expect(result.stdout).toContain("Event: .assay/events/");
+
+    const show = await runCli(["system", "show", "skill-creator", "--root", root, "--json"]);
+    expect(show.exitCode).toBe(0);
+    expect(JSON.parse(show.stdout)).toMatchObject({
+      name: "skill-creator",
+      path: "systems/skill-creator",
+      status: "active",
+      vcs: "independent-git",
+      vcs_ref: "main",
+      version: "0.2.0",
+      contract_file: "systems/skill-creator/system.yaml",
+      supersedes: ["old-skill"],
+    });
   });
 
   it("list shows systems sorted with primary marked", async () => {
@@ -289,7 +328,7 @@ describe("assay system CLI", () => {
     expect(result.stdout).toContain("Would move to");
     expect(result.stdout).toContain("systems/archive/");
     // Source still present
-    expect(await exists(path.join(root, "systems", "old", "marker.txt"))).toBe(true);
+    expect(await pathExists(path.join(root, "systems", "old", "marker.txt"))).toBe(true);
   });
 
   it("archive apply moves the directory and marks system archived", async () => {
@@ -315,7 +354,7 @@ describe("assay system CLI", () => {
     expect(result.stdout).toContain("applied");
     expect(result.stdout).toContain("Moved to");
     // Source removed
-    expect(await exists(path.join(root, "systems", "old"))).toBe(false);
+    expect(await pathExists(path.join(root, "systems", "old"))).toBe(false);
 
     const list = await runCli(["system", "list", "--root", root, "--json"]);
     const parsed = JSON.parse(list.stdout);

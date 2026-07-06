@@ -13,6 +13,10 @@ import {
   BACKUPS_DIR,
   CURRENT_VERSION,
   LAYOUT_VERSION,
+  LEGACY_MANAGED_DIR,
+  LEGACY_MANIFEST_FILE,
+  LEGACY_SYSTEMS_REGISTRY_FILE,
+  MANAGED_DIR,
   MANIFEST_FILE,
   SYSTEMS_REGISTRY_FILE,
   VERSION_FILE,
@@ -20,7 +24,8 @@ import {
 import { FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
-import { loadManifest, recordTemplate, saveManifest } from "./manifest.js";
+import { defaultStandaloneLayout } from "./layout.js";
+import { loadLegacyManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
   type OperationReport,
@@ -228,6 +233,67 @@ function projectNameFromManifest(
   fallbackRoot: string,
 ): string {
   return manifest?.project.name || path.basename(path.resolve(fallbackRoot));
+}
+
+interface MigrationManifestSource {
+  readonly manifest: FrameworkManifest | null;
+  readonly manifestFile: string;
+  readonly legacy: boolean;
+}
+
+async function loadMigrationManifest(root: string): Promise<MigrationManifestSource> {
+  const activeManifest = await loadManifest(root);
+  if (activeManifest) {
+    return { manifest: activeManifest, manifestFile: MANIFEST_FILE, legacy: false };
+  }
+
+  const legacyManifest = await loadLegacyManifest(root);
+  if (legacyManifest) {
+    return { manifest: legacyManifest, manifestFile: LEGACY_MANIFEST_FILE, legacy: true };
+  }
+
+  return { manifest: null, manifestFile: MANIFEST_FILE, legacy: false };
+}
+
+async function hasMigrationSystemsRegistry(root: string, legacy: boolean): Promise<boolean> {
+  if (await loadSystemsRegistry(root)) {
+    return true;
+  }
+  if (!legacy) {
+    return false;
+  }
+  return (await pathStats(path.join(root, LEGACY_SYSTEMS_REGISTRY_FILE)))?.isFile() ?? false;
+}
+
+function manifestRequiresLayoutUpgrade(manifest: FrameworkManifest): boolean {
+  return (
+    manifest.layout_version < LAYOUT_VERSION ||
+    !manifest.layout ||
+    manifest.layout.state_root !== MANAGED_DIR ||
+    manifest.layout.paths.manifest !== MANIFEST_FILE
+  );
+}
+
+function rewriteLegacyStatePath(relativePath: string): string {
+  if (relativePath === LEGACY_MANAGED_DIR) {
+    return MANAGED_DIR;
+  }
+  if (relativePath.startsWith(`${LEGACY_MANAGED_DIR}/`)) {
+    return `${MANAGED_DIR}/${relativePath.slice(LEGACY_MANAGED_DIR.length + 1)}`;
+  }
+  return relativePath;
+}
+
+function upgradeManifestToCurrentLayout(manifest: FrameworkManifest): void {
+  const managedFiles: FrameworkManifest["managed_files"] = {};
+  for (const [filePath, record] of Object.entries(manifest.managed_files)) {
+    managedFiles[rewriteLegacyStatePath(filePath)] = record;
+  }
+
+  manifest.managed_files = managedFiles;
+  manifest.user_deleted = [...new Set(manifest.user_deleted.map(rewriteLegacyStatePath))];
+  manifest.layout_version = LAYOUT_VERSION;
+  manifest.layout = defaultStandaloneLayout();
 }
 
 function legacyCoreNameForV2Manifest(manifest: FrameworkManifest, root: string): string {
@@ -548,10 +614,21 @@ export async function buildLayoutMigrationPlan(
 ): Promise<MigrationPlan> {
   const root = path.resolve(options.root);
   const steps: MigrationStep[] = [];
+  const migrationManifest = await loadMigrationManifest(root);
+  const manifest = migrationManifest.manifest;
+  const existingRegistry = await hasMigrationSystemsRegistry(root, migrationManifest.legacy);
+
+  if (migrationManifest.legacy) {
+    steps.push({
+      type: "copy-dir",
+      from: LEGACY_MANAGED_DIR,
+      to: MANAGED_DIR,
+      reason: "copy legacy .framework state into the current .assay state directory",
+      action: "copy",
+    });
+  }
 
   // --- v2 → v3 migration: systems registry creation ---
-  const existingRegistry = await loadSystemsRegistry(root);
-  const manifest = await loadManifest(root);
   if (!existingRegistry && manifest && manifest.layout_version < LAYOUT_VERSION) {
     const coreName = legacyCoreNameForV2Manifest(manifest, root);
     const systemsDir = path.join(root, "systems");
@@ -559,7 +636,7 @@ export async function buildLayoutMigrationPlan(
     // Step 1: create systems-registry.json from manifest core
     steps.push({
       type: "create-systems-registry",
-      from: ".framework/manifest.json",
+      from: migrationManifest.manifestFile,
       to: SYSTEMS_REGISTRY_FILE,
       reason: `initialize registry from manifest core '${coreName}'`,
       action: "create",
@@ -617,7 +694,7 @@ export async function buildLayoutMigrationPlan(
     // Step 5: upgrade manifest schema and layout version
     steps.push({
       type: "upgrade-manifest",
-      from: MANIFEST_FILE,
+      from: migrationManifest.manifestFile,
       to: MANIFEST_FILE,
       reason: `keep __schema at 1, upgrade layout_version to ${LAYOUT_VERSION}`,
       action: "upgrade",
@@ -626,12 +703,12 @@ export async function buildLayoutMigrationPlan(
 
   if (
     manifest &&
-    manifest.layout_version < LAYOUT_VERSION &&
+    manifestRequiresLayoutUpgrade(manifest) &&
     !steps.some((step) => step.type === "upgrade-manifest")
   ) {
     steps.push({
       type: "upgrade-manifest",
-      from: MANIFEST_FILE,
+      from: migrationManifest.manifestFile,
       to: MANIFEST_FILE,
       reason: `keep __schema at 1, upgrade layout_version to ${LAYOUT_VERSION}`,
       action: "upgrade",
@@ -660,14 +737,22 @@ export async function buildLayoutMigrationPlan(
     steps.push({ type: "copy-dir", from: "experiments", to: "iterations", action: "copy" });
   }
 
+  // v0/v1 legacy state lived in a root `.assay/` directory (pre-framework).
+  // In layout v4 `.assay/` is the current managed dir, so guard this copy
+  // step: only treat `.assay/` as a legacy source when it carries the v0/v1
+  // shape (config.yaml / queue.json) but no v4 manifest or VERSION file.
   const legacyMeta = path.join(root, ".assay");
-  if (await exists(legacyMeta)) {
+  const looksLikeLegacyV0V1State =
+    (await exists(legacyMeta)) &&
+    !(await exists(path.join(legacyMeta, "manifest.json"))) &&
+    !(await exists(path.join(legacyMeta, "VERSION")));
+  if (looksLikeLegacyV0V1State) {
     for (const item of ["events", "queue.json", "config.yaml"]) {
       if (await exists(path.join(legacyMeta, item))) {
         steps.push({
           type: "copy",
           from: `.assay/${item}`,
-          to: `.framework/legacy-assay/${item}`,
+          to: `${MANAGED_DIR}/legacy-assay/${item}`,
           action: "copy",
         });
       }
@@ -719,6 +804,34 @@ async function migrationBackupPaths(root: string, plan: MigrationPlan): Promise<
   return existingFiles;
 }
 
+async function applyCopyMigrationStep(root: string, step: MigrationStep): Promise<void> {
+  const source = path.join(root, step.from);
+  const destination = path.join(root, step.to);
+  const stats = await pathStats(source);
+  if (!stats) {
+    return;
+  }
+
+  if (step.type === "copy-dir" && stats.isDirectory()) {
+    await mkdir(path.dirname(destination), { recursive: true });
+    await cp(source, destination, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+    });
+  } else if (step.type === "copy" && stats.isFile() && !(await exists(destination))) {
+    await mkdir(path.dirname(destination), { recursive: true });
+    await copyFile(source, destination);
+  } else if (step.type === "copy" && stats.isDirectory() && !(await exists(destination))) {
+    await mkdir(path.dirname(destination), { recursive: true });
+    await cp(source, destination, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+    });
+  }
+}
+
 export async function migrateLayout(options: MigrateLayoutOptions): Promise<MigrateLayoutResult> {
   const root = path.resolve(options.root);
   const shouldApply = options.apply ?? false;
@@ -733,6 +846,14 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
     ? await createFileBackup(root, await migrationBackupPaths(root, plan), options.now)
     : null;
 
+  // Copy first so legacy `.framework/` manifests are present under `.assay/`
+  // before the manifest/registry upgrade reads and rewrites current state.
+  for (const step of plan.steps) {
+    if (step.type === "copy-dir" || step.type === "copy") {
+      await applyCopyMigrationStep(root, step);
+    }
+  }
+
   // --- Apply v2→v3 steps as a batch (registry + contracts + manifest upgrade) ---
   const v2v3Steps = plan.steps.filter(
     (s) =>
@@ -744,38 +865,6 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
 
   if (v2v3Steps.length > 0) {
     await applyV2ToV3Migration(root, plan.steps);
-  }
-
-  // --- Apply legacy copy steps ---
-  for (const step of plan.steps) {
-    const source = path.join(root, step.from);
-    const destination = path.join(root, step.to);
-    const stats = await pathStats(source);
-    if (!stats || step.type === "manual-review") {
-      continue;
-    }
-    if (v2v3Steps.includes(step)) {
-      continue; // already handled above
-    }
-
-    if (step.type === "copy-dir" && stats.isDirectory()) {
-      await mkdir(path.dirname(destination), { recursive: true });
-      await cp(source, destination, {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-      });
-    } else if (step.type === "copy" && stats.isFile() && !(await exists(destination))) {
-      await mkdir(path.dirname(destination), { recursive: true });
-      await copyFile(source, destination);
-    } else if (step.type === "copy" && stats.isDirectory() && !(await exists(destination))) {
-      await mkdir(path.dirname(destination), { recursive: true });
-      await cp(source, destination, {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-      });
-    }
   }
 
   const eventFile = await appendEvent(root, {
@@ -921,7 +1010,9 @@ async function applyV2ToV3Migration(root: string, steps: readonly MigrationStep[
   for (const step of steps) {
     if (step.type !== "create-systems-registry") continue;
     if (step.to !== SYSTEMS_REGISTRY_FILE) continue;
-    if (step.from === MANIFEST_FILE) continue; // skip the initial registry creation step
+    if (step.from === MANIFEST_FILE || step.from === LEGACY_MANIFEST_FILE) {
+      continue; // skip the initial registry creation step
+    }
 
     // Archived system under systems/archive/<date>/<name>
     const systemName = path.basename(step.from);
@@ -976,8 +1067,8 @@ async function applyV2ToV3Migration(root: string, steps: readonly MigrationStep[
     const hasUpgrade = steps.some((s) => s.type === "upgrade-manifest");
     if (hasUpgrade) {
       // Note: __schema upgrade from 1→2 requires schema change; for now we keep __schema:1
-      // but update layout_version to signal v3 readiness. Full schema upgrade deferred.
-      manifest.layout_version = LAYOUT_VERSION;
+      // but update layout_version to signal readiness. Full schema upgrade deferred.
+      upgradeManifestToCurrentLayout(manifest);
     }
 
     await saveManifest(root, manifest);

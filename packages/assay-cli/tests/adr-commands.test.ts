@@ -105,8 +105,8 @@ describe("assay adr CLI", () => {
     expect(created.exitCode).toBe(0);
     expect(created.stdout).toContain("Created ADR: ADR-0001-use-decision-index");
     expect(created.stdout).toContain("Status: proposed");
-    expect(created.stdout).toContain("Event: .framework/events/");
-    expect(await exists(path.join(root, ".framework", "adrs.json"))).toBe(true);
+    expect(created.stdout).toContain("Event: .assay/events/");
+    expect(await exists(path.join(root, ".assay", "adrs.json"))).toBe(true);
     expect(
       await exists(path.join(root, "knowledge", "decisions", "ADR-0001-use-decision-index.md")),
     ).toBe(true);

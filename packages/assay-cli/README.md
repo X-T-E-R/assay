@@ -32,7 +32,7 @@ node ..\assay\packages\assay-cli\dist\cli.js source status repo-name
 node ..\assay\packages\assay-cli\dist\cli.js source sync repo-name
 ```
 
-`references/<alias>/checkout/` is the current materialized source; for Git sources it is the repository root. Observation metadata lives under `references/<alias>/.assay/`.
+`references/<alias>/checkout/` is the current materialized source; for Git sources it is the repository root. Observation metadata uses flat source-local ledger folders: `references/<alias>/observations/`, `references/<alias>/manifests/`, `references/<alias>/comparisons/`, and `references/<alias>/captures/`.
 
 To convert an existing project into a clean Assay workspace, run from that
 project root:
