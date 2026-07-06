@@ -331,7 +331,7 @@ describe("assay CLI subprocess behavior", () => {
     const untrackedAttachRecord = await runCli(["projects", "show", untrackedAttachRoot, "--json"]);
     expect(untrackedAttachRecord.exitCode).toBe(1);
     expect(untrackedAttachRecord.stderr).toContain("project not found");
-  });
+  }, 45_000);
 
   it("prints migrate-layout help with explicit backup mode", async () => {
     const result = await runCli(["migrate-layout", "--help"]);

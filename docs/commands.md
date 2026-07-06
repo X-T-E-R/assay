@@ -73,6 +73,7 @@ Each living source stores its observation ledger flat under `references/<alias>/
 
 ```bash
 assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>]
+assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
 assay system promote <selector> [--root <dir>]
 assay system archive <selector> [--root <dir>] [--dry-run | --apply]
 assay system list [--root <dir>] [--status primary|active|superseded|archived] [--json]
@@ -90,6 +91,8 @@ assay projects show <selector> [--json]
 assay projects forget <selector>
 assay projects prune [--dry-run] [--json]
 ```
+
+Use `system register` only for first-time registration; it rejects duplicate names so accidental re-registration is visible. Use `system update <selector>` to correct metadata on an existing record, such as changing `vcs` from `embedded` to `independent-git` and setting `--vcs-ref main`. Omitted update fields are preserved. `--primary` uses the same one-primary behavior as `system promote`, and archived systems are read-only.
 
 The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
 

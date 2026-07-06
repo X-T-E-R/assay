@@ -16,6 +16,7 @@ import {
   registerSystem,
   saveSystemsRegistry,
   systemsRegistryPath,
+  updateSystem,
 } from "../src/index.js";
 
 const tempRoots: string[] = [];
@@ -132,6 +133,93 @@ describe("registerSystem", () => {
     await expect(
       registerSystem(root, { path: "systems/dupe-2", name: "dupe" }),
     ).rejects.toBeInstanceOf(FrameworkAlreadyExistsError);
+  });
+});
+
+describe("updateSystem", () => {
+  it("updates an embedded system to independent-git and preserves omitted fields", async () => {
+    const root = await tempDir();
+    await registerSystem(root, {
+      path: "systems/skill-creator",
+      name: "skill-creator",
+      version: "0.2.0",
+      supersedes: ["old-skill"],
+    });
+
+    const result = await updateSystem(
+      root,
+      "skill",
+      { vcs: "independent-git", vcsRef: "main" },
+      { now: new Date("2026-07-06T00:00:00.000Z") },
+    );
+
+    expect(result.previous.vcs).toBe("embedded");
+    expect(result.system).toMatchObject({
+      name: "skill-creator",
+      path: "systems/skill-creator",
+      status: "active",
+      vcs: "independent-git",
+      vcs_ref: "main",
+      version: "0.2.0",
+      contract_file: "systems/skill-creator/system.yaml",
+      supersedes: ["old-skill"],
+      archived_on: null,
+      archive_path: null,
+    });
+    expect(result.changes.map((change) => change.field)).toEqual(["vcs", "vcs_ref"]);
+
+    const loaded = await loadSystemsRegistry(root);
+    expect(loaded?.systems["skill-creator"]?.vcs).toBe("independent-git");
+    expect(loaded?.systems["skill-creator"]?.vcs_ref).toBe("main");
+    expect(loaded?.systems["skill-creator"]?.version).toBe("0.2.0");
+
+    const eventText = await readFile(path.join(root, result.eventFile), "utf8");
+    const events = eventText
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const updateEvent = events.find((event) => event.event === "system.updated");
+    expect(updateEvent).toMatchObject({
+      name: "skill-creator",
+      changed_fields: ["vcs", "vcs_ref"],
+      primary: false,
+      previous_primary: null,
+    });
+  });
+
+  it("refuses to update an archived system", async () => {
+    const root = await tempDir();
+    await registerSystem(root, { path: "systems/old", name: "old" });
+
+    const registry = await loadSystemsRegistry(root);
+    const old = registry?.systems.old;
+    if (!registry || !old) {
+      throw new Error("old system missing from registry");
+    }
+    registry.systems.old = {
+      ...old,
+      status: "archived",
+      archived_on: "2026-07-06",
+      archive_path: "systems/archive/2026-07-06-pre-old/old",
+    };
+    await saveSystemsRegistry(root, registry);
+
+    await expect(updateSystem(root, "old", { vcs: "independent-git" })).rejects.toBeInstanceOf(
+      FrameworkError,
+    );
+  });
+
+  it("can promote during update while preserving the one-primary invariant", async () => {
+    const root = await tempDir();
+    await registerSystem(root, { path: "systems/a", name: "a", primary: true });
+    await registerSystem(root, { path: "systems/b", name: "b" });
+
+    const result = await updateSystem(root, "b", { primary: true });
+
+    expect(result.system.status).toBe("primary");
+    expect(result.registry.primary).toBe("b");
+    expect(result.registry.systems.a?.status).toBe("superseded");
+    expect(result.changes.map((change) => change.field)).toEqual(["status"]);
   });
 });
 

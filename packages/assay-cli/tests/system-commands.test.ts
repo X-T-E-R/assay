@@ -41,8 +41,27 @@ describe("assay system CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("System registry operations");
-    for (const sub of ["register", "promote", "archive", "list", "show"]) {
+    for (const sub of ["register", "update", "promote", "archive", "list", "show"]) {
       expect(result.stdout).toContain(sub);
+    }
+    expect(result.stderr).toBe("");
+  });
+
+  it("exposes system update help with metadata flags", async () => {
+    const result = await runCli(["system", "update", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    for (const flag of [
+      "--path",
+      "--vcs",
+      "--vcs-ref",
+      "--system-version",
+      "--contract-file",
+      "--no-contract-file",
+      "--supersedes",
+      "--primary",
+    ]) {
+      expect(result.stdout).toContain(flag);
     }
     expect(result.stderr).toBe("");
   });
@@ -89,6 +108,58 @@ describe("assay system CLI", () => {
 
     expect(second.exitCode).toBe(1);
     expect(second.stderr).toContain("already registered");
+  });
+
+  it("update corrects vcs metadata and preserves omitted fields", async () => {
+    const root = await initWorkspace("UpdateVcs");
+    await mkdir(path.join(root, "systems", "skill-creator"), { recursive: true });
+    await runCli([
+      "system",
+      "register",
+      "systems/skill-creator",
+      "--root",
+      root,
+      "--name",
+      "skill-creator",
+      "--vcs",
+      "embedded",
+      "--system-version",
+      "0.2.0",
+      "--supersedes",
+      "old-skill",
+    ]);
+
+    const result = await runCli([
+      "system",
+      "update",
+      "skill",
+      "--root",
+      root,
+      "--vcs",
+      "independent-git",
+      "--vcs-ref",
+      "main",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Updated system: skill-creator");
+    expect(result.stdout).toContain("Status: active");
+    expect(result.stdout).toContain("Registry: .assay/systems-registry.json");
+    expect(result.stdout).toContain("Changed fields: vcs, vcs_ref");
+    expect(result.stdout).toContain("Event: .assay/events/");
+
+    const show = await runCli(["system", "show", "skill-creator", "--root", root, "--json"]);
+    expect(show.exitCode).toBe(0);
+    expect(JSON.parse(show.stdout)).toMatchObject({
+      name: "skill-creator",
+      path: "systems/skill-creator",
+      status: "active",
+      vcs: "independent-git",
+      vcs_ref: "main",
+      version: "0.2.0",
+      contract_file: "systems/skill-creator/system.yaml",
+      supersedes: ["old-skill"],
+    });
   });
 
   it("list shows systems sorted with primary marked", async () => {

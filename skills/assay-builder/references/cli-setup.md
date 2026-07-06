@@ -56,7 +56,7 @@ A global `assay` command (via `npm link` in `packages/assay-cli`) is optional an
 
 ## Working directory conventions
 
-All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `source add|sync|switch|status|diff|log`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.assay/manifest.json`.
+All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `migrate-layout`, `source add|sync|switch|status|diff|log`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|update|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.assay/manifest.json`.
 
 Use `cd <target-dir>` before running commands, or pass `--root <path>` / `[target-dir]` only when operating on a workspace from another directory.
 
@@ -80,11 +80,14 @@ Distinct from the project registry, each current workspace has a per-workspace s
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]
+assay system update <selector> [--path ...] [--vcs ...] [--vcs-ref ...] [--system-version ...] [--contract-file ... | --no-contract-file] [--primary] [--supersedes ...]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status ...] [--json]
 assay system show <selector>
 ```
+
+Use `system register` for first-time records. If a system already exists and its metadata is wrong, use `system update <selector>` instead; for example, correct a system from `embedded` to `independent-git` with `assay system update skill-creator --vcs independent-git --vcs-ref main`. Omitted fields are preserved.
 
 Selectors can be the full system name or a unique name prefix.
 

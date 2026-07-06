@@ -66,6 +66,7 @@ assay adr show <selector> [--json]
 
 # System registry
 assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
+assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status primary|active|superseded|archived] [--json]
@@ -94,6 +95,7 @@ Each system under `systems/` may be an independently version-controlled reposito
 - `vcs: independent-git` — the system path is its own git repository; the root repo `.gitignore` should ignore the system directory but allow `system.yaml`. Framework `check` skips internals.
 - `vcs: embedded` — system files live in the root repo directly.
 - Exactly one system has `status: primary` at any time. Use `system promote` to switch; the previous primary becomes `superseded` automatically.
+- Use `system update <selector>` to correct metadata for an existing record, for example `assay system update skill-creator --vcs independent-git --vcs-ref main` after a system was registered as `embedded` by mistake. Do not re-run `system register`; duplicate registration is intentionally rejected.
 - Archive non-primary systems with `system archive --apply` (copy-first move into `systems/archive/`).
 
 Never hand-edit `.assay/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration notes for legacy layouts, read `references/systems-registry.md`.
@@ -138,7 +140,7 @@ absorb <source>                      # freeze + write case file + OPEN a pre-fil
 8. **Fill the analysis body**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next iteration`) with real content drawn from the source. `check` flags draft analyses with empty Key observations, and `analysis close` rejects empty shells by default.
 9. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This flips the bound frozen reference's `analyzed` flag to `true` or marks the bound source observation `analysis_status: closed`, then writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
 10. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
-11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate).
+11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered system's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, contract file, supersedes, or primary status.
 12. Close every started iteration with `iteration close --result ...`. `check` flags `Status: open` plans as warnings.
 13. Run `update --dry-run` before applying framework upgrades.
 

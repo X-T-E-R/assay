@@ -55,6 +55,7 @@ import {
   supersedeAdr,
   switchSource,
   syncSource,
+  updateSystem,
 } from "assay-core";
 
 import { recordCommandProjectLifecycle } from "./command-lifecycle.js";
@@ -1001,6 +1002,60 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Registered system: ${result.system.name}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
       writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  system
+    .command("update")
+    .description("Update metadata for an existing system registry record")
+    .argument("<selector>", "system name or unique name prefix")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--path <path>", "system directory (relative to workspace root)")
+    .addOption(
+      new Option("--vcs <vcs>", "version control mode").choices([
+        "independent-git",
+        "embedded",
+        "none",
+      ]),
+    )
+    .option("--vcs-ref <ref>", "branch, commit, or tag")
+    .option("--system-version <version>", "system semantic version")
+    .option("--contract-file <path>", "contract file path")
+    .option("--no-contract-file", "clear the contract file path")
+    .option("--primary", "set this system as the primary system")
+    .option("--supersedes <names>", "comma-separated superseded system names")
+    .action(async (selector, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const vcs = commandOptions.vcs as SystemVcs | undefined;
+      const supersedes =
+        commandOptions.supersedes === undefined
+          ? undefined
+          : commandOptions.supersedes
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean);
+      const contractFile =
+        commandOptions.contractFile === false
+          ? null
+          : typeof commandOptions.contractFile === "string"
+            ? commandOptions.contractFile
+            : undefined;
+      const result = await updateSystem(root, selector, {
+        ...(commandOptions.path === undefined ? {} : { path: commandOptions.path }),
+        ...(vcs === undefined ? {} : { vcs }),
+        ...(commandOptions.vcsRef === undefined ? {} : { vcsRef: commandOptions.vcsRef }),
+        ...(commandOptions.systemVersion === undefined
+          ? {}
+          : { version: commandOptions.systemVersion }),
+        ...(contractFile === undefined ? {} : { contractFile }),
+        ...(supersedes === undefined ? {} : { supersedes }),
+        ...(commandOptions.primary ? { primary: true } : {}),
+      });
+      const changedFields = result.changes.map((change) => change.field).join(", ");
+      writeLine(output, "stdout", `Updated system: ${result.system.name}`);
+      writeLine(output, "stdout", `Status: ${result.system.status}`);
+      writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
+      writeLine(output, "stdout", `Changed fields: ${changedFields || "(none)"}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 

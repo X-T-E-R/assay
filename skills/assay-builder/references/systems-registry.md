@@ -43,9 +43,9 @@ The registry model fixes both by recording each system as a registry entry with 
 
 | Status | Meaning | Transitions |
 | --- | --- | --- |
-| `primary` | The active main system. Exactly one allowed. | `system promote <other>` demotes this one to `superseded`. |
-| `active` | Registered and live but not primary (e.g. an evaluator alongside a game). | `system promote` → `primary`. `system archive --apply` → `archived`. |
-| `superseded` | Was primary; another system took over. | `system promote` → `primary`. `system archive --apply` → `archived`. |
+| `primary` | The active main system. Exactly one allowed. | `system promote <other>` or `system update <other> --primary` demotes this one to `superseded`. |
+| `active` | Registered and live but not primary (e.g. an evaluator alongside a game). | `system promote` / `system update --primary` → `primary`. `system archive --apply` → `archived`. |
+| `superseded` | Was primary; another system took over. | `system promote` / `system update --primary` → `primary`. `system archive --apply` → `archived`. |
 | `archived` | Moved into `systems/archive/<date>-pre-<name>/`. Read-only. | Re-registering would require manual re-creation. |
 
 `system archive` refuses to archive the current `primary`; promote a replacement first.
@@ -95,6 +95,16 @@ assay system register <path> \
   [--primary] \
   [--supersedes <name1,name2,...>]
 
+# Correct metadata on an already registered system; omitted fields are preserved
+assay system update <selector> \
+  [--path <path>] \
+  [--vcs independent-git|embedded|none] \
+  [--vcs-ref <ref>] \
+  [--system-version <semver>] \
+  [--contract-file <path> | --no-contract-file] \
+  [--primary] \
+  [--supersedes <name1,name2,...>]
+
 # Promote another system to primary; demotes the previous one to superseded
 assay system promote <selector>
 
@@ -108,6 +118,8 @@ assay system show <selector> [--json]
 ```
 
 Selectors accept the full system name or a unique name prefix.
+
+Use `system register` only for first-time registration. It intentionally rejects duplicate names so accidental re-registration is visible. Use `system update` when a registry record exists but metadata is wrong, such as correcting `vcs: embedded` to `vcs: independent-git` with `--vcs-ref main`, changing a version, moving a path, clearing a contract file, or marking the record primary. Archived systems are read-only.
 
 ## Migration from legacy system templates
 
