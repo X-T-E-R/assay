@@ -13,6 +13,12 @@ import type { ProjectArchetype, ProjectMode } from "./schemas/index.js";
 export interface ArchetypeTemplateEntry {
   readonly path: string;
   readonly templateId: string;
+  /**
+   * Resolved template content carried by the archetype itself (inline
+   * `content` or a `file` next to the archetype YAML). When absent, the
+   * templateId must resolve to a built-in content generator.
+   */
+  readonly content?: string;
 }
 
 export type ArchetypeSource = "project" | "user" | "built-in";
@@ -82,8 +88,14 @@ const BASE_ARCHETYPE: Archetype = {
   ],
 };
 
-interface ParsedArchetype extends Archetype {
+interface ParsedTemplateEntry extends ArchetypeTemplateEntry {
+  /** Relative path to a content file next to the archetype YAML. */
+  readonly file?: string;
+}
+
+interface ParsedArchetype extends Omit<Archetype, "templates"> {
   readonly extendsName: string | null;
+  readonly templates: readonly ParsedTemplateEntry[];
 }
 
 interface ArchetypeLookupLocation {
@@ -114,7 +126,9 @@ export async function loadArchetype(
     } catch {
       continue;
     }
-    return mergeBaseArchetype(parseArchetypeYaml(raw, archetypeName));
+    const parsed = parseArchetypeYaml(raw, archetypeName);
+    const resolved = await resolveTemplateFileContents(parsed, location.directory);
+    return mergeBaseArchetype(resolved);
   }
 
   throw await archetypeNotFoundError(archetypeName, options);
@@ -215,7 +229,7 @@ function parseStringList(value: unknown, field: string, archetypeName: string): 
   });
 }
 
-function parseTemplateList(value: unknown, archetypeName: string): ArchetypeTemplateEntry[] {
+function parseTemplateList(value: unknown, archetypeName: string): ParsedTemplateEntry[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     throw new FrameworkError(`invalid templates in archetype ${archetypeName}: expected list`, {
@@ -239,8 +253,83 @@ function parseTemplateList(value: unknown, archetypeName: string): ArchetypeTemp
         code: "IO_ERROR",
       });
     }
-    return { path: record.path.trim(), templateId: record.templateId.trim() };
+    const content = parseOptionalTemplateContent(record.content, "content", archetypeName);
+    const file = parseOptionalString(record.file, "file", archetypeName);
+    if (content !== null && file !== null) {
+      throw new FrameworkError(
+        `template entry '${record.path.trim()}' in archetype ${archetypeName} sets both content and file; use one`,
+        { code: "IO_ERROR" },
+      );
+    }
+    return {
+      path: record.path.trim(),
+      templateId: record.templateId.trim(),
+      ...(content !== null ? { content } : {}),
+      ...(file !== null ? { file } : {}),
+    };
   });
+}
+
+function parseOptionalTemplateContent(
+  value: unknown,
+  field: string,
+  archetypeName: string,
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new FrameworkError(`invalid ${field} in archetype ${archetypeName}`, {
+      code: "IO_ERROR",
+    });
+  }
+  return value;
+}
+
+/**
+ * Resolve `file:`-based template entries against the directory that contains
+ * the archetype YAML. This lets custom archetypes ship their own template
+ * content (for example `~/.assay/archetypes/<name>/*.md`) instead of being
+ * limited to built-in templateIds.
+ */
+async function resolveTemplateFileContents(
+  archetype: ParsedArchetype,
+  archetypeDir: string,
+): Promise<ParsedArchetype> {
+  if (!archetype.templates.some((entry) => entry.file !== undefined)) {
+    return archetype;
+  }
+  const baseDir = path.resolve(archetypeDir);
+  const templates: ParsedTemplateEntry[] = [];
+  for (const entry of archetype.templates) {
+    if (entry.file === undefined) {
+      templates.push(entry);
+      continue;
+    }
+    if (path.isAbsolute(entry.file)) {
+      throw new FrameworkError(
+        `template file '${entry.file}' in archetype ${archetype.name} must be relative to the archetype directory`,
+        { code: "IO_ERROR" },
+      );
+    }
+    const resolved = path.resolve(baseDir, entry.file);
+    if (resolved !== baseDir && !resolved.startsWith(baseDir + path.sep)) {
+      throw new FrameworkError(
+        `template file '${entry.file}' in archetype ${archetype.name} escapes the archetype directory`,
+        { code: "IO_ERROR" },
+      );
+    }
+    let content: string;
+    try {
+      content = await readFile(resolved, "utf8");
+    } catch {
+      throw new FrameworkError(
+        `template file '${entry.file}' referenced by archetype ${archetype.name} not found at ${resolved}`,
+        { code: "IO_ERROR" },
+      );
+    }
+    const { file: _file, ...rest } = entry;
+    templates.push({ ...rest, content });
+  }
+  return { ...archetype, templates };
 }
 
 function parseCapabilityModule(value: string, archetypeName: ProjectArchetype): CapabilityModule {
@@ -263,8 +352,20 @@ function mergeBaseArchetype(archetype: ParsedArchetype): Archetype {
     dirs: unique([...BASE_ARCHETYPE.dirs, ...archetype.dirs]),
     dirsLearning: unique([...BASE_ARCHETYPE.dirsLearning, ...archetype.dirsLearning]),
     dirsAbsorption: unique([...BASE_ARCHETYPE.dirsAbsorption, ...archetype.dirsAbsorption]),
-    templates: [...BASE_ARCHETYPE.templates, ...archetype.templates],
+    templates: mergeTemplatesByPath(BASE_ARCHETYPE.templates, archetype.templates),
   };
+}
+
+/** Later entries win, so an archetype can override base templates such as README.md. */
+function mergeTemplatesByPath(
+  base: readonly ArchetypeTemplateEntry[],
+  overrides: readonly ArchetypeTemplateEntry[],
+): ArchetypeTemplateEntry[] {
+  const merged = new Map<string, ArchetypeTemplateEntry>();
+  for (const entry of [...base, ...overrides]) {
+    merged.set(entry.path, entry);
+  }
+  return [...merged.values()];
 }
 
 export function archetypeHasCapability(

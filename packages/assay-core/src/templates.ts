@@ -1,4 +1,5 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
+import { FrameworkError } from "./errors.js";
 import { type Archetype, type ArchetypeLookupOptions, loadArchetype } from "./profile.js";
 
 export interface TemplateFile {
@@ -62,11 +63,24 @@ export function archetypeTemplates(
 ): TemplateFile[] {
   const result: TemplateFile[] = [];
   for (const entry of archetype.templates) {
-    const content = templateContentById(entry.templateId, project, mode, archetype);
-    if (content === null) continue;
+    const content =
+      entry.content !== undefined
+        ? renderArchetypeContent(entry.content, project)
+        : templateContentById(entry.templateId, project, mode, archetype);
+    if (content === null) {
+      throw new FrameworkError(
+        `archetype ${archetype.name} references unknown templateId '${entry.templateId}' for ${entry.path}; custom archetypes must provide inline content or a file next to the archetype YAML`,
+        { code: "IO_ERROR" },
+      );
+    }
     result.push(templateFile({ path: entry.path, templateId: entry.templateId, content }));
   }
   return result;
+}
+
+/** Substitution surface for archetype-carried template content. */
+function renderArchetypeContent(content: string, project: string): string {
+  return content.replaceAll("{{project}}", project);
 }
 
 function templateContentById(

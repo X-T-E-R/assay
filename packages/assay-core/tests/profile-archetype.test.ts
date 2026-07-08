@@ -387,6 +387,179 @@ describe("archetype data shapes", () => {
   });
 });
 
+describe("custom archetype template content", () => {
+  async function writeArchetypeYaml(file: string, body: string): Promise<void> {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, body, "utf8");
+  }
+
+  it("renders inline content and substitutes {{project}}", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeArchetypeYaml(
+      path.join(userArchetypesDir, "custom.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - zone",
+        "templates:",
+        "  - path: zone/README.md",
+        "    templateId: custom.zone.readme",
+        '    content: "# {{project}} zone\\n"',
+        "",
+      ].join("\n"),
+    );
+
+    const templates = await desiredTemplates("Demo", "learning", "custom", { userArchetypesDir });
+    const zoneReadme = templates.find((template) => template.path === "zone/README.md");
+
+    expect(zoneReadme?.content).toBe("# Demo zone\n");
+    expect(zoneReadme?.templateId).toBe("custom.zone.readme");
+  });
+
+  it("reads file-based content relative to the archetype directory", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await mkdir(path.join(userArchetypesDir, "custom"), { recursive: true });
+    await writeFile(
+      path.join(userArchetypesDir, "custom", "zone-readme.md"),
+      "# zone for {{project}}\n",
+      "utf8",
+    );
+    await writeArchetypeYaml(
+      path.join(userArchetypesDir, "custom.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - zone",
+        "templates:",
+        "  - path: zone/README.md",
+        "    templateId: custom.zone.readme",
+        "    file: custom/zone-readme.md",
+        "",
+      ].join("\n"),
+    );
+
+    const templates = await desiredTemplates("Demo", "learning", "custom", { userArchetypesDir });
+    const zoneReadme = templates.find((template) => template.path === "zone/README.md");
+
+    expect(zoneReadme?.content).toBe("# zone for Demo\n");
+  });
+
+  it("rejects file references that escape the archetype directory", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeArchetypeYaml(
+      path.join(userArchetypesDir, "custom.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - zone",
+        "templates:",
+        "  - path: zone/README.md",
+        "    templateId: custom.zone.readme",
+        "    file: ../../outside.md",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(loadArchetype("custom", { userArchetypesDir })).rejects.toThrow(
+      /escapes the archetype directory/,
+    );
+  });
+
+  it("rejects entries that set both content and file", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeArchetypeYaml(
+      path.join(userArchetypesDir, "custom.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - zone",
+        "templates:",
+        "  - path: zone/README.md",
+        "    templateId: custom.zone.readme",
+        '    content: "x"',
+        "    file: custom/zone-readme.md",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(loadArchetype("custom", { userArchetypesDir })).rejects.toThrow(
+      /sets both content and file/,
+    );
+  });
+
+  it("lets an archetype override base templates such as the root README", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeArchetypeYaml(
+      path.join(userArchetypesDir, "custom.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - zone",
+        "templates:",
+        "  - path: README.md",
+        "    templateId: custom.root.readme",
+        '    content: "# {{project}} custom root\\n"',
+        "",
+      ].join("\n"),
+    );
+
+    const templates = await desiredTemplates("Demo", "learning", "custom", { userArchetypesDir });
+    const readmes = templates.filter((template) => template.path === "README.md");
+
+    expect(readmes).toHaveLength(1);
+    expect(readmes[0]?.content).toBe("# Demo custom root\n");
+    expect(readmes[0]?.templateId).toBe("custom.root.readme");
+  });
+
+  it("fails loudly when a templateId resolves to no content", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeArchetypeYaml(
+      path.join(userArchetypesDir, "custom.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - zone",
+        "templates:",
+        "  - path: zone/README.md",
+        "    templateId: custom.unknown.id",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(
+      desiredTemplates("Demo", "learning", "custom", { userArchetypesDir }),
+    ).rejects.toThrow(/unknown templateId 'custom.unknown.id'/);
+  });
+
+  it("reports missing template files with the archetype name", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeArchetypeYaml(
+      path.join(userArchetypesDir, "custom.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - zone",
+        "templates:",
+        "  - path: zone/README.md",
+        "    templateId: custom.zone.readme",
+        "    file: custom/missing.md",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(loadArchetype("custom", { userArchetypesDir })).rejects.toThrow(
+      /referenced by archetype custom not found/,
+    );
+  });
+});
+
 describe("archetype templates", () => {
   it("default desired templates use study and do not emit config or preset core files", async () => {
     const paths = await templatePaths();

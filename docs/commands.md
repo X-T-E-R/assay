@@ -96,6 +96,28 @@ Use `system register` only for first-time registration; it rejects duplicate nam
 
 The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
 
+## Custom archetypes
+
+Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `iteration`), `dirs`, and `templates`.
+
+Template entries can carry their own content, so an archetype pack does not depend on built-in templateIds:
+
+```yaml
+templates:
+  # Reuse a built-in content generator by templateId.
+  - { path: "iterations/README.md", templateId: "iterations.readme" }
+  # Inline content; {{project}} is substituted with the project name.
+  - path: "inbox/README.md"
+    templateId: "custom.inbox.readme"
+    content: "# {{project}} inbox\n"
+  # Content file resolved relative to the directory containing this YAML.
+  - path: "sources/README.md"
+    templateId: "custom.sources.readme"
+    file: "my-archetype/sources-readme.md"
+```
+
+`content` and `file` are mutually exclusive per entry. `file` paths must stay inside the archetype directory. A templateId that resolves to no content (no built-in generator and no carried content) is an error rather than a silent skip. Template entries are merged by path with `extends: base`, so an archetype can override base templates such as the root `README.md`.
+
 ## Adopt an existing project
 
 Use `adopt` when an ordinary project already occupies the directory where you want a standalone Assay workspace and you want to archive the existing content first. Always inspect the plan first:
