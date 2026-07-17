@@ -582,7 +582,15 @@ describe("v2 to v3 layout migration", () => {
     expect(registry.systems["old-system"]).toMatchObject({ status: "archived" });
 
     // Contract file generated
-    expect(await pathExists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
+    const contractContent = await readFile(
+      path.join(root, "systems", "demo-core", "system.yaml"),
+      "utf8",
+    );
+    expect(contractContent).toContain("version: 0.2.0");
+    expect(contractContent).toContain("status: primary");
+    expect(contractContent).toContain("vcs: independent-git");
+    expect(contractContent).toContain("vcs_ref: main");
+    expect(contractContent).toContain("  - old-system");
 
     // Stale managed files removed from manifest
     const manifest = await loadManifest(root);

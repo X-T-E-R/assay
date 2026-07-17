@@ -1001,6 +1001,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Registered system: ${result.system.name}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
+      writeLine(output, "stdout", `Contract: ${result.system.contract_file ?? "-"}`);
       writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });

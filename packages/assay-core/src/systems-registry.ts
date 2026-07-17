@@ -4,6 +4,7 @@ import path from "node:path";
 import { SYSTEMS_REGISTRY_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
   type SystemRecord,
@@ -13,6 +14,7 @@ import {
   systemsRegistrySchema,
 } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
+import { renderSystemContract } from "./system-contract.js";
 import { nowIso } from "./time.js";
 
 export interface SystemsRegistryOptions {
@@ -266,6 +268,39 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
+async function createSystemContractIfMissing(
+  root: string,
+  systemPath: string,
+  system: SystemRecord,
+): Promise<string | null> {
+  if (!system.contract_file || !(await exists(systemPath))) {
+    return null;
+  }
+
+  const manifest = await loadManifest(root);
+  const contractPath = path.resolve(root, system.contract_file);
+  const content = renderSystemContract({
+    project: manifest?.project.name ?? path.basename(root),
+    name: system.name,
+    version: system.version,
+    status: system.status,
+    vcs: system.vcs,
+    vcsRef: system.vcs_ref,
+    supersedes: system.supersedes,
+  });
+
+  await mkdir(path.dirname(contractPath), { recursive: true });
+  try {
+    await writeFile(contractPath, content, { encoding: "utf8", flag: "wx" });
+    return contractPath;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function registerSystem(
   root: string,
   input: RegisterSystemInput,
@@ -283,7 +318,8 @@ export async function registerSystem(
   }
 
   const vcs: SystemVcs = input.vcs ?? "embedded";
-  const contractFile = input.contractFile ?? `${relativeSystemPath}/system.yaml`;
+  const contractFile =
+    input.contractFile === undefined ? `${relativeSystemPath}/system.yaml` : input.contractFile;
   const dateStamp = nowIso(now).slice(0, 10);
 
   const record: SystemRecord = {
@@ -305,7 +341,15 @@ export async function registerSystem(
     setPrimaryInPlace(registry, name);
   }
 
-  await saveSystemsRegistry(root, registry);
+  const createdContract = await createSystemContractIfMissing(root, systemPath, record);
+  try {
+    await saveSystemsRegistry(root, registry);
+  } catch (error) {
+    if (createdContract) {
+      await rm(createdContract, { force: true });
+    }
+    throw error;
+  }
   const eventFile = await appendEvent(
     root,
     {

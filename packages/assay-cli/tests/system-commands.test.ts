@@ -66,7 +66,7 @@ describe("assay system CLI", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("register creates a registry entry and writes an event", async () => {
+  it("register creates a registry entry, contract, and event", async () => {
     const root = await initWorkspace("Register");
     const systemPath = path.join(root, "systems", "demo-core");
     await mkdir(systemPath, { recursive: true });
@@ -87,8 +87,14 @@ describe("assay system CLI", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Registered system: demo-core");
     expect(result.stdout).toContain("Status: primary");
+    expect(result.stdout).toContain("Contract: systems/demo-core/system.yaml");
     expect(result.stdout).toContain("Event: .assay/events/");
     expect(await pathExists(path.join(root, ".assay", "systems-registry.json"))).toBe(true);
+    expect(await pathExists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
+
+    const check = await runCli(["check", "--root", root]);
+    expect(check.exitCode).toBe(0);
+    expect(check.stdout).not.toContain("contract file missing");
   });
 
   it("register rejects duplicate system names", async () => {

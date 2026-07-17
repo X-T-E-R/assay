@@ -8,8 +8,10 @@ import {
   FrameworkError,
   FrameworkNotFoundError,
   archiveSystem,
+  checkFramework,
   defaultSystemsRegistry,
   findSystem,
+  initFramework,
   listSystems,
   loadSystemsRegistry,
   promoteSystem,
@@ -87,6 +89,82 @@ describe("saveSystemsRegistry / loadSystemsRegistry", () => {
 });
 
 describe("registerSystem", () => {
+  it("creates a system contract that matches the registry record", async () => {
+    const root = path.join(await tempDir(), "workspace");
+    await initFramework({ target: root, name: "Contract Project" });
+    await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
+
+    await registerSystem(root, {
+      path: "systems/demo-core",
+      name: "demo-core",
+      primary: true,
+      vcs: "independent-git",
+      vcsRef: "main",
+      version: "0.2.0",
+      supersedes: ["old-core"],
+    });
+
+    const contractPath = path.join(root, "systems", "demo-core", "system.yaml");
+    expect(await readFile(contractPath, "utf8")).toBe(`system:
+  project: Contract Project
+  name: demo-core
+  version: 0.2.0
+  status: primary
+  vcs: independent-git
+  vcs_ref: main
+  supersedes:
+    - old-core
+contract_managed_by: assay
+`);
+
+    const check = await checkFramework({ root });
+    expect(check.rows.some((row) => row.message?.includes("contract file missing"))).toBe(false);
+  });
+
+  it("preserves an existing system contract", async () => {
+    const root = path.join(await tempDir(), "workspace");
+    await initFramework({ target: root, name: "Preserve Contract" });
+    const systemPath = path.join(root, "systems", "custom");
+    const contractPath = path.join(systemPath, "system.yaml");
+    await mkdir(systemPath, { recursive: true });
+    await writeFile(contractPath, "user-owned: true\n", "utf8");
+
+    await registerSystem(root, { path: "systems/custom", name: "custom", primary: true });
+
+    expect(await readFile(contractPath, "utf8")).toBe("user-owned: true\n");
+  });
+
+  it("does not create a contract when the registry record opts out", async () => {
+    const root = path.join(await tempDir(), "workspace");
+    await initFramework({ target: root, name: "No Contract" });
+    const systemPath = path.join(root, "systems", "metadata-only");
+    await mkdir(systemPath, { recursive: true });
+
+    const result = await registerSystem(root, {
+      path: "systems/metadata-only",
+      name: "metadata-only",
+      contractFile: null,
+    });
+
+    expect(result.system.contract_file).toBeNull();
+    expect(await exists(path.join(systemPath, "system.yaml"))).toBe(false);
+  });
+
+  it("removes a newly created contract when registry validation fails", async () => {
+    const root = path.join(await tempDir(), "workspace");
+    await initFramework({ target: root, name: "Rollback Contract" });
+    const systemPath = path.join(root, "systems", "invalid");
+    const contractPath = path.join(systemPath, "system.yaml");
+    await mkdir(systemPath, { recursive: true });
+
+    await expect(
+      registerSystem(root, { path: "systems/invalid", name: "", primary: true }),
+    ).rejects.toThrow();
+
+    expect(await exists(contractPath)).toBe(false);
+    expect(await loadSystemsRegistry(root)).toBeNull();
+  });
+
   it("registers an embedded system and writes an event", async () => {
     const root = await tempDir();
     const result = await registerSystem(root, {

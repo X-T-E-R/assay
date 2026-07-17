@@ -42,6 +42,7 @@ import type {
   SystemsRegistry,
 } from "./schemas/index.js";
 import { migrationPlanSchema, updateAnalysisSchema, updatePlanSchema } from "./schemas/index.js";
+import { renderSystemContract } from "./system-contract.js";
 import {
   defaultSystemsRegistry,
   loadSystemsRegistry,
@@ -883,26 +884,6 @@ export async function migrateLayout(options: MigrateLayoutOptions): Promise<Migr
   };
 }
 
-const SYSTEM_YAML_TEMPLATE = (
-  project: string,
-  name: string,
-  vcs: string,
-  isPrimary: boolean,
-  supersedes: readonly string[],
-): string => {
-  const supersedesLine =
-    supersedes.length > 0 ? `\n  supersedes: [${supersedes.map((s) => `"${s}"`).join(", ")}]` : "";
-  return `system:
-  project: ${project}
-  name: ${name}
-  version: 0.1.0
-  status: ${isPrimary ? "primary" : "active"}
-  vcs: ${vcs}
-  vcs_ref: ""${supersedesLine}
-contract_managed_by: assay
-`;
-};
-
 interface LegacyFrameworkYaml {
   status?: string;
   supersedes?: readonly string[];
@@ -977,13 +958,15 @@ async function applyV2ToV3Migration(root: string, steps: readonly MigrationStep[
     const vcsRef = legacy?.vcs_ref ?? (hasGit ? "main" : "");
 
     // Generate system.yaml contract
-    const contractContent = SYSTEM_YAML_TEMPLATE(
-      projectName,
-      systemName,
+    const contractContent = renderSystemContract({
+      project: projectName,
+      name: systemName,
+      version,
+      status,
       vcs,
-      status === "primary",
+      vcsRef,
       supersedes,
-    );
+    });
     await mkdir(path.dirname(path.join(root, step.to)), { recursive: true });
     await writeFile(path.join(root, step.to), contractContent, "utf8");
 
