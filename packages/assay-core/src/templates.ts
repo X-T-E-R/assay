@@ -426,13 +426,13 @@ export function bootstrapIterationPlan(today: string): string {
     `);
 }
 
-export function changelog(): string {
+export function changelog(today: string): string {
   return dedent(`
     # Changelog
 
     All notable changes to this framework should be documented here.
 
-    ## [${CURRENT_VERSION}] - 2026-06-13
+    ## [${CURRENT_VERSION}] - ${today}
 
     ### Added
 
