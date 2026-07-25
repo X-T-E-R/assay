@@ -24,7 +24,7 @@ import {
 import { FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
-import { defaultStandaloneLayout } from "./layout.js";
+import { defaultOverlayLayout, defaultStandaloneLayout } from "./layout.js";
 import { loadLegacyManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
@@ -285,6 +285,27 @@ function rewriteLegacyStatePath(relativePath: string): string {
   return relativePath;
 }
 
+/**
+ * Layout block to write when upgrading a manifest to the current layout
+ * version. The upgrade must preserve the workspace's identity: an overlay
+ * workspace keeps its overlay mode, `.assay` work root and path map, so a
+ * migration never silently flattens an attached product repo into a
+ * standalone workbench. Privacy is carried over as well.
+ *
+ * Legacy v3 manifests carry no layout block at all; those are the only case
+ * that defaults to standalone.
+ */
+function upgradedLayoutFor(manifest: FrameworkManifest): FrameworkManifest["layout"] {
+  const current = manifest.layout;
+  if (!current) {
+    return defaultStandaloneLayout();
+  }
+  if (current.mode === "overlay") {
+    return defaultOverlayLayout(current.privacy);
+  }
+  return { ...defaultStandaloneLayout(), privacy: current.privacy };
+}
+
 function upgradeManifestToCurrentLayout(manifest: FrameworkManifest): void {
   const managedFiles: FrameworkManifest["managed_files"] = {};
   for (const [filePath, record] of Object.entries(manifest.managed_files)) {
@@ -294,7 +315,7 @@ function upgradeManifestToCurrentLayout(manifest: FrameworkManifest): void {
   manifest.managed_files = managedFiles;
   manifest.user_deleted = [...new Set(manifest.user_deleted.map(rewriteLegacyStatePath))];
   manifest.layout_version = LAYOUT_VERSION;
-  manifest.layout = defaultStandaloneLayout();
+  manifest.layout = upgradedLayoutFor(manifest);
 }
 
 function legacyCoreNameForV2Manifest(manifest: FrameworkManifest, root: string): string {

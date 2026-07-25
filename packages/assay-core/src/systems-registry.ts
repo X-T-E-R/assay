@@ -4,6 +4,7 @@ import path from "node:path";
 import { SYSTEMS_REGISTRY_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { defaultStandaloneLayout, resolveWorkspaceLayout, workspaceSubpath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
@@ -11,6 +12,7 @@ import {
   type SystemStatus,
   type SystemVcs,
   type SystemsRegistry,
+  type WorkspaceLayout,
   systemsRegistrySchema,
 } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
@@ -268,6 +270,21 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
+/**
+ * Resolve the archive destination for a system through the layout path map.
+ * Standalone workspaces keep `systems/archive/...` at the root; overlay
+ * workspaces archive under `.assay/systems/` so nothing lands in the product
+ * repository tree.
+ */
+function archiveBasePath(layout: WorkspaceLayout, dateStamp: string, systemName: string): string {
+  return workspaceSubpath(
+    layout,
+    "systemsContracts",
+    "archive",
+    `${dateStamp}-pre-${slugify(systemName)}`,
+  );
+}
+
 async function createSystemContractIfMissing(
   root: string,
   systemPath: string,
@@ -513,7 +530,8 @@ export async function archiveSystem(
   }
 
   const dateStamp = nowIso(now).slice(0, 10);
-  const archiveBase = `systems/archive/${dateStamp}-pre-${slugify(system.name)}`;
+  const layout = resolveWorkspaceLayout(await loadManifest(root)) ?? defaultStandaloneLayout();
+  const archiveBase = archiveBasePath(layout, dateStamp, system.name);
   const movedTo = path.join(root, archiveBase, path.basename(system.path));
 
   if (dryRun) {
