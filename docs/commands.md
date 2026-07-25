@@ -8,7 +8,7 @@ Run workspace commands from inside an Assay workspace. Commands discover the wor
 assay init [target-dir] --name <project> --archetype <name> [--git] [--force] [--create-new] [--no-track] [--no-agents]
 assay attach [--root <dir>] --name <project> --archetype <name> [--privacy private|private-git|tracked] [--no-track] [--no-agents]
 assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overlay]
-assay check [--root <dir>]
+assay check [--advisories] [--root <dir>]
 assay status [--root <dir>]
 assay update [--root <dir>] [--dry-run] [--agents] [--force | --skip-all | --create-new] [--no-track]
 assay migrate-layout [--root <dir>] [--dry-run | --apply] [--backup]
@@ -23,6 +23,14 @@ assay archetype list [--root <dir>] [--json]
 `init` and successful `adopt --apply` also add a short Assay-managed block to root `AGENTS.md` by default. Use `--no-agents` on those commands to skip it. Ordinary `assay update` refreshes the block only when it already exists; `assay update --agents` creates or re-enables it.
 
 If `AGENTS.md` contains incomplete `<!-- ASSAY:START -->` / `<!-- ASSAY:END -->` markers, Assay leaves the file unchanged and reports the malformed block so you can fix or remove it manually.
+
+`assay check` validates required structure, registries, indexes, managed-file
+state, source observation integrity, and donor persistence. It exits non-zero
+only for missing required structure or invalid persisted state. Add
+`--advisories` to request non-blocking workflow reminders such as open
+iterations, unfinished draft analyses, pending queue entries, lingering
+adoption archives, unanalyzed frozen references, and major source changes that
+have not been re-reviewed.
 
 ## Attach an existing repository
 
@@ -60,14 +68,48 @@ assay source log <alias> [--root <dir>]
 assay absorb <source-dir> [--name <name>] [--root <dir>] [--as problem|intake]
 assay reference add <source-dir> <name> [--root <dir>]
 assay analysis new <title> [--root <dir>] [--for-source <alias>] [--observation <id-or-path>] [--for-reference <path>]
-assay analysis close <path> --exit adopt|reject|experiment|adr [--note <note>] [--allow-empty] [--root <dir>]
+assay analysis close <path> --exit adopt|reject|experiment|adr [--note <note>] [--root <dir>]
 assay iteration start <title> [--root <dir>]
 assay iteration close <selector> --result applied|rejected|retest [--note <note>] [--root <dir>]
 assay event capture --kind observation|analysis|decision|gotcha|note --text <text> [--root <dir>]
 assay knowledge add <type> <title> [--from-analysis <path>] [--from-iteration <path>] [--root <dir>]
 ```
 
-Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`; `migrate-layout --apply` flattens them.
+Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
+
+`analysis close` records the caller's explicit exit, updates bound reference or
+source metadata, and writes an event. It does not block on section-content
+heuristics. Use `assay check --advisories` before closing when unfinished-draft
+reminders are useful.
+
+## Donor adoption
+
+Use donor commands when selected material from a living source has been
+implemented, adapted, or otherwise carried into a registered target system:
+
+```bash
+assay donor register --file <definition.json|yaml> [--root <dir>] [--json]
+assay donor update <adoption> --file <definition.json|yaml> [--root <dir>] [--json]
+assay donor list [--root <dir>] [--json]
+assay donor show <adoption> [--root <dir>] [--json]
+assay donor status [adoption] [--target <id>] [--root <dir>] [--json]
+assay donor inspect <adoption> --target <id> [--to <observation>] [--root <dir>] [--json]
+assay donor evidence add <adoption> <inspection> --file <evidence.json|yaml> [--root <dir>] [--json]
+assay donor verify <adoption> <inspection> [--root <dir>] [--json]
+assay donor decide <adoption> --target <id> --outcome accept|reject|defer [--inspection <id>] [--to <observation>] [--reason <text>] [--root <dir>] [--json]
+assay donor history <adoption> [--target <id>] [--root <dir>] [--json]
+assay donor rollback record <adoption> --to-decision <id> [--reason <text>] [--root <dir>] [--json]
+```
+
+`inspect` captures source and target direct-change facts. It is optional:
+`decide` without `--inspection` captures the current snapshots inside the
+decision operation. Evidence is advisory by default and blocks `accept` only
+when the definition explicitly marks it `required`.
+
+Donor records live under `.assay/donors/`. They do not edit target files,
+execute target tests, create commits, or restore revisions. See
+[Donor Adoption](donor-adoption.md) for the definition schema, baseline model,
+and integrity behavior.
 
 ## Systems, ADRs, and project registry
 
@@ -95,6 +137,11 @@ assay projects prune [--dry-run] [--json]
 Use `system register` only for first-time registration; it rejects duplicate names so accidental re-registration is visible. Use `system update <selector>` to correct metadata on an existing record, such as changing `vcs` from `embedded` to `independent-git` and setting `--vcs-ref main`. Omitted update fields are preserved. `--primary` uses the same one-primary behavior as `system promote`, and archived systems are read-only.
 
 The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
+
+When `.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory is
+present, `adr new` reports an advisory about parallel decision records and
+still creates the requested Assay ADR. The legacy `--force` option only
+suppresses that advisory; it is not required for creation.
 
 ## Custom archetypes
 
@@ -128,4 +175,4 @@ assay adopt --dry-run
 assay adopt --apply --name ExistingProject --analyze --no-track [--no-agents]
 ```
 
-`--apply` moves direct root entries into `.old/<timestamp>/`, keeps `.git/` at the root, and initializes the Assay scaffold. `--analyze` also creates an adoption inventory analysis so you can decide where archived content belongs. Move files out of `.old/` after review; `assay check` warns while archived content remains there.
+`--apply` moves direct root entries into `.old/<timestamp>/`, keeps `.git/` at the root, and initializes the Assay scaffold. `--analyze` also creates an adoption inventory analysis so you can decide where archived content belongs. Move files out of `.old/` after review; `assay check --advisories` reports archived content that remains there.

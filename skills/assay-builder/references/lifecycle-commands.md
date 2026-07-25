@@ -4,7 +4,7 @@ The common Assay evidence loop is `evidence in → structured checks → decisio
 
 ## Why explicit close
 
-Earlier layouts let iterations and analyses be created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to surface "this work is open" or to flag work that should have been promoted into reusable knowledge. The current CLI makes close explicit and `assay check` flags open iterations as warnings.
+Earlier layouts let iterations and analyses be created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to record "this work is closed" or what the result was. The current CLI makes close explicit. `assay check --advisories` can list open iterations when that reminder is useful.
 
 ## Iterations
 
@@ -63,6 +63,10 @@ What `close` does:
 5. Writes an `analysis.closed` event with `path`, `exit`, and `note`.
 
 The `adopt` exit signals "we are adopting the analyzed pattern as-is". The `adr` exit signals "this decision deserves a separate ADR entry under `knowledge/decisions/`" — follow up with `assay adr new --from-analysis <path>`.
+
+`analysis close` trusts the explicit `--exit`. It does not require non-empty
+headings or try to infer prose quality. Use `assay check --advisories` before
+closing when you want unfinished-draft reminders.
 
 ## Knowledge
 

@@ -33,14 +33,22 @@ Custom archetypes are YAML files resolved in order: project-local `.assay/archet
 
 `source add` is the preferred learning-mode intake for external systems that may change. `absorb` still routes automatically based on mode for the freeze-and-open-analysis flow: legacy/full capture under `references/frozen/` in learning mode, `problem/` in absorption mode.
 
-## Content gates (not just directory exits)
+## Integrity checks and optional advisories
 
-The evidence loop must produce content before it counts as complete — a file existing is not enough. `check` enforces the gates it can verify:
+`assay check` validates workspace structure and persisted-record integrity. A
+file existing does not prove content quality, so Assay does not turn prose
+heuristics into mandatory gates. Use `assay check --advisories` when workflow
+reminders are useful:
 
-- A frozen reference must be cited by an analysis or have `reference.yaml.analyzed: true`, else `unanalyzed reference` warning.
-- A living source observation must have provenance/fingerprint/manifest metadata. `major` source observations stay warning-level until a revalidation analysis closes the stale-risk loop.
-- An analysis at `Status: draft` must have non-empty `## Key observations`, else `empty analysis` warning.
-- `analysis close --exit …` is what flips `reference.yaml.analyzed` to `true`, closing the loop.
+- A frozen reference that is not cited by an analysis and is not marked
+  `analyzed: true` is listed as an `unanalyzed reference` advisory.
+- A living source observation must always retain provenance, fingerprint, and
+  manifest metadata. A `major` observation can additionally be listed as a
+  revalidation advisory until a bound analysis closes.
+- An analysis at `Status: draft` with empty `## Key observations` is listed as
+  an unfinished-draft advisory.
+- `analysis close --exit …` records the explicit decision and flips a bound
+  `reference.yaml` to `analyzed: true`; it does not judge section prose.
 
 
 ## Intent-to-directory mapping

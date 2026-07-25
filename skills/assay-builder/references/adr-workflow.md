@@ -50,6 +50,11 @@ assay adr new "Use registry-backed ADRs" \
   [--from-iteration iterations/2026-06-17-example]
 ```
 
+If `.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory is
+detected, Assay warns about parallel decision records and still creates the
+requested ADR. The legacy `--force` option suppresses that advisory; it is not
+required for creation.
+
 Accept a draft:
 
 ```bash

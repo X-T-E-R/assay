@@ -56,6 +56,27 @@ Assistant-specific integrations are useful, but they should not decide the core 
 
 That keeps the framework useful even when the active assistant, editor, or automation surface changes.
 
+## Tools Should Not Become Universal Gates
+
+Assay is a plain-file evidence and decision workbench. Commands should make
+inspection, reminders, evidence capture, and lifecycle history available
+without assuming every project needs the same ceremony.
+
+The blocking boundary is narrow:
+
+- refuse operations that would corrupt or contradict persisted records;
+- refuse destructive refreshes when unrecorded checkout work could be lost;
+- enforce policy only when the workspace explicitly declares it `required`;
+- otherwise record the fact, emit an advisory when requested, and let the
+  caller decide.
+
+`assay check` therefore defaults to structure and persisted-record integrity.
+Workflow and content reminders are available through `assay check
+--advisories`. External governance markers can explain possible duplicate
+records, but they do not override an explicit Assay command. Text heuristics
+can identify unfinished drafts; they cannot establish the quality of an
+analysis and must not block an explicit close.
+
 ## CLI Logic Should Be Testable
 
 Repository-mutating commands are risky if they live in one large script or a process-only adapter. Assay splits reusable framework behavior from terminal concerns:

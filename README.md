@@ -47,7 +47,7 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 | Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
 | Keep durable reusable knowledge | `library` | shared systems and knowledge as the base layer |
 
-Most work starts as `study`, `solve`, or `explore`: study outside examples, solve a measurable target, or explore when the target shape is still open. The command surface stays small: `source`, `analysis`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+Most work starts as `study`, `solve`, or `explore`: study outside examples, solve a measurable target, or explore when the target shape is still open. The command surface stays small: `source`, `analysis`, `donor`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
 
 ## Quick start
 
@@ -83,6 +83,12 @@ assay check
 
 In overlay mode the product repo stays the product repo. Assay registers the repo root as the primary system and keeps its own work under `.assay/`. Product Git ignores `.assay/`, so `git status` stays clean.
 
+`assay check` defaults to workspace structure and persisted-record integrity.
+Use `assay check --advisories` when you also want reminders about open
+iterations, unfinished drafts, pending queues, adoption archives, or major
+source changes. Those reminders are optional and never turn ordinary workflow
+state into a failing check.
+
 If you later want to separate the overlay into a standalone workbench, detach it without moving your product repo:
 
 ```bash
@@ -113,12 +119,13 @@ In `overlay` mode, Assay should not enter your product repo by default. `assay a
 
 ## What Assay deliberately does not do
 
-Assay does not run a model for you, hide your files in a database, or ask you to trust a magic agent loop. Your work remains plain files. The value is the structure: sources stay traceable, analyses must carry observations, and important choices can become ADRs or reusable knowledge instead of folklore.
+Assay does not run a model for you, hide your files in a database, or ask you to trust a magic agent loop. Your work remains plain files. The value is the structure: sources stay traceable, analyses can carry observations, and important choices can become ADRs or reusable knowledge instead of folklore. Explicit commands record decisions without trying to mechanically judge whether the prose is good enough.
 
 ## Learn more
 
 - [Layout modes](docs/layout-modes.md)
 - [Command reference](docs/commands.md)
+- [Donor adoption](docs/donor-adoption.md)
 - [Workspace layout](docs/workspace-layout.md)
 - [Contributing](CONTRIBUTING.md)
 

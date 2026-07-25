@@ -47,7 +47,7 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
 | 保存持久的可复用知识 | `library` | 共享 systems 和 knowledge 作为基座 |
 
-多数工作从 `study`、`solve` 或 `explore` 开始：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。命令面很小：`source`、`analysis`、`iteration`、`adr`、`knowledge`、`system`、`check`。
+多数工作从 `study`、`solve` 或 `explore` 开始：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。命令面很小：`source`、`analysis`、`donor`、`iteration`、`adr`、`knowledge`、`system`、`check`。
 
 ## 快速开始
 
@@ -83,6 +83,8 @@ assay check
 
 overlay 模式下，产品仓库还是产品仓库。Assay 把仓库根目录注册为主系统，自己的工作放在 `.assay/` 里。产品 Git 忽略 `.assay/`，所以 `git status` 保持干净。
 
+`assay check` 默认只检查工作区结构和持久化记录完整性。需要查看未关闭迭代、未完成草稿、待处理队列、迁移归档或来源大版本变化等提醒时，显式运行 `assay check --advisories`。这些提醒不会把普通工作状态变成失败。
+
 如果以后想把 overlay 拆成独立工作台，不用动产品仓库就能 detach：
 
 ```bash
@@ -113,12 +115,13 @@ Assay 把系统代码和 Assay 记忆分开。
 
 ## Assay 故意不做的事
 
-Assay 不会替你跑模型、不会把文件藏进数据库、也不会让你信任一个黑盒 agent 循环。你的工作始终是普通文件。价值在于结构：来源可追踪、分析必须带观察、重要选择能变成 ADR 或可复用知识，而不是口口相传。
+Assay 不会替你跑模型、不会把文件藏进数据库、也不会让你信任一个黑盒 agent 循环。你的工作始终是普通文件。价值在于结构：来源可追踪、分析可以承载观察、重要选择能变成 ADR 或可复用知识，而不是口口相传。显式命令负责记录决策，不会用机械规则判断你的文字是否“写够了”。
 
 ## 了解更多
 
 - [布局模式](docs/layout-modes.md)
 - [命令参考](docs/commands.md)
+- [Donor Adoption](docs/donor-adoption.md)
 - [工作区结构](docs/workspace-layout.md)
 - [贡献指南](CONTRIBUTING.md)
 

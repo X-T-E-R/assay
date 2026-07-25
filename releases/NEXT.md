@@ -1,7 +1,58 @@
 # Next Release Draft
 
 This draft tracks user-visible changes that should be reviewed before the next
-Assay release version is chosen.
+Assay release version is chosen. Planned version: `0.3.0`.
+
+## Donor Adoption
+
+- New `assay donor` command family records how selected material from a living
+  source became part of one or more registered target systems: `register`,
+  `update`, `list`, `show`, `status`, `inspect`, `evidence add`, `verify`,
+  `decide`, `history`, and `rollback record`.
+- A donor adoption is declared as one complete JSON or YAML definition: one
+  living source, one or more independently accepted targets, and mappings that
+  bind source locators to target locators by exact path or directory prefix.
+- `donor inspect` captures direct byte-change facts on both sides. It is
+  optional: `donor decide` without `--inspection` captures the current
+  snapshots inside the decision operation.
+- Evidence is advisory by default and gates `accept` only when the definition
+  marks a check `required`.
+- Definitions, inspections, evidence, and decisions are immutable
+  content-addressed records under `.assay/donors/<adoption-id>/`, with a small
+  `state.json` pointer for the active definition, per-target baselines, and
+  committed decisions.
+- `assay status` shows compact adoption and baseline counts. `assay check`
+  validates donor persistence integrity only; upstream changes, target drift,
+  and advisory evidence gaps stay out of the global check.
+- Donor commands never edit target files, run target commands, create commits,
+  or restore revisions. See `docs/donor-adoption.md`.
+
+## Check Severity And Advisory Reminders
+
+`assay check` now separates persisted-record integrity from workflow reminders.
+See `docs/background/design-principles.md` for the boundary this follows.
+
+- The default `assay check` reports required structure, registries and
+  indexes, managed-file state, source observation integrity, and donor
+  persistence.
+- Workflow and content reminders moved behind `assay check --advisories`: open
+  iterations, unanalyzed frozen references, empty draft analyses, lingering
+  `.old/` adoption archives, pending queue entries, and major source
+  observations that have not been re-reviewed.
+- `analysis close` records the caller's explicit exit and no longer inspects
+  section content. `## Key observations` and the matching decision section are
+  still the recommended shape, and `check --advisories` can list unfinished
+  drafts before closing.
+- `--allow-empty` on `analysis close` is retained only as a hidden no-op so
+  existing scripts keep running. It has no effect.
+- External governance markers (`.trellis/`, `.superpowers/`, `docs/adr/`) now
+  produce an advisory instead of refusing to create an Assay ADR. `adr new`
+  creates the requested ADR in every case; `--force` only suppresses the
+  advisory.
+- Source observation state moved the other way. A living source whose latest
+  observation is missing, unreachable, or lacks a fingerprint or capture
+  manifest is now an error, because those records are what makes later
+  comparison and donor inspection trustworthy.
 
 ## Living Sources
 
@@ -12,9 +63,79 @@ Assay release version is chosen.
   reviewed.
 - `assay status` includes a compact living-source summary so users can see open
   or revalidation-needed source work without first discovering `source status`.
+- `source sync` and `source switch` now refuse to refresh a managed checkout
+  that holds work Assay has not recorded: modified or untracked Git files, a
+  local commit that is not the recorded revision, or directory-checkout bytes
+  that differ from the latest observation. The managed checkout is Assay's own
+  working copy of upstream material, so a refresh may reset or replace it.
+- `analysis close` now writes the analysis card and the bound source
+  observation as one unit. If either write fails, the source observation is
+  rolled back to its previous content instead of leaving the two records
+  disagreeing. Re-running a close that already succeeded is safe.
 
-## Analysis Lifecycle
+## Upgrade Notes
 
-- `analysis close` rejects empty analysis shells by default. Analyses must have
-  real `## Key observations` content and the relevant decision section before
-  they can close, unless `--allow-empty` is explicitly used.
+### `assay check` can newly fail on older workspaces
+
+A workspace that passed `assay check` before may now exit 1 because incomplete
+source observation records are errors instead of warnings. The reported rows
+name the source and the missing part: no latest observation, a latest
+observation that cannot be read, a missing fingerprint, or a missing capture
+manifest.
+
+Record a fresh observation for each reported alias:
+
+```bash
+assay source sync <alias>
+```
+
+The new observation carries a fingerprint and a capture manifest and becomes the
+source's `latest_observation`. If `source sync` reports `same source state; no
+new observation`, the upstream material is unchanged and the incomplete record
+stays in place; force a full observation instead:
+
+```bash
+assay source sync <alias> --class normal
+```
+
+If `source sync` refuses because the managed checkout holds unrecorded work,
+resolve that first as described below.
+
+In the other direction, the default check is quieter: open iterations,
+unfinished drafts, `.old/` archives, pending queues, unanalyzed frozen
+references, and major-change revalidation now appear only with
+`assay check --advisories`. None of them ever failed the check, so scripts that
+only read the exit code are unaffected; scripts that parse warning rows should
+add `--advisories`.
+
+### `source sync` can newly fail on a dirty managed checkout
+
+If you edited, experimented in, or committed inside `references/<alias>/checkout/`,
+`source sync` and `source switch` now stop before touching it. Decide what that
+work is:
+
+- work you want to keep: move or copy it out of the managed checkout (a patch,
+  a branch in a clone of your own, or a file under `analyses/`), then restore
+  the checkout to the recorded revision and re-run the command;
+- work you do not need: discard it in the checkout, then re-run the command.
+
+Assay does not clean the checkout for you, because it cannot tell which of
+those two cases you are in.
+
+### Public type narrowing (compile-time break for API consumers)
+
+Code that imports the Assay core package may stop compiling:
+
+- `GovernanceDetection.action` is now `"warn" | "none"`. The `"block"` member is
+  gone. Callers that switched on `"block"` or compared against it should treat
+  external governance as advisory.
+- `FrameworkErrorCode` no longer includes `"GOVERNANCE_DEFERRED"`, and adds
+  `"INVALID_DONOR"`, `"DONOR_POLICY_BLOCKED"`, `"DONOR_STALE"`, and
+  `"DONOR_BUSY"`. Exhaustive switches over the union need the new members;
+  handlers keyed on `"GOVERNANCE_DEFERRED"` can be deleted.
+- `CloseAnalysisOptions.allowEmpty` is deprecated and ignored.
+- `changelog()` now takes the release date as a `today: string` argument instead
+  of embedding a fixed date, matching `bootstrapIterationPlan(today)`.
+
+Nothing here changes CLI behavior; only source-level consumers of the core
+package need to react.

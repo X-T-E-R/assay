@@ -24,6 +24,9 @@ node ..\assay\packages\assay-cli\dist\cli.js init --name Assay
 node ..\assay\packages\assay-cli\dist\cli.js check
 ```
 
+The default check covers workspace structure and persisted-record integrity.
+Add `--advisories` to request non-blocking workflow and content reminders.
+
 Add a living external source with a shallow checkout-backed entry:
 
 ```powershell
@@ -33,6 +36,17 @@ node ..\assay\packages\assay-cli\dist\cli.js source sync repo-name
 ```
 
 `references/<alias>/checkout/` is the current materialized source; for Git sources it is the repository root. Observation metadata uses flat source-local ledger folders: `references/<alias>/observations/`, `references/<alias>/manifests/`, `references/<alias>/comparisons/`, and `references/<alias>/captures/`.
+
+Track selected source material after it is adopted into a registered system:
+
+```powershell
+node ..\assay\packages\assay-cli\dist\cli.js donor register --file donor.yaml
+node ..\assay\packages\assay-cli\dist\cli.js donor status <adoption>
+node ..\assay\packages\assay-cli\dist\cli.js donor decide <adoption> --target <id> --outcome accept
+```
+
+Donor inspection and evidence commands are optional tools. Evidence blocks
+acceptance only when the definition explicitly declares it `required`.
 
 To convert an existing project into a clean Assay workspace, run from that
 project root:

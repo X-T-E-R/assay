@@ -36,13 +36,13 @@ After adoption, follow these steps in order:
 
 3. **Propose a concrete move plan first**. For each archived entry, decide its destination and present the plan as a diff/preview or the inventory table. Do not default to "stop and wait" after archiving — the framework's job is to propose the direction, then apply on confirmation. Ask the user before making irreversible moves, but come with a plan, not a blank.
 
-4. **Move old artifacts** into the appropriate new locations after the direction is confirmed. Do not default to copying. Do not assume every artifact belongs in one fixed directory. `check` warns on a lingering `.old/` until it is cleared, so the archive cannot become a silent graveyard.
+4. **Move old artifacts** into the appropriate new locations after the direction is confirmed. Do not default to copying. Do not assume every artifact belongs in one fixed directory. `check --advisories` can list a lingering `.old/` while migration is still in progress.
 
 5. **Register the active system** with `assay system register`. If the system was a separate git repository before adoption (or will be), declare `--vcs independent-git` and add the system path to root `.gitignore` while exempting `system.yaml`. Use `--primary` for the active system; archived predecessors can be registered later or via `migrate-layout`.
 
 6. **Close the adoption analysis** with `assay analysis close <path> --exit adopt|reject` so the decision is recorded in the event ledger.
 
-7. **Validate** with `assay check` and `assay status`. Both should report the new `primary` system and zero open iterations from the adoption. A lingering `.old/` warning means step 4 is incomplete.
+7. **Validate** persisted structure with `assay check` and inspect the workspace with `assay status`. Run `assay check --advisories` if you also want reminders about lingering `.old/` material or open iterations.
 
 ## Cleanup
 

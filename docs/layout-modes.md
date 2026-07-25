@@ -156,7 +156,7 @@ references/foo/
   comparisons/
 ```
 
-Older v3 workspaces nested these under `references/foo/.assay/`. Once the workspace state dir became `.assay/`, that nesting would produce `.assay/references/foo/.assay/observations/` in overlay, so layout v4 flattens the ledger. Readers support the legacy `references/foo/.assay/` path during migration.
+Older v3 workspaces nested these under `references/foo/.assay/`. Once the workspace state dir became `.assay/`, that nesting would produce `.assay/references/foo/.assay/observations/` in overlay, so layout v4 writes the ledger flat. Existing nested entries are read in place as a compatibility fallback and are never rewritten.
 
 ## Overlay attach workflow
 
