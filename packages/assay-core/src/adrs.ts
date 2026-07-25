@@ -5,16 +5,18 @@ import { ADRS_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { detectExternalGovernance } from "./governance.js";
+import { defaultStandaloneLayout, resolveWorkspaceLayout, workspaceSubpath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import { requireCapability } from "./profile.js";
+import type { FrameworkManifest, WorkspaceLayout } from "./schemas/index.js";
 import { type AdrIndex, type AdrRecord, type AdrStatus, adrIndexSchema } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
 import { nowIso } from "./time.js";
 
 export interface AdrIndexOptions {
   readonly now?: Date;
-  /** Skip external-governance deferral (e.g. trellis detected). */
+  /** Suppress the external-governance advisory. Retained for CLI compatibility. */
   readonly force?: boolean;
   /** Receive non-blocking governance warnings without letting core write to stderr. */
   readonly onWarning?: (message: string) => void;
@@ -102,15 +104,34 @@ export async function requireAdrIndex(root: string): Promise<AdrIndex> {
   return index;
 }
 
-function requireFrameworkManifest(root: string): Promise<unknown> {
-  return loadManifest(root).then((manifest) => {
-    if (!manifest) {
-      throw new FrameworkNotFoundError(
-        `No framework manifest found at ${path.join(root, MANIFEST_FILE)}.`,
-      );
-    }
-    return manifest;
-  });
+async function requireFrameworkManifest(root: string): Promise<FrameworkManifest> {
+  const manifest = await loadManifest(root);
+  if (!manifest) {
+    throw new FrameworkNotFoundError(
+      `No framework manifest found at ${path.join(root, MANIFEST_FILE)}.`,
+    );
+  }
+  return manifest;
+}
+
+/**
+ * Directory that holds ADR markdown inside the workspace knowledge area. The
+ * name matches the `knowledge/decisions` entry created by the archetypes.
+ */
+const ADR_DECISIONS_DIR = "decisions";
+
+function layoutForManifest(manifest: FrameworkManifest | null): WorkspaceLayout {
+  return resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
+}
+
+/**
+ * Resolve the workspace-relative path of an ADR markdown file through the
+ * layout path map. Standalone layouts resolve to `knowledge/decisions/`;
+ * overlay layouts resolve under `.assay/` so `assay adr new` never creates a
+ * top-level `knowledge/` directory in an attached product repository.
+ */
+function adrMarkdownRelativePath(layout: WorkspaceLayout, id: string): string {
+  return workspaceSubpath(layout, "knowledge", ADR_DECISIONS_DIR, `${id}.md`);
 }
 
 function adrNumberLabel(number: number): string {
@@ -220,19 +241,16 @@ export async function createAdr(
   options: AdrIndexOptions = {},
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
-  await requireFrameworkManifest(root);
+  const manifest = await requireFrameworkManifest(root);
   await requireCapability(root, "adr");
 
-  // Governance deferral (ADR-0005): if a blocking external governance system
-  // (trellis or .superpowers/) is detected, defer ADR creation unless --force.
-  // Common docs/adr/ directories only emit a warning.
+  // External governance is useful context, not authority over an explicit
+  // Assay command. Warn about parallel decision records without blocking.
+  // --force is retained for compatibility and suppresses this advisory.
   if (options.force !== true) {
     const governance = await detectExternalGovernance(root);
     if (governance.system !== "none") {
       const message = `external governance detected (${governance.system} at ${governance.path}): ${governance.message}`;
-      if (governance.action === "block") {
-        throw new FrameworkError(message, { code: "GOVERNANCE_DEFERRED" });
-      }
       if (governance.action === "warn") {
         options.onWarning?.(`Warning: ${message}`);
       }
@@ -245,7 +263,7 @@ export async function createAdr(
   const number = index.next_number;
   const id = adrId(number, slug);
   const date = nowIso(now).slice(0, 10);
-  const relativePath = `knowledge/decisions/${id}.md`;
+  const relativePath = adrMarkdownRelativePath(layoutForManifest(manifest), id);
   const absolutePath = path.join(root, relativePath);
 
   if (index.adrs[id] || (await exists(absolutePath))) {

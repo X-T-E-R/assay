@@ -205,6 +205,30 @@ describe("source observations", () => {
     ).toEqual([]);
   });
 
+  it("fails the structural check when a latest source manifest is missing", async () => {
+    const root = await initAssayWorkspace("SourceIntegrity");
+    const source = path.join(await tempDir(), "integrity-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
+    const added = await addSource({
+      root,
+      source,
+      alias: "integrity-source",
+    });
+    await rm(path.join(root, added.manifestFile), { force: true });
+
+    const check = await checkFramework({ root });
+    expect(check.ok).toBe(false);
+    expect(
+      check.rows.some(
+        (row) =>
+          row.status === "error" &&
+          row.path === added.manifestFile &&
+          row.message?.includes("no capture manifest"),
+      ),
+    ).toBe(true);
+  });
+
   it("rejects removed source capture modes", async () => {
     const root = await initAssayWorkspace("SourceCaptureModes");
     const source = path.join(await tempDir(), "capture-source");
@@ -269,7 +293,7 @@ describe("source observations", () => {
     const diff = await diffSource({ root, alias: "sync-source" });
     expect(diff.changed).toContain("README.md");
 
-    const check = await checkFramework({ root });
+    const check = await checkFramework({ root, includeAdvisories: true });
     expect(
       check.rows.some(
         (row) =>
@@ -421,6 +445,64 @@ describe("source observations", () => {
       const status = await getSourceStatus({ root, alias: "git-project" });
       expect(status.sources[0]?.checkout?.ref).toBe("feature");
       expect(status.sources[0]?.vcs?.commit).toBe(switched.vcs.commit);
+    },
+    GIT_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it("refuses to replace a directory checkout with unrecorded local changes", async () => {
+    const root = await initAssayWorkspace("SourceDirectorySafety");
+    const source = path.join(await tempDir(), "directory-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
+    await addSource({ root, source, alias: "directory-source" });
+
+    const checkoutFile = path.join(root, "references", "directory-source", "checkout", "README.md");
+    await writeFile(checkoutFile, "# Source\n\nlocal work\n", "utf8");
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
+
+    await expect(syncSource({ root, alias: "directory-source" })).rejects.toThrow(
+      "managed source checkout has unrecorded changes",
+    );
+    expect(await readFile(checkoutFile, "utf8")).toContain("local work");
+  });
+
+  it(
+    "refuses to reset dirty files or unrecorded commits in a managed Git checkout",
+    async () => {
+      const root = await initAssayWorkspace("SourceGitSafety");
+      const repo = path.join(await tempDir(), "git-safety-source");
+      await mkdir(repo, { recursive: true });
+      await git(repo, ["init"]);
+      await git(repo, ["config", "user.email", "assay@example.test"]);
+      await git(repo, ["config", "user.name", "Assay Test"]);
+      await writeFile(path.join(repo, "README.md"), "# Git safety\n\nv1\n", "utf8");
+      await git(repo, ["add", "README.md"]);
+      await git(repo, ["commit", "-m", "initial"]);
+      await git(repo, ["branch", "-M", "main"]);
+      await addSource({ root, source: repo, alias: "git-safety", branch: "main" });
+
+      const checkout = path.join(root, "references", "git-safety", "checkout");
+      const checkoutFile = path.join(checkout, "README.md");
+      await writeFile(checkoutFile, "# Git safety\n\nlocal dirty\n", "utf8");
+      await expect(syncSource({ root, alias: "git-safety" })).rejects.toThrow(
+        "managed source checkout has unrecorded changes",
+      );
+      expect(await readFile(checkoutFile, "utf8")).toContain("local dirty");
+
+      await git(checkout, ["config", "user.email", "assay@example.test"]);
+      await git(checkout, ["config", "user.name", "Assay Test"]);
+      await git(checkout, ["add", "README.md"]);
+      await git(checkout, ["commit", "-m", "local checkout commit"]);
+      const localHead = (
+        await execa("git", ["rev-parse", "HEAD"], { cwd: checkout })
+      ).stdout.trim();
+
+      await expect(syncSource({ root, alias: "git-safety" })).rejects.toThrow(
+        "managed source checkout has an unrecorded revision",
+      );
+      expect((await execa("git", ["rev-parse", "HEAD"], { cwd: checkout })).stdout.trim()).toBe(
+        localHead,
+      );
     },
     GIT_INTEGRATION_TIMEOUT_MS,
   );

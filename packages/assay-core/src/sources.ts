@@ -13,6 +13,7 @@ import type { CheckRow } from "./results.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import {
+  assertGitCheckoutSafeForRefresh,
   assertManagedCheckout,
   checkoutGitRef,
   cloneGitSource,
@@ -618,10 +619,26 @@ async function refreshCheckoutBeforeObservation(
   entry: SourceEntry,
   options: Pick<SourceSyncOptions, "branch" | "ref">,
   captureMode: SourceCaptureMode,
+  previousObservation: SourceObservation | null,
 ): Promise<string> {
   const checkout = path.join(entry.absolutePath, "checkout");
   if (captureMode !== "checkout") {
     return (await exists(entry.lineage.source_uri)) ? entry.lineage.source_uri : checkout;
+  }
+
+  if (await isGitCheckout(checkout)) {
+    await assertGitCheckoutSafeForRefresh(
+      checkout,
+      entry.lineage.checkout?.commit ?? previousObservation?.vcs?.commit ?? null,
+    );
+  } else if ((await exists(checkout)) && previousObservation) {
+    const checkoutManifest = await collectManifest(checkout, nowIso());
+    if (checkoutManifest.fingerprint.value !== previousObservation.fingerprint.value) {
+      throw new FrameworkError(
+        `managed source checkout has unrecorded changes; preserve or remove them before refresh: ${checkout}`,
+        { code: "IO_ERROR" },
+      );
+    }
   }
 
   const sourceExists = await exists(entry.lineage.source_uri);
@@ -1090,7 +1107,12 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
   const previousManifest = await loadObservationManifest(entry.absolutePath, previousObservation);
   const captureMode = entry.lineage.default_capture_mode;
 
-  const captureRoot = await refreshCheckoutBeforeObservation(entry, options, captureMode);
+  const captureRoot = await refreshCheckoutBeforeObservation(
+    entry,
+    options,
+    captureMode,
+    previousObservation,
+  );
 
   await materializeMaterials(captureRoot, path.join(entry.absolutePath, "materials"));
   const recorded = await recordObservation({
@@ -1202,6 +1224,14 @@ export async function switchSource(options: SourceSwitchOptions): Promise<Source
   if (!(await exists(path.join(checkout, ".git")))) {
     throw new FrameworkError(`source '${entry.alias}' does not have a Git checkout`);
   }
+  const latestObservation = await loadObservation(
+    entry.absolutePath,
+    entry.lineage.latest_observation,
+  );
+  await assertGitCheckoutSafeForRefresh(
+    checkout,
+    entry.lineage.checkout?.commit ?? latestObservation?.vcs?.commit ?? null,
+  );
   await checkoutGitRef(checkout, options.target);
   const vcs = await collectGitMetadata(checkout);
   if (!vcs) {
@@ -1445,7 +1475,10 @@ function formatDiffMarkdown(diff: SourceDiffResult): string {
   ].join("\n");
 }
 
-export async function collectSourceHealthRows(root: string): Promise<CheckRow[]> {
+export async function collectSourceHealthRows(
+  root: string,
+  options: { readonly includeAdvisories?: boolean } = {},
+): Promise<CheckRow[]> {
   const rows: CheckRow[] = [];
   const sources = await listSourceEntries(root);
   for (const source of sources) {
@@ -1453,7 +1486,7 @@ export async function collectSourceHealthRows(root: string): Promise<CheckRow[]>
     if (!source.lineage.latest_observation) {
       rows.push({
         path: `${source.relativePath}/source.yaml`,
-        status: "warning",
+        status: "error",
         message: `source '${source.alias}' has no latest observation`,
       });
       continue;
@@ -1461,7 +1494,7 @@ export async function collectSourceHealthRows(root: string): Promise<CheckRow[]>
     if (!latest) {
       rows.push({
         path: `${source.relativePath}/source.yaml`,
-        status: "warning",
+        status: "error",
         message: `source '${source.alias}' points to missing latest observation`,
       });
       continue;
@@ -1469,7 +1502,7 @@ export async function collectSourceHealthRows(root: string): Promise<CheckRow[]>
     if (!latest.fingerprint?.value) {
       rows.push({
         path: `${source.relativePath}/${source.lineage.latest_observation}`,
-        status: "warning",
+        status: "error",
         message: `source observation '${latest.observation_id}' has no fingerprint`,
       });
     }
@@ -1477,11 +1510,15 @@ export async function collectSourceHealthRows(root: string): Promise<CheckRow[]>
     if (!(await exists(manifestFile))) {
       rows.push({
         path: `${source.relativePath}/${latest.manifest}`,
-        status: "warning",
+        status: "error",
         message: `source observation '${latest.observation_id}' has no capture manifest`,
       });
     }
-    if (latest.change_class === "major" && latest.analysis_status !== "closed") {
+    if (
+      options.includeAdvisories === true &&
+      latest.change_class === "major" &&
+      latest.analysis_status !== "closed"
+    ) {
       rows.push({
         path: `${source.relativePath}/${source.lineage.latest_observation}`,
         status: "warning",

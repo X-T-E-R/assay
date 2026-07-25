@@ -213,34 +213,29 @@ describe("assay adr CLI", () => {
     expect(shown.stderr).toContain("capability not enabled in archetype library: adr");
   });
 
-  it("defers ADR creation to trellis unless forced", async () => {
-    const root = await initWorkspace("AdrCliTrellisDefer");
+  it("warns without blocking ADR creation when trellis is present", async () => {
+    const root = await initWorkspace("AdrCliTrellisAdvisory");
     await mkdir(path.join(root, ".trellis"), { recursive: true });
 
-    const deferred = await runCli(["adr", "new", "Should Defer", "--root", root]);
-    expect(deferred.exitCode).toBe(1);
-    expect(deferred.stderr).toContain("external governance detected (trellis at .trellis/)");
-    expect(deferred.stderr).toContain("Use --force");
+    const created = await runCli(["adr", "new", "Assay Decision", "--root", root]);
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toContain("Created ADR: ADR-0001-assay-decision");
+    expect(created.stderr).toContain("external governance detected (trellis at .trellis/)");
 
-    const forced = await runCli(["adr", "new", "Forced", "--root", root, "--force"]);
+    const forced = await runCli(["adr", "new", "Quiet Decision", "--root", root, "--force"]);
     expect(forced.exitCode).toBe(0);
-    expect(forced.stdout).toContain("Created ADR: ADR-0001-forced");
+    expect(forced.stdout).toContain("Created ADR: ADR-0002-quiet-decision");
+    expect(forced.stderr).not.toContain("external governance detected");
   });
 
-  it("defers ADR creation to superpowers unless forced", async () => {
-    const root = await initWorkspace("AdrCliSuperpowersDefer");
+  it("warns without blocking ADR creation when superpowers is present", async () => {
+    const root = await initWorkspace("AdrCliSuperpowersAdvisory");
     await mkdir(path.join(root, ".superpowers"), { recursive: true });
 
-    const deferred = await runCli(["adr", "new", "Should Defer", "--root", root]);
-    expect(deferred.exitCode).toBe(1);
-    expect(deferred.stderr).toContain(
-      "external governance detected (superpowers at .superpowers/)",
-    );
-    expect(deferred.stderr).toContain("Use --force");
-
-    const forced = await runCli(["adr", "new", "Forced", "--root", root, "--force"]);
-    expect(forced.exitCode).toBe(0);
-    expect(forced.stdout).toContain("Created ADR: ADR-0001-forced");
+    const created = await runCli(["adr", "new", "Assay Decision", "--root", root]);
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toContain("Created ADR: ADR-0001-assay-decision");
+    expect(created.stderr).toContain("external governance detected (superpowers at .superpowers/)");
   });
 
   it("warns but creates an ADR when docs/adr already exists", async () => {

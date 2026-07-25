@@ -4,10 +4,13 @@ export type FrameworkErrorCode =
   | "INVALID_EVENT"
   | "INVALID_OPERATION_REPORT"
   | "INVALID_UPDATE_PLAN"
+  | "INVALID_DONOR"
+  | "DONOR_POLICY_BLOCKED"
+  | "DONOR_STALE"
+  | "DONOR_BUSY"
   | "ALREADY_EXISTS"
   | "NOT_FOUND"
-  | "IO_ERROR"
-  | "GOVERNANCE_DEFERRED";
+  | "IO_ERROR";
 
 export interface FrameworkErrorOptions {
   readonly code?: FrameworkErrorCode;

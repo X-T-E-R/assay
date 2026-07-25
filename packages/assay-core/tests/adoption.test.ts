@@ -225,7 +225,7 @@ describe("adoptExistingProject", () => {
     // The analysis is a draft with a Key observations section, so check flags
     // it as open work — the adoption cannot be silently abandoned.
     expect(analysis).toContain("- Status: draft");
-    const check = await checkFramework({ root });
+    const check = await checkFramework({ root, includeAdvisories: true });
     expect(
       check.rows.some(
         (row) =>

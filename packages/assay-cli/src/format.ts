@@ -6,6 +6,12 @@ import type {
   AttachResult,
   CheckFrameworkResult,
   ConvertOverlayResult,
+  DonorAdoptionListResult,
+  DonorAdoptionResult,
+  DonorDecisionResult,
+  DonorHistoryResult,
+  DonorInspection,
+  DonorStatusResult,
   FrameworkStatusResult,
   InitFrameworkResult,
   MigrateLayoutResult,
@@ -17,6 +23,7 @@ import type {
   SystemRecord,
   UpdateAnalysis,
   UpdatePlan,
+  VerifyDonorInspectionResult,
 } from "assay-core";
 
 function section(title: string, lines: readonly string[]): string[] {
@@ -164,6 +171,17 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
       ]
     : [];
 
+  const donors = result.donors
+    ? [
+        "Donor adoptions",
+        `  - adoptions: ${result.donors.adoptions}`,
+        `  - targets: ${result.donors.targets}`,
+        `  - accepted baselines: ${result.donors.acceptedTargets}`,
+        `  - draft targets: ${result.donors.draftTargets}`,
+        "  - details: assay donor status <adoption>",
+      ]
+    : [];
+
   const summary: string[] = [];
   if (result.openIterations !== undefined) {
     summary.push(`Open iterations: ${result.openIterations}`);
@@ -172,7 +190,15 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     summary.push(`Knowledge entries: ${result.knowledgeEntries}`);
   }
 
-  return [...header, ...manifest, ...zones, ...systems, ...livingSources, ...summary].join("\n");
+  return [
+    ...header,
+    ...manifest,
+    ...zones,
+    ...systems,
+    ...livingSources,
+    ...donors,
+    ...summary,
+  ].join("\n");
 }
 
 export function formatSourceStatusResult(result: SourceStatusResult): string {
@@ -235,6 +261,133 @@ export function formatSourceDiffResult(result: SourceDiffResult): string {
     ...result.removed.map((file) => `  - ${file}`),
     `Changed: ${result.changed.length}`,
     ...result.changed.map((file) => `  * ${file}`),
+  ].join("\n");
+}
+
+export function formatDonorList(result: DonorAdoptionListResult): string {
+  if (result.adoptions.length === 0) {
+    return ["Donor adoptions", `Root: ${result.root}`, "(none)"].join("\n");
+  }
+  return [
+    "Donor adoptions",
+    `Root: ${result.root}`,
+    ...result.adoptions.map((adoption) => {
+      const accepted = adoption.targets.filter((target) => target.baselineDecision).length;
+      return `${adoption.id.padEnd(28)} source=${adoption.sourceAlias} targets=${adoption.targets.length} accepted=${accepted}`;
+    }),
+  ].join("\n");
+}
+
+export function formatDonorAdoption(result: DonorAdoptionResult): string {
+  return [
+    `Donor adoption: ${result.definition.id}`,
+    `Title: ${result.definition.title ?? "-"}`,
+    `Definition: ${result.definitionDigest}`,
+    `Source: ${result.definition.source.alias}@${result.definition.source.observation}`,
+    "Targets:",
+    ...result.definition.targets.map((target) => {
+      const baseline = result.state.targets[target.id]?.baseline?.decision_id ?? "draft";
+      return `  - ${target.id}: system=${target.system}, baseline=${baseline}`;
+    }),
+    "Mappings:",
+    ...result.definition.mappings.map(
+      (mapping) =>
+        `  - ${mapping.id}: ${mapping.source.path} -> ${mapping.target.target_id}:${mapping.target.path}`,
+    ),
+    "Evidence policy:",
+    ...(result.definition.evidence.length > 0
+      ? result.definition.evidence.map(
+          (requirement) => `  - ${requirement.id}: ${requirement.policy}`,
+        )
+      : ["  - (none)"]),
+  ].join("\n");
+}
+
+function donorInspectionLines(inspection: DonorInspection, indentation = ""): string[] {
+  const lines = [
+    `${indentation}Inspection: ${inspection.id}`,
+    `${indentation}Source: ${inspection.source.alias}@${inspection.source.observation_id}`,
+    `${indentation}Target: ${inspection.target_id} (${inspection.target.working_tree})`,
+    `${indentation}Baseline: ${inspection.baseline_decision_id ?? "draft"}`,
+    `${indentation}Mappings:`,
+    ...inspection.mappings.map((mapping) => {
+      const facts = mapping.facts.length > 0 ? ` [${mapping.facts.join(", ")}]` : "";
+      return `${indentation}  - ${mapping.id}: source=${mapping.source.change}, target=${mapping.target.change}${facts}`;
+    }),
+    `${indentation}Evidence: required=${inspection.required_evidence.length}, advisory=${inspection.advisory_evidence.length}`,
+  ];
+  if (inspection.diagnostics.length > 0) {
+    lines.push(
+      `${indentation}Diagnostics:`,
+      ...inspection.diagnostics.map(
+        (diagnostic) =>
+          `${indentation}  - [${diagnostic.severity}] ${diagnostic.code}${diagnostic.mapping_id ? ` (${diagnostic.mapping_id})` : ""}: ${diagnostic.message}`,
+      ),
+    );
+  }
+  return lines;
+}
+
+export function formatDonorInspection(result: {
+  readonly inspection: DonorInspection;
+  readonly path: string | null;
+}): string {
+  return [
+    ...donorInspectionLines(result.inspection),
+    ...(result.path ? [`Record: ${result.path}`] : []),
+  ].join("\n");
+}
+
+export function formatDonorStatus(result: DonorStatusResult): string {
+  return [
+    `Donor status: ${result.adoptionId}`,
+    `Definition: ${result.definitionDigest}`,
+    ...result.targets.flatMap((target) => [
+      "",
+      `Target: ${target.id} (system: ${target.system})`,
+      ...donorInspectionLines(target.inspection, "  "),
+    ]),
+  ].join("\n");
+}
+
+export function formatDonorVerification(result: VerifyDonorInspectionResult): string {
+  return [
+    `Donor verification: ${result.inspection.id}`,
+    `Current: ${result.current ? "yes" : "no"}`,
+    `Required policy: ${result.policy.required_missing.length === 0 ? "satisfied" : "missing"}`,
+    `Evidence records: ${result.evidence.length}`,
+    `Required missing: ${result.policy.required_missing.join(", ") || "-"}`,
+    `Advisory missing: ${result.policy.advisory_missing.join(", ") || "-"}`,
+    `Failed or inconclusive: ${result.policy.failed.join(", ") || "-"}`,
+    ...result.diagnostics.map(
+      (diagnostic) => `[${diagnostic.severity}] ${diagnostic.code}: ${diagnostic.message}`,
+    ),
+  ].join("\n");
+}
+
+export function formatDonorDecision(result: DonorDecisionResult): string {
+  return [
+    `Donor decision: ${result.decision.outcome}`,
+    `Decision: ${result.decision.id}`,
+    `Adoption: ${result.decision.adoption_id}`,
+    `Target: ${result.decision.target_id}`,
+    `Inspection: ${result.decision.inspection_id}`,
+    `Baseline: ${result.decision.baseline_after?.decision_id ?? "unchanged"}`,
+    `Record: ${result.path}`,
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+  ].join("\n");
+}
+
+export function formatDonorHistory(result: DonorHistoryResult): string {
+  if (result.decisions.length === 0) {
+    return [`Donor history: ${result.adoptionId}`, "(none)"].join("\n");
+  }
+  return [
+    `Donor history: ${result.adoptionId}`,
+    ...result.decisions.map(
+      (decision) =>
+        `${decision.decided_at} ${decision.outcome.padEnd(8)} ${decision.target_id.padEnd(20)} ${decision.id}${decision.reason ? ` - ${decision.reason}` : ""}`,
+    ),
   ].join("\n");
 }
 

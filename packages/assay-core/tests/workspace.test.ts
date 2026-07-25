@@ -26,6 +26,8 @@ import {
   loadArchetype,
   loadManifest,
   loadSystemsRegistry,
+  projectIdForPath,
+  projectRecordPath,
   readFrameworkMode,
   readInstalledArchetype,
   registerSystem,
@@ -53,6 +55,19 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
   const result = await execa("git", [...args], { cwd, reject: false });
   expect(result.exitCode, result.stderr || result.stdout).toBe(0);
   return result.stdout;
+}
+
+/** Product repository with one tracked file and a committed history. */
+async function productRepo(name: string): Promise<string> {
+  const root = path.join(await tempDir(), name);
+  await mkdir(root, { recursive: true });
+  await writeFile(path.join(root, "package.json"), '{"name":"product"}\n', "utf8");
+  await git(root, ["init"]);
+  await git(root, ["config", "user.email", "assay@example.test"]);
+  await git(root, ["config", "user.name", "Assay Test"]);
+  await git(root, ["add", "package.json"]);
+  await git(root, ["commit", "-m", "initial"]);
+  return root;
 }
 
 async function fillAnalysisSections(
@@ -329,14 +344,17 @@ describe("checkFramework semantic validation", () => {
     ).toBe(true);
   });
 
-  it("reports warning for open iterations", async () => {
+  it("reports open iterations only when advisories are requested", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo", archetype: "solve" });
     await startIteration({ root, title: "Open Iteration" });
 
-    const result = await checkFramework({ root });
+    const structural = await checkFramework({ root });
+    expect(structural.rows.some((row) => row.message?.includes("not closed"))).toBe(false);
+    expect(structural.systems?.openIterations).toBe(1);
 
-    // warning doesn't fail check
+    const result = await checkFramework({ root, includeAdvisories: true });
+
     expect(result.ok).toBe(true);
     expect(
       result.rows.some(
@@ -515,7 +533,7 @@ describe("checkFramework semantic validation", () => {
       "utf8",
     );
 
-    const result = await checkFramework({ root });
+    const result = await checkFramework({ root, includeAdvisories: true });
 
     expect(
       result.rows.some(
@@ -541,7 +559,7 @@ describe("checkFramework semantic validation", () => {
       "utf8",
     );
 
-    const result = await checkFramework({ root });
+    const result = await checkFramework({ root, includeAdvisories: true });
 
     expect(
       result.rows.some(
@@ -564,7 +582,7 @@ describe("checkFramework semantic validation", () => {
       "utf8",
     );
 
-    const result = await checkFramework({ root });
+    const result = await checkFramework({ root, includeAdvisories: true });
 
     expect(
       result.rows.some(
@@ -582,7 +600,7 @@ describe("checkFramework semantic validation", () => {
 
     await mkdir(path.join(root, ".old", "20260620-120000"), { recursive: true });
 
-    const result = await checkFramework({ root });
+    const result = await checkFramework({ root, includeAdvisories: true });
 
     expect(
       result.rows.some(
@@ -608,7 +626,7 @@ describe("checkFramework semantic validation", () => {
       "utf8",
     );
 
-    const result = await checkFramework({ root });
+    const result = await checkFramework({ root, includeAdvisories: true });
 
     expect(
       result.rows.some(
@@ -753,6 +771,44 @@ describe("workspace operations", () => {
     expect((await git(root, ["status", "--short"])).trim()).toBe("");
   });
 
+  it("records the attached workspace in the project registry unless tracking is disabled", async () => {
+    const registryRoot = path.join(await tempDir(), "registry");
+    const previousRegistryRoot = process.env.ASSAY_PROJECT_REGISTRY_ROOT;
+
+    try {
+      process.env.ASSAY_PROJECT_REGISTRY_ROOT = registryRoot;
+
+      const tracked = await productRepo("tracked-attach");
+      await attachExistingRepo({
+        root: tracked,
+        name: "Tracked Attach",
+        privacy: "private",
+        now: new Date("2026-07-06T08:00:00"),
+      });
+      expect(await exists(projectRecordPath(projectIdForPath(tracked), { registryRoot }))).toBe(
+        true,
+      );
+
+      const untracked = await productRepo("untracked-attach");
+      await attachExistingRepo({
+        root: untracked,
+        name: "Untracked Attach",
+        privacy: "private",
+        noTrack: true,
+        now: new Date("2026-07-06T08:00:00"),
+      });
+      expect(await exists(projectRecordPath(projectIdForPath(untracked), { registryRoot }))).toBe(
+        false,
+      );
+    } finally {
+      if (previousRegistryRoot === undefined) {
+        Reflect.deleteProperty(process.env, "ASSAY_PROJECT_REGISTRY_ROOT");
+      } else {
+        process.env.ASSAY_PROJECT_REGISTRY_ROOT = previousRegistryRoot;
+      }
+    }
+  });
+
   it("adds references while ignoring common generated directories and appending an event", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
@@ -869,9 +925,12 @@ describe("workspace operations", () => {
 
     const yaml = await readFile(path.join(ref.absolutePath, "reference.yaml"), "utf8");
     expect(yaml).toContain("analyzed: true");
+    const content = await readFile(analysis.absolutePath, "utf8");
+    expect(content).toContain("- Status: applied");
+    expect(content).not.toContain("- Source analysis status:");
 
     // check should no longer warn about this reference being unanalyzed.
-    const check = await checkFramework({ root });
+    const check = await checkFramework({ root, includeAdvisories: true });
     expect(
       check.rows.some(
         (row) =>
@@ -920,7 +979,7 @@ describe("workspace operations", () => {
 
     // Status is draft (open work), so check flags it as an open analysis — not
     // silently "done". The reference is unanalyzed until the analysis closes.
-    const check = await checkFramework({ root });
+    const check = await checkFramework({ root, includeAdvisories: true });
     expect(
       check.rows.some(
         (row) =>
@@ -1400,7 +1459,7 @@ describe("closeIteration", () => {
 });
 
 describe("closeAnalysis", () => {
-  it("rejects empty analysis close by default", async () => {
+  it("records an explicit close without mechanically gating analysis content", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
     const created = await createAnalysis({
@@ -1409,14 +1468,17 @@ describe("closeAnalysis", () => {
       now: new Date("2026-06-14T10:00:00"),
     });
 
-    await expect(
-      closeAnalysis({
-        root,
-        path: created.path,
-        exit: "adopt",
-        now: new Date("2026-06-15T10:00:00"),
-      }),
-    ).rejects.toThrow("non-empty ## Key observations");
+    const result = await closeAnalysis({
+      root,
+      path: created.path,
+      exit: "adopt",
+      now: new Date("2026-06-15T10:00:00"),
+    });
+
+    expect(result.path).toBe(created.path);
+    const content = await readFile(created.absolutePath, "utf8");
+    expect(content).toContain("Status: applied");
+    expect(content).toContain("[x] adopt");
   });
 
   it("closes an analysis with an adopt exit", async () => {
@@ -1503,7 +1565,7 @@ describe("closeAnalysis", () => {
     expect(content).toContain(`- Source observation: ${synced.observation?.observation_id}`);
     expect(content).toContain("- Source change class: major");
 
-    const before = await checkFramework({ root });
+    const before = await checkFramework({ root, includeAdvisories: true });
     expect(before.rows.some((row) => row.message?.includes("needs revalidation analysis"))).toBe(
       true,
     );
@@ -1519,24 +1581,72 @@ describe("closeAnalysis", () => {
       now: new Date("2026-07-01T11:00:00"),
     });
 
-    content = await readFile(
-      path.join(
-        root,
-        "references",
-        "source",
-        "observations",
-        `${synced.observation?.observation_id}.yaml`,
-      ),
-      "utf8",
+    const observationPath = path.join(
+      root,
+      "references",
+      "source",
+      "observations",
+      `${synced.observation?.observation_id}.yaml`,
     );
+    content = await readFile(observationPath, "utf8");
     expect(content).toContain("analysis_status: closed");
     expect(content).toContain(`analysis_path: ${analysis.path}`);
     expect(content).toContain("analysis_exit: adopt");
+    const closedObservation = content;
 
-    const after = await checkFramework({ root });
+    content = await readFile(analysis.absolutePath, "utf8");
+    expect(content).toContain("- Source analysis status: closed");
+    expect(content).not.toContain("- Source analysis status: open");
+
+    await closeAnalysis({
+      root,
+      path: analysis.path,
+      exit: "adopt",
+      now: new Date("2026-07-01T12:00:00"),
+    });
+    content = await readFile(analysis.absolutePath, "utf8");
+    expect(content.match(/^- Source analysis status: closed$/gm)).toHaveLength(1);
+    expect(await readFile(observationPath, "utf8")).toBe(closedObservation);
+
+    const after = await checkFramework({ root, includeAdvisories: true });
     expect(after.rows.some((row) => row.message?.includes("needs revalidation analysis"))).toBe(
       false,
     );
+  });
+
+  it("does not mark a source-bound analysis closed when source closure fails", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
+    const added = await addSource({
+      root,
+      source,
+      alias: "source",
+      now: new Date("2026-07-01T08:00:00"),
+    });
+    const analysis = await createAnalysis({
+      root,
+      title: "Review Source",
+      forSource: "source",
+      now: new Date("2026-07-01T09:00:00"),
+    });
+    await rm(path.join(root, added.observationFile));
+
+    await expect(
+      closeAnalysis({
+        root,
+        path: analysis.path,
+        exit: "adopt",
+        now: new Date("2026-07-01T10:00:00"),
+      }),
+    ).rejects.toThrow("source observation not found");
+
+    const content = await readFile(analysis.absolutePath, "utf8");
+    expect(content).toContain("- Status: draft");
+    expect(content).toContain("- Source analysis status: open");
+    expect(content).not.toContain("- Source analysis status: closed");
   });
 });
 

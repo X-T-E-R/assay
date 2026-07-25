@@ -61,6 +61,44 @@ export async function isGitCheckout(checkout: string): Promise<boolean> {
   return exists(path.join(checkout, ".git"));
 }
 
+export async function assertGitCheckoutSafeForRefresh(
+  checkout: string,
+  expectedCommit?: string | null,
+): Promise<void> {
+  if (!(await isGitCheckout(checkout))) {
+    return;
+  }
+
+  const status = await tryGit(checkout, ["status", "--porcelain"]);
+  if (status.exitCode !== 0) {
+    throw new FrameworkError(`managed source checkout status failed: ${gitCommandOutput(status)}`, {
+      code: "IO_ERROR",
+    });
+  }
+  if (status.stdout.trim() !== "") {
+    throw new FrameworkError(
+      `managed source checkout has unrecorded changes; preserve or remove them before refresh: ${checkout}`,
+      { code: "IO_ERROR" },
+    );
+  }
+
+  if (expectedCommit) {
+    const head = await tryGit(checkout, ["rev-parse", "HEAD"]);
+    if (head.exitCode !== 0) {
+      throw new FrameworkError(
+        `managed source checkout revision failed: ${gitCommandOutput(head)}`,
+        { code: "IO_ERROR" },
+      );
+    }
+    if (head.stdout.trim() !== expectedCommit) {
+      throw new FrameworkError(
+        `managed source checkout has an unrecorded revision; preserve it before refresh: ${checkout}`,
+        { code: "IO_ERROR" },
+      );
+    }
+  }
+}
+
 async function currentCheckoutBranch(checkout: string): Promise<string | null> {
   if (!(await isGitCheckout(checkout))) {
     return null;

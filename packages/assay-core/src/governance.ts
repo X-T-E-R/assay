@@ -2,16 +2,14 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 
 /**
- * External governance systems that assay should defer to for ADR/decision
- * recording, rather than maintaining its own parallel ADR subsystem (ADR-0005).
- * Some systems block ADR creation unless --force; common ADR directories warn
- * without blocking creation.
+ * External governance systems that may already record decisions. Detection is
+ * advisory: Assay still provides its own plain-file ADR tool when requested.
  */
 export interface GovernanceDetection {
   readonly system: "trellis" | "superpowers" | "docs-adr" | "git" | "none";
   readonly path: string;
   readonly message: string;
-  readonly action: "block" | "warn" | "none";
+  readonly action: "warn" | "none";
 }
 
 async function isDirectory(target: string): Promise<boolean> {
@@ -30,9 +28,9 @@ async function isDirectory(target: string): Promise<boolean> {
  * Returns the first match, or { system: "none" } if none found.
  *
  * Detection order:
- * 1. trellis (.trellis/ directory) — full task/spec/governance system
+ * 1. trellis (.trellis/ directory) — full task/spec/governance system; warn
  * 2. superpowers (.superpowers/ directory) — external workflow/governance
- *    system
+ *    system; warn
  * 3. docs-adr (docs/adr/ directory) — common ADR convention; warn only
  * 4. git (.git/ directory) — baseline version control (informational only,
  *    does not block ADR creation since git alone is not a decision-recording
@@ -44,9 +42,9 @@ export async function detectExternalGovernance(root: string): Promise<Governance
     return {
       system: "trellis",
       path: ".trellis/",
-      action: "block",
+      action: "warn",
       message:
-        "detected trellis (.trellis/). Decision records should go through trellis tasks/specs; Assay ADR is redundant. Use --force to create an Assay ADR anyway.",
+        "detected trellis (.trellis/). It may already record decisions; Assay will still create the requested ADR in its own decisions folder.",
     };
   }
 
@@ -55,9 +53,9 @@ export async function detectExternalGovernance(root: string): Promise<Governance
     return {
       system: "superpowers",
       path: ".superpowers/",
-      action: "block",
+      action: "warn",
       message:
-        "detected superpowers governance (.superpowers/). Decision records should go through superpowers; Assay ADR is redundant. Use --force to create an Assay ADR anyway.",
+        "detected superpowers governance (.superpowers/). It may already record decisions; Assay will still create the requested ADR in its own decisions folder.",
     };
   }
 
@@ -68,7 +66,7 @@ export async function detectExternalGovernance(root: string): Promise<Governance
       path: "docs/adr/",
       action: "warn",
       message:
-        "detected existing ADR directory (docs/adr/). Assay will create its ADR under knowledge/decisions; consider consolidating decision records.",
+        "detected existing ADR directory (docs/adr/). Assay will create its ADR in its own decisions folder; consider consolidating decision records.",
     };
   }
 

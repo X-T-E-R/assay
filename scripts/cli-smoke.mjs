@@ -61,6 +61,64 @@ function main() {
     run("CLI check", ["check"], smokeOptions);
     run("CLI status", ["status"], smokeOptions);
     run("CLI update dry-run", ["update", "--dry-run"], smokeOptions);
+
+    const donorSource = path.join(tempRoot, "donor-source");
+    mkdirSync(path.join(donorSource, "src"), { recursive: true });
+    writeFileSync(path.join(donorSource, "src", "feature.txt"), "source-v1\n", "utf8");
+    const sourceAdd = run(
+      "CLI donor source add",
+      ["source", "add", donorSource, "donor-source"],
+      smokeOptions,
+    );
+    const observation = sourceAdd.match(/observations\/([^/\s]+)\.yaml/)?.[1];
+    if (!observation) {
+      fail("CLI donor source add did not report an observation id.");
+    }
+    mkdirSync(path.join(demo, "systems", "product", "adopted"), { recursive: true });
+    writeFileSync(
+      path.join(demo, "systems", "product", "adopted", "feature.txt"),
+      "target-v1\n",
+      "utf8",
+    );
+    run(
+      "CLI donor target register",
+      ["system", "register", "systems/product", "--name", "product", "--vcs", "none", "--primary"],
+      smokeOptions,
+    );
+    const donorDefinition = path.join(tempRoot, "donor.json");
+    writeFileSync(
+      donorDefinition,
+      `${JSON.stringify(
+        {
+          schema: "assay.donor-adoption/v1",
+          id: "smoke-donor",
+          source: { alias: "donor-source", observation },
+          targets: [{ id: "product", system: "product" }],
+          mappings: [
+            {
+              id: "feature",
+              source: { path: "src/feature.txt" },
+              target: { target_id: "product", path: "adopted/feature.txt" },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    run("CLI donor register", ["donor", "register", "--file", donorDefinition], smokeOptions);
+    run(
+      "CLI donor decide",
+      ["donor", "decide", "smoke-donor", "--target", "product", "--outcome", "accept"],
+      smokeOptions,
+    );
+    const donorStatus = run("CLI donor status", ["donor", "status", "smoke-donor"], smokeOptions);
+    if (!donorStatus.includes("source=no-direct-change")) {
+      fail("CLI donor status did not report the accepted source baseline.");
+    }
+    run("CLI check with donor state", ["check"], smokeOptions);
+
     const projects = run("CLI projects list", ["projects", "list", "--json"], smokeOptions);
     if (!projects.includes("Assay Smoke")) {
       fail("CLI projects list did not include the initialized project.");

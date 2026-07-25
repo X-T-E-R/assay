@@ -16,6 +16,7 @@ import {
   MANIFEST_FILE,
   SYSTEMS_REGISTRY_FILE,
 } from "./constants.js";
+import { collectDonorIntegrityRows, getDonorSummary } from "./donors/index.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
@@ -96,6 +97,8 @@ export interface InitFrameworkResult {
 
 export interface CheckFrameworkOptions {
   readonly root: string;
+  /** Include non-blocking workflow and content reminders in addition to integrity checks. */
+  readonly includeAdvisories?: boolean;
 }
 
 export interface CheckFrameworkResult {
@@ -138,6 +141,13 @@ export interface FrameworkStatusLivingSources {
   readonly majorRevalidations: number;
 }
 
+export interface FrameworkStatusDonors {
+  readonly adoptions: number;
+  readonly targets: number;
+  readonly acceptedTargets: number;
+  readonly draftTargets: number;
+}
+
 export interface FrameworkStatusResult {
   readonly root: string;
   readonly hasManifest: boolean;
@@ -151,6 +161,7 @@ export interface FrameworkStatusResult {
   readonly zones: FrameworkZoneCount[];
   readonly systems?: readonly FrameworkStatusSystem[];
   readonly livingSources?: FrameworkStatusLivingSources;
+  readonly donors?: FrameworkStatusDonors;
   readonly openIterations?: number;
   readonly knowledgeEntries?: number;
 }
@@ -257,6 +268,7 @@ export interface CloseAnalysisOptions {
   readonly path: string;
   readonly exit: AnalysisExit;
   readonly note?: string;
+  /** @deprecated Analysis close no longer applies mechanical content gates. */
   readonly allowEmpty?: boolean;
   readonly now?: Date;
 }
@@ -652,6 +664,7 @@ export async function checkFramework(
   options: CheckFrameworkOptions,
 ): Promise<CheckFrameworkResult> {
   const root = path.resolve(options.root);
+  const includeAdvisories = options.includeAdvisories ?? false;
 
   // Resolve the workspace layout up front so checks point at the right paths
   // for both standalone (work folders at root) and overlay (work folders
@@ -826,7 +839,7 @@ export async function checkFramework(
   // Semantic check 3: open iterations
   try {
     openIterations = await countOpenIterations(root, layout);
-    if (openIterations > 0) {
+    if (includeAdvisories && openIterations > 0) {
       rows.push({
         path: `${workspaceRelativePath(layout, "iterations")}/`,
         status: "warning",
@@ -914,123 +927,139 @@ export async function checkFramework(
     // knowledge dir may not exist; skip
   }
 
-  // Semantic check 6: unanalyzed frozen references
+  // Advisory check 1: unanalyzed frozen references
   // The core loop is references → analyses → .... A frozen reference that no
-  // analysis cites is "absorbed into the archive then forgotten" — exactly
-  // the failure mode this framework exists to prevent. Scan every frozen
-  // reference directory and check whether any analysis file mentions its name
-  // or path. Unanalyzed references surface as warnings so they cannot hide.
-  try {
-    const frozenRoot = path.join(workspacePath(root, layout, "references"), "frozen");
-    if (await exists(frozenRoot)) {
-      const references = await collectFrozenReferences(root, frozenRoot);
-      if (references.length > 0) {
-        const analysisText = await readAllAnalysisText(root, layout);
-        for (const ref of references) {
-          // Authoritative signal: reference.yaml.analyzed === true means an
-          // analysis was closed against this reference (see closeAnalysis).
-          const yamlPath = path.join(root, ref.relativePath, "reference.yaml");
-          let explicitlyAnalyzed = false;
-          try {
-            if (await exists(yamlPath)) {
-              const parsed = parseReferenceYaml(await readFile(yamlPath, "utf8"));
-              explicitlyAnalyzed = parsed.analyzed === true;
+  // analysis cites can be useful to review, but it is workflow state rather
+  // than persisted-record corruption. Report it only when explicitly asked.
+  if (includeAdvisories) {
+    try {
+      const frozenRoot = path.join(workspacePath(root, layout, "references"), "frozen");
+      if (await exists(frozenRoot)) {
+        const references = await collectFrozenReferences(root, frozenRoot);
+        if (references.length > 0) {
+          const analysisText = await readAllAnalysisText(root, layout);
+          for (const ref of references) {
+            // Authoritative signal: reference.yaml.analyzed === true means an
+            // analysis was closed against this reference (see closeAnalysis).
+            const yamlPath = path.join(root, ref.relativePath, "reference.yaml");
+            let explicitlyAnalyzed = false;
+            try {
+              if (await exists(yamlPath)) {
+                const parsed = parseReferenceYaml(await readFile(yamlPath, "utf8"));
+                explicitlyAnalyzed = parsed.analyzed === true;
+              }
+            } catch {
+              // unreadable yaml; fall back to citation check
             }
-          } catch {
-            // unreadable yaml; fall back to citation check
-          }
-          if (explicitlyAnalyzed) continue;
-          const cited = analysisText.some(
-            (text) => text.includes(ref.name) || text.includes(ref.relativePath),
-          );
-          if (!cited) {
-            rows.push({
-              path: ref.relativePath,
-              status: "warning",
-              message: `frozen reference '${ref.name}' has no analysis citing it (references → analyses loop is incomplete)`,
-            });
+            if (explicitlyAnalyzed) continue;
+            const cited = analysisText.some(
+              (text) => text.includes(ref.name) || text.includes(ref.relativePath),
+            );
+            if (!cited) {
+              rows.push({
+                path: ref.relativePath,
+                status: "warning",
+                message: `frozen reference '${ref.name}' has no analysis citing it (references → analyses loop is incomplete)`,
+              });
+            }
           }
         }
       }
+    } catch {
+      // references/frozen may not exist; skip
     }
-  } catch {
-    // references/frozen may not exist; skip
   }
 
-  // Semantic check 7: empty draft analyses
-  // An analysis card left at Status: draft with no Key observations content is
-  // a shell that was never filled — the "write docs then stop" anti-pattern.
-  try {
-    const analysesRoot = workspacePath(root, layout, "analyses");
-    if (await exists(analysesRoot)) {
-      const emptyDrafts = await findEmptyDraftAnalyses(root, analysesRoot);
-      for (const draft of emptyDrafts) {
-        rows.push({
-          path: draft.relativePath,
-          status: "warning",
-          message: `analysis '${draft.relativePath}' is still a draft with empty 'Key observations' (content was never filled in)`,
-        });
+  // Advisory check 2: empty draft analyses.
+  if (includeAdvisories) {
+    try {
+      const analysesRoot = workspacePath(root, layout, "analyses");
+      if (await exists(analysesRoot)) {
+        const emptyDrafts = await findEmptyDraftAnalyses(root, analysesRoot);
+        for (const draft of emptyDrafts) {
+          rows.push({
+            path: draft.relativePath,
+            status: "warning",
+            message: `analysis '${draft.relativePath}' is still a draft with empty 'Key observations'`,
+          });
+        }
       }
+    } catch {
+      // analyses dir may not exist; skip
     }
-  } catch {
-    // analyses dir may not exist; skip
   }
 
-  // Semantic check 8: stale adoption archive
-  // `adopt` moves existing content into .old/<stamp>/ and is supposed to be
-  // followed by moving artifacts into the new structure once direction is
-  // clear. A lingering .old/ means adoption stopped halfway.
-  try {
-    const oldRoot = path.join(root, ".old");
-    if (await exists(oldRoot)) {
-      const entries = await readdir(oldRoot, { withFileTypes: true });
-      const stamps = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-      if (stamps.length > 0) {
-        rows.push({
-          path: ".old",
-          status: "warning",
-          message: `adoption archive .old/ still contains ${stamps.length} stamp(s): ${stamps.join(", ")}. Move archived artifacts into the new structure or confirm cleanup.`,
-        });
+  // Advisory check 3: adoption archives that still contain staged material.
+  if (includeAdvisories) {
+    try {
+      const oldRoot = path.join(root, ".old");
+      if (await exists(oldRoot)) {
+        const entries = await readdir(oldRoot, { withFileTypes: true });
+        const stamps = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        if (stamps.length > 0) {
+          rows.push({
+            path: ".old",
+            status: "warning",
+            message: `adoption archive .old/ still contains ${stamps.length} stamp(s): ${stamps.join(", ")}. Move archived artifacts into the new structure or confirm cleanup.`,
+          });
+        }
       }
+    } catch {
+      // .old may not exist; skip
     }
-  } catch {
-    // .old may not exist; skip
   }
 
-  // Semantic check 9: dangling pending queue entries
-  // A queue.json of pending reference-analysis actions that never get consumed
-  // is the literal evidence of "freeze then forget". Surface pending entries so
-  // the framework cannot report ok while work is stranded.
-  try {
-    const queueCandidates = [
-      path.join(root, MANAGED_DIR, "queue.json"),
-      path.join(root, LEGACY_MANAGED_DIR, "queue.json"),
-    ];
-    for (const queuePath of queueCandidates) {
-      if (!(await exists(queuePath))) continue;
-      const raw = await readFile(queuePath, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      const pending = countPendingQueueEntries(parsed);
-      if (pending > 0) {
-        rows.push({
-          path: relativeDisplayPath(queuePath, root),
-          status: "warning",
-          message: `queue has ${pending} pending entry/entries never consumed (freeze-then-forget). Process or prune them.`,
-        });
+  // Advisory check 4: pending queue entries.
+  if (includeAdvisories) {
+    try {
+      const queueCandidates = [
+        path.join(root, MANAGED_DIR, "queue.json"),
+        path.join(root, LEGACY_MANAGED_DIR, "queue.json"),
+      ];
+      for (const queuePath of queueCandidates) {
+        if (!(await exists(queuePath))) continue;
+        const raw = await readFile(queuePath, "utf8");
+        const parsed = JSON.parse(raw) as unknown;
+        const pending = countPendingQueueEntries(parsed);
+        if (pending > 0) {
+          rows.push({
+            path: relativeDisplayPath(queuePath, root),
+            status: "warning",
+            message: `queue has ${pending} pending entry/entries. Process or prune them when useful.`,
+          });
+        }
       }
+    } catch {
+      // queue may be missing or unreadable; skip
     }
-  } catch {
-    // queue may be missing or unreadable; skip
   }
 
-  // Semantic check 10: living source observation health
+  // Semantic check 6: living source observation integrity. Major-change
+  // revalidation is an opt-in advisory; missing referenced records remain
+  // visible in the default structural check.
   // New-style external sources live at references/<source>/ with source.yaml
-  // plus an observation ledger under .assay/. These warnings keep the new
-  // model from becoming another "blob exists, therefore done" escape hatch.
+  // plus an observation ledger under .assay/.
   try {
-    rows.push(...(await collectSourceHealthRows(root)));
-  } catch {
-    // new-style references may not exist or may be legacy-only; skip
+    rows.push(...(await collectSourceHealthRows(root, { includeAdvisories })));
+  } catch (error) {
+    rows.push({
+      path: workspaceRelativePath(layout, "references"),
+      status: "error",
+      message:
+        error instanceof Error ? error.message : "source observation state failed validation",
+    });
+  }
+
+  // Semantic check 7: donor persistence integrity. Ordinary source/target
+  // changes and advisory evidence intentionally stay out of global check.
+  try {
+    rows.push(...(await collectDonorIntegrityRows(root)));
+  } catch (error) {
+    rows.push({
+      path: `${MANAGED_DIR}/donors`,
+      status: "error",
+      message: error instanceof Error ? error.message : "donor state failed validation",
+    });
   }
 
   return {
@@ -1180,33 +1209,6 @@ function sectionHasHumanContent(content: string, heading: string): boolean {
   });
 }
 
-function assertAnalysisCloseContent(
-  content: string,
-  exit: AnalysisExit,
-  allowEmpty: boolean,
-): void {
-  if (allowEmpty) return;
-  if (hasEmptyKeyObservations(content)) {
-    throw new FrameworkError(
-      "analysis close requires non-empty ## Key observations; use --allow-empty to override",
-    );
-  }
-
-  const requiredSection =
-    exit === "adopt"
-      ? "Adopt"
-      : exit === "reject"
-        ? "Reject"
-        : exit === "experiment"
-          ? "Next iteration"
-          : null;
-  if (requiredSection && !sectionHasHumanContent(content, requiredSection)) {
-    throw new FrameworkError(
-      `analysis close --exit ${exit} requires non-empty ## ${requiredSection}; use --allow-empty to override`,
-    );
-  }
-}
-
 /**
  * Count entries in a parsed queue.json that are still "pending". Accepts both
  * an array of entry objects and an object with an "entries" array. Each entry
@@ -1294,6 +1296,13 @@ export async function getFrameworkStatus(
     // sources may not exist or may be mid-migration; status omits the summary
   }
 
+  let donors: FrameworkStatusDonors | undefined;
+  try {
+    donors = (await getDonorSummary(root)) ?? undefined;
+  } catch {
+    // donor state may be absent or mid-repair; check reports structural errors
+  }
+
   const knowledgeCount = await countKnowledgeEntries(root, layout);
 
   if (!manifest) {
@@ -1304,6 +1313,7 @@ export async function getFrameworkStatus(
       zones,
       ...(systems ? { systems } : {}),
       ...(livingSources ? { livingSources } : {}),
+      ...(donors ? { donors } : {}),
       ...(openIterations !== undefined ? { openIterations } : {}),
       knowledgeEntries: knowledgeCount,
     };
@@ -1322,6 +1332,7 @@ export async function getFrameworkStatus(
     zones,
     ...(systems ? { systems } : {}),
     ...(livingSources ? { livingSources } : {}),
+    ...(donors ? { donors } : {}),
     ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
   };
@@ -1971,20 +1982,29 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   }
 
   let content = await readFile(absolutePath, "utf8");
-  assertAnalysisCloseContent(content, options.exit, options.allowEmpty ?? false);
   const sourceAliasMatch = content.match(/^- Source alias:\s*(\S+)/m);
   const sourceObservationMatch = content.match(/^- Source observation:\s*(\S+)/m);
   const sourceBinding =
     sourceAliasMatch?.[1] && sourceObservationMatch?.[1]
       ? { alias: sourceAliasMatch[1], observation: sourceObservationMatch[1] }
       : null;
-  if (sourceBinding) {
-    await resolveSourceObservation({
-      root,
-      alias: sourceBinding.alias,
-      observation: sourceBinding.observation,
-    });
-  }
+  const sourceResolution = sourceBinding
+    ? await resolveSourceObservation({
+        root,
+        alias: sourceBinding.alias,
+        observation: sourceBinding.observation,
+      })
+    : null;
+  const sourceObservationSnapshot = sourceResolution
+    ? {
+        absolutePath: path.join(root, sourceResolution.observationFile),
+        content: await readFile(path.join(root, sourceResolution.observationFile), "utf8"),
+      }
+    : null;
+  const sourceObservationAlreadyClosed =
+    sourceResolution?.observation.analysis_status === "closed" &&
+    sourceResolution.observation.analysis_path === analysisPath &&
+    sourceResolution.observation.analysis_exit === options.exit;
   // Set status
   const statusMap: Record<AnalysisExit, string> = {
     adopt: "applied",
@@ -2005,7 +2025,74 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   if (options.note) {
     content += `\n> Closed on ${date}: ${options.note}\n`;
   }
-  await writeFile(absolutePath, content, "utf8");
+
+  let closedSourceObservation: string | null = null;
+  let sourceObservationChanged = false;
+  if (sourceBinding && sourceObservationSnapshot) {
+    if (sourceObservationAlreadyClosed && sourceResolution) {
+      closedSourceObservation = sourceResolution.observationFile;
+    } else {
+      try {
+        const closed = await closeSourceObservationAnalysis({
+          root,
+          alias: sourceBinding.alias,
+          observation: sourceBinding.observation,
+          analysisPath,
+          analysisExit: options.exit,
+          now,
+        });
+        closedSourceObservation = closed.observationFile;
+        sourceObservationChanged = true;
+      } catch (error) {
+        try {
+          await writeFile(
+            sourceObservationSnapshot.absolutePath,
+            sourceObservationSnapshot.content,
+            "utf8",
+          );
+        } catch (rollbackError) {
+          throw new FrameworkError("source observation close failed and could not be rolled back", {
+            cause: error,
+            details: {
+              rollback:
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            },
+          });
+        }
+        throw error;
+      }
+    }
+    content = content.replace(
+      /^- Source analysis status:\s*\S+/m,
+      "- Source analysis status: closed",
+    );
+  }
+
+  try {
+    await writeFile(absolutePath, content, "utf8");
+  } catch (error) {
+    if (sourceObservationSnapshot && sourceObservationChanged) {
+      try {
+        await writeFile(
+          sourceObservationSnapshot.absolutePath,
+          sourceObservationSnapshot.content,
+          "utf8",
+        );
+      } catch (rollbackError) {
+        throw new FrameworkError(
+          "analysis close failed and the source observation could not be rolled back",
+          {
+            cause: error,
+            details: {
+              rollback:
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            },
+          },
+        );
+      }
+    }
+    throw error;
+  }
 
   // If this analysis was bound to a frozen reference, flip that reference's
   // `analyzed` flag to true so `check` stops warning about it. This closes the
@@ -2019,19 +2106,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
     if (await markReferenceAnalyzed(yamlPath)) {
       analyzedReference = freezePath;
     }
-  }
-
-  let closedSourceObservation: string | null = null;
-  if (sourceBinding) {
-    const closed = await closeSourceObservationAnalysis({
-      root,
-      alias: sourceBinding.alias,
-      observation: sourceBinding.observation,
-      analysisPath,
-      analysisExit: options.exit,
-      now,
-    });
-    closedSourceObservation = closed.observationFile;
   }
 
   const eventFile = await appendEvent(

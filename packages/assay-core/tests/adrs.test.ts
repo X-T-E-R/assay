@@ -176,28 +176,38 @@ describe("ADR index", () => {
     expect(acceptedAdrs.map((adr) => adr.id)).toEqual([accepted.adr.id]);
   });
 
-  it("defers ADR creation when trellis is detected, unless --force", async () => {
-    const root = await initWorkspace("AdrDefer");
+  it("warns without blocking ADR creation when trellis is detected", async () => {
+    const root = await initWorkspace("AdrTrellisAdvisory");
+    const warnings: string[] = [];
     await mkdir(path.join(root, ".trellis"), { recursive: true });
 
-    await expect(createAdr(root, { title: "Should Defer" })).rejects.toThrow(
-      /external governance detected.*trellis.*Use --force/,
+    const result = await createAdr(
+      root,
+      { title: "Assay Decision" },
+      { onWarning: (message) => warnings.push(message) },
     );
 
-    const forced = await createAdr(root, { title: "Forced" }, { force: true });
-    expect(forced.adr.status).toBe("proposed");
+    expect(result.adr.id).toBe("ADR-0001-assay-decision");
+    expect(warnings).toEqual([
+      expect.stringContaining("external governance detected (trellis at .trellis/)"),
+    ]);
   });
 
-  it("defers ADR creation when .superpowers governance is detected", async () => {
-    const root = await initWorkspace("AdrDeferSuperpowers");
+  it("warns without blocking ADR creation when .superpowers governance is detected", async () => {
+    const root = await initWorkspace("AdrSuperpowersAdvisory");
+    const warnings: string[] = [];
     await mkdir(path.join(root, ".superpowers"), { recursive: true });
 
-    await expect(createAdr(root, { title: "Should Defer" })).rejects.toThrow(
-      /external governance detected.*superpowers.*Use --force/,
+    const result = await createAdr(
+      root,
+      { title: "Assay Decision" },
+      { onWarning: (message) => warnings.push(message) },
     );
 
-    const forced = await createAdr(root, { title: "Forced" }, { force: true });
-    expect(forced.adr.status).toBe("proposed");
+    expect(result.adr.id).toBe("ADR-0001-assay-decision");
+    expect(warnings).toEqual([
+      expect.stringContaining("external governance detected (superpowers at .superpowers/)"),
+    ]);
   });
 
   it("does not treat a bare superpowers directory as external governance", async () => {

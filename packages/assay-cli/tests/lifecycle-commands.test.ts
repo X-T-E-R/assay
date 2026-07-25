@@ -249,7 +249,7 @@ describe("assay analysis close CLI", () => {
     expect(content).toContain("[x] adopt");
   });
 
-  it("rejects empty analysis close by default", async () => {
+  it("records an explicit close without mechanically gating analysis content", async () => {
     const root = await initWorkspace("AnalCloseEmpty");
     const newRes = await runCli(["analysis", "new", "Empty Review", "--root", root]);
     const match = newRes.stdout.match(/analyses\/references\/[^\s]+\.md/);
@@ -265,8 +265,11 @@ describe("assay analysis close CLI", () => {
       "adopt",
     ]);
 
-    expect(close.exitCode).toBe(1);
-    expect(close.stderr).toContain("non-empty ## Key observations");
+    expect(close.exitCode).toBe(0);
+    expect(close.stdout).toContain("Closed analysis:");
+    const content = await readFile(path.join(root, analysisPath), "utf8");
+    expect(content).toContain("Status: applied");
+    expect(content).toContain("[x] adopt");
   });
 
   it("rejects invalid --exit values", async () => {
@@ -340,7 +343,7 @@ describe("assay analysis close CLI", () => {
     expect(yaml).toContain("analyzed: true");
   });
 
-  it("binds analysis to a living source observation and clears major check warning", async () => {
+  it("keeps major revalidation optional and clears the requested advisory on close", async () => {
     const root = await initWorkspace("AnalForSource");
     const source = path.join(root, "..", "anal-for-source");
     await mkdir(source, { recursive: true });
@@ -355,8 +358,10 @@ describe("assay analysis close CLI", () => {
     expect(observationMatch).not.toBeNull();
     const observationId = observationMatch?.[1] ?? "";
 
-    const checkBefore = await runCli(["check", "--root", root]);
-    expect(checkBefore.stdout).toContain("needs revalidation analysis");
+    const structuralBefore = await runCli(["check", "--root", root]);
+    expect(structuralBefore.stdout).not.toContain("needs revalidation analysis");
+    const advisoryBefore = await runCli(["check", "--root", root, "--advisories"]);
+    expect(advisoryBefore.stdout).toContain("needs revalidation analysis");
 
     const newRes = await runCli([
       "analysis",
@@ -397,7 +402,7 @@ describe("assay analysis close CLI", () => {
     expect(observationYaml).toContain("analysis_status: closed");
     expect(observationYaml).toContain(`analysis_path: ${analysisPath}`);
 
-    const checkAfter = await runCli(["check", "--root", root]);
+    const checkAfter = await runCli(["check", "--root", root, "--advisories"]);
     expect(checkAfter.stdout).not.toContain("needs revalidation analysis");
   }, 30_000);
 });

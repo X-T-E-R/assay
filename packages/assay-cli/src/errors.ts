@@ -5,9 +5,12 @@ const USER_ERROR_CODES = new Set<FrameworkErrorCode>([
   "INVALID_EVENT",
   "INVALID_OPERATION_REPORT",
   "INVALID_UPDATE_PLAN",
+  "INVALID_DONOR",
+  "DONOR_POLICY_BLOCKED",
+  "DONOR_STALE",
+  "DONOR_BUSY",
   "ALREADY_EXISTS",
   "NOT_FOUND",
-  "GOVERNANCE_DEFERRED",
 ]);
 
 export interface CliFailure {

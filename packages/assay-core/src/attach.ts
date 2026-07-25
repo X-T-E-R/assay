@@ -9,6 +9,8 @@ import { appendEvent } from "./events.js";
 import { defaultOverlayLayout, workspacePath } from "./layout.js";
 import { defaultManifest, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
+import { loadArchetype } from "./profile.js";
+import { recordProjectLifecycleBestEffort } from "./project-registry.js";
 import type {
   SystemRecord,
   SystemsRegistry,
@@ -23,6 +25,7 @@ export interface AttachExistingRepoOptions {
   readonly name?: string;
   readonly archetype?: string;
   readonly privacy?: WorkspacePrivacy;
+  /** Skip the user-global Assay project registry write for this attach. */
   readonly noTrack?: boolean;
   readonly now?: Date;
 }
@@ -142,6 +145,12 @@ export async function attachExistingRepo(
   const project = options.name ?? path.basename(root);
   const layout = defaultOverlayLayout(privacy);
 
+  // Validate the archetype before writing any state. Without this an
+  // `--archetype bogus` attach produced a manifest that every later command
+  // (status, check, adr, ...) failed to load its archetype for.
+  const archetypeName = options.archetype ?? "study";
+  const archetype = await loadArchetype(archetypeName, { root });
+
   // Scaffold .assay/ state dirs.
   await mkdir(path.join(root, MANAGED_DIR), { recursive: true });
   for (const area of [
@@ -159,7 +168,8 @@ export async function attachExistingRepo(
 
   // Manifest with overlay layout.
   const manifest = defaultManifest(project, {
-    archetype: (options.archetype as never) ?? "study",
+    archetype: archetypeName,
+    mode: archetype.mode,
   });
   manifest.layout = layout;
   manifest.layout_version = 4;
@@ -222,6 +232,12 @@ export async function attachExistingRepo(
     },
     now,
   );
+
+  // Match `init`/`adopt`: record the workspace in the user-global project
+  // registry unless the caller opted out.
+  await recordProjectLifecycleBestEffort(root, "attach", {
+    noTrack: options.noTrack ?? false,
+  });
 
   return {
     root,
