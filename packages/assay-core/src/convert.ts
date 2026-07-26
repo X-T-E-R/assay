@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE, VERSION_FILE } from "./constants.js";
@@ -13,7 +13,8 @@ import {
 import { loadManifest, saveManifest } from "./manifest.js";
 import { relativeDisplayPath } from "./paths.js";
 import type { FrameworkManifest, SystemRecord, WorkspaceLayout } from "./schemas/index.js";
-import { toPosixPath } from "./serialization.js";
+import { adrIndexSchema } from "./schemas/index.js";
+import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import { defaultSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
 import { nowIso } from "./time.js";
 
@@ -30,6 +31,8 @@ export interface ConvertOverlayResult {
   readonly targetRoot: string;
   readonly moved: boolean;
   readonly keepOverlay: boolean;
+  /** True when the emptied overlay state directory was removed after a move. */
+  readonly overlayStateRemoved: boolean;
   readonly layout: WorkspaceLayout;
   readonly system: SystemRecord;
   readonly sourceManifestPath: string;
@@ -37,12 +40,21 @@ export interface ConvertOverlayResult {
   readonly eventFile: string;
 }
 
-const OVERLAY_WORK_AREAS: readonly WorkspaceArea[] = [
+/** Work areas hoisted out of `.assay/` when detaching an overlay. */
+const OVERLAY_WORK_AREAS = ["references", "analyses", "iterations", "knowledge"] as const;
+
+/**
+ * Layout `paths` keys whose location differs between overlay and standalone.
+ * Managed-file records are rewritten across all of them, including the system
+ * contracts directory, which is relocated separately from the work folders.
+ */
+const RELOCATED_PATH_KEYS = [
   "references",
   "analyses",
   "iterations",
   "knowledge",
-];
+  "systems_contracts",
+] as const satisfies readonly (keyof WorkspaceLayout["paths"])[];
 
 async function exists(target: string): Promise<boolean> {
   try {
@@ -72,6 +84,11 @@ export async function convertOverlayToStandalone(
   const now = options.now ?? new Date();
   const move = options.move ?? false;
   const keepOverlay = options.keepOverlay ?? true;
+  if (!keepOverlay && !move) {
+    throw new FrameworkError(
+      "removing the source overlay requires --move; with --copy the overlay work folders are still the only copy of that state.",
+    );
+  }
 
   const sourceManifest = await loadManifest(sourceRoot);
   if (!sourceManifest) {
@@ -98,8 +115,14 @@ export async function convertOverlayToStandalone(
 
   const targetLayout = defaultStandaloneLayout();
 
-  // Copy/move Assay state files (.assay/manifest.json, systems-registry, events, backups).
+  // Copy/move Assay state files (.assay/manifest.json, systems-registry,
+  // adrs.json, events, backups, donors, archetypes). Anything left behind
+  // silently corrupts the new workspace: a missing adrs.json makes `adr new`
+  // restart numbering at 0001 over existing ADR files, and a missing
+  // project-local archetypes/ makes every later command fail to load the
+  // workspace archetype.
   const stateAreas: readonly WorkspaceArea[] = ["events", "backups"];
+  const stateDirectories: readonly string[] = ["donors", "archetypes", "migrations"];
   await mkdir(path.join(targetRoot, MANAGED_DIR), { recursive: true });
   await copyOrMoveFile(
     path.join(sourceRoot, sourceLayout.paths.manifest),
@@ -111,6 +134,7 @@ export async function convertOverlayToStandalone(
     path.join(targetRoot, targetLayout.paths.systems_registry),
     move,
   );
+  await transferAdrIndex(sourceRoot, sourceLayout, targetRoot, targetLayout, move);
   // Write VERSION into the target (overlay wrote it in source .assay/).
   await writeFile(path.join(targetRoot, VERSION_FILE), CURRENT_VERSION, "utf8");
   for (const area of stateAreas) {
@@ -121,6 +145,15 @@ export async function convertOverlayToStandalone(
       await copyOrMoveDir(from, to, move);
     }
   }
+  for (const directory of stateDirectories) {
+    const from = path.join(sourceRoot, sourceLayout.state_root, directory);
+    const to = path.join(targetRoot, targetLayout.state_root, directory);
+    if (await exists(from)) {
+      await mkdir(path.dirname(to), { recursive: true });
+      await copyOrMoveDir(from, to, move);
+    }
+  }
+  await transferStateRootFiles(sourceRoot, sourceLayout, targetRoot, targetLayout, move);
 
   // Hoist work folders out of .assay/ to the target root.
   for (const area of OVERLAY_WORK_AREAS) {
@@ -143,16 +176,29 @@ export async function convertOverlayToStandalone(
   }
 
   // Rewrite the target manifest: standalone layout, drop overlay specifics.
+  // Managed-file paths are recorded relative to the workspace root, so the
+  // work-folder entries move with the folders that were just hoisted out of
+  // `.assay/`. Without this rewrite, `check` reports every hoisted managed
+  // file as missing on disk and `update` would recreate it at the overlay
+  // location.
   const targetManifest: FrameworkManifest = {
     ...sourceManifest,
     layout: targetLayout,
     layout_version: 4,
+    managed_files: rewriteManagedFilePaths(
+      sourceManifest.managed_files,
+      sourceLayout,
+      targetLayout,
+    ),
+    user_deleted: [
+      ...new Set(
+        sourceManifest.user_deleted.map((entry) =>
+          relayoutWorkPath(entry, sourceLayout, targetLayout),
+        ),
+      ),
+    ],
     updated_at: nowIso(now),
   };
-  // managed_files paths referenced .assay/... in overlay; in standalone the
-  // state files keep the same .assay/ paths, so no path rewrite is needed
-  // for state files. Work-folder templates (README etc.) are not tracked in
-  // overlay by default.
   await saveManifest(targetRoot, targetManifest);
 
   // Register the original product repo as the primary independent system.
@@ -208,11 +254,13 @@ export async function convertOverlayToStandalone(
     now,
   );
 
-  // Optionally mark the overlay as detached (do not delete by default).
-  if (!keepOverlay && move) {
-    // With move=true and keepOverlay=false, the overlay .assay/ is already
-    // emptied by the moves above; remove the leftover manifest if present.
-    // We do not remove the product repo itself.
+  // Optionally remove the emptied overlay state directory. Only reachable with
+  // --move, where every Assay-owned file above was relocated to the target.
+  // Anything still present (a nested `.assay/.git`, user files) is left alone
+  // and reported as not removed rather than deleted silently.
+  let overlayStateRemoved = false;
+  if (!keepOverlay) {
+    overlayStateRemoved = await removeEmptiedOverlayState(sourceRoot, sourceLayout);
   }
 
   return {
@@ -220,12 +268,149 @@ export async function convertOverlayToStandalone(
     targetRoot,
     moved: move,
     keepOverlay,
+    overlayStateRemoved,
     layout: targetLayout,
     system: systemRecord,
     sourceManifestPath: path.join(sourceRoot, sourceLayout.paths.manifest),
     targetManifestPath: path.join(targetRoot, targetLayout.paths.manifest),
     eventFile: relativeDisplayPath(eventFile, targetRoot),
   };
+}
+
+/**
+ * Copy the ADR index to the new root, rewriting each record's markdown path
+ * from the overlay work root to the standalone one. The markdown files are
+ * hoisted out of `.assay/` by this conversion, so an index copied verbatim
+ * would point every ADR at a path that no longer exists — and `check` would
+ * report each one as missing on disk.
+ */
+async function transferAdrIndex(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetRoot: string,
+  targetLayout: WorkspaceLayout,
+  move: boolean,
+): Promise<void> {
+  const from = path.join(sourceRoot, sourceLayout.paths.adrs_index);
+  if (!(await exists(from))) return;
+
+  const index = adrIndexSchema.parse(JSON.parse(await readFile(from, "utf8")));
+  const sourceKnowledge = `${sourceLayout.paths.knowledge}/`;
+  const targetKnowledge = `${targetLayout.paths.knowledge}/`;
+  for (const [id, adr] of Object.entries(index.adrs)) {
+    if (adr.path.startsWith(sourceKnowledge)) {
+      index.adrs[id] = {
+        ...adr,
+        path: `${targetKnowledge}${adr.path.slice(sourceKnowledge.length)}`,
+      };
+    }
+  }
+
+  const to = path.join(targetRoot, targetLayout.paths.adrs_index);
+  await mkdir(path.dirname(to), { recursive: true });
+  await writeFile(to, stringifySortedJson(index), "utf8");
+  if (move) {
+    await rm(from, { force: true });
+  }
+}
+
+/**
+ * Copy loose files that sit directly in the state root (`.assay/README.md` and
+ * any other managed state file) so the converted workspace keeps the managed
+ * files its manifest records. Files handled explicitly above (manifest,
+ * registry, ADR index, VERSION) are skipped.
+ */
+async function transferStateRootFiles(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetRoot: string,
+  targetLayout: WorkspaceLayout,
+  move: boolean,
+): Promise<void> {
+  const from = path.join(sourceRoot, sourceLayout.state_root);
+  if (!(await exists(from))) return;
+  const handled = new Set(
+    [
+      sourceLayout.paths.manifest,
+      sourceLayout.paths.systems_registry,
+      sourceLayout.paths.adrs_index,
+      VERSION_FILE,
+    ].map((filePath) => path.basename(filePath)),
+  );
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    if (!entry.isFile() || handled.has(entry.name)) continue;
+    await copyOrMoveFile(
+      path.join(from, entry.name),
+      path.join(targetRoot, targetLayout.state_root, entry.name),
+      move,
+    );
+  }
+}
+
+/**
+ * Move every work-area path in the managed-file map from the source layout to
+ * the target layout. State paths (`.assay/manifest.json`, `.assay/VERSION`, ...)
+ * are identical in both layouts and pass through unchanged.
+ */
+function rewriteManagedFilePaths(
+  managedFiles: FrameworkManifest["managed_files"],
+  sourceLayout: WorkspaceLayout,
+  targetLayout: WorkspaceLayout,
+): FrameworkManifest["managed_files"] {
+  const rewritten: FrameworkManifest["managed_files"] = {};
+  for (const [filePath, record] of Object.entries(managedFiles)) {
+    rewritten[relayoutWorkPath(filePath, sourceLayout, targetLayout)] = record;
+  }
+  return rewritten;
+}
+
+function relayoutWorkPath(
+  filePath: string,
+  sourceLayout: WorkspaceLayout,
+  targetLayout: WorkspaceLayout,
+): string {
+  for (const key of RELOCATED_PATH_KEYS) {
+    const from = `${sourceLayout.paths[key]}/`;
+    if (filePath.startsWith(from)) {
+      return `${targetLayout.paths[key]}/${filePath.slice(from.length)}`;
+    }
+  }
+  return filePath;
+}
+
+/**
+ * Remove the overlay state directory once its contents have been moved out.
+ * Deletes the runtime VERSION marker and any directories that are now empty,
+ * then the state root itself. Returns false and leaves everything in place when
+ * unmoved content remains.
+ */
+async function removeEmptiedOverlayState(
+  sourceRoot: string,
+  layout: WorkspaceLayout,
+): Promise<boolean> {
+  const stateRoot = path.join(sourceRoot, layout.state_root);
+  if (!(await exists(stateRoot))) {
+    return false;
+  }
+  await rm(path.join(sourceRoot, VERSION_FILE), { force: true });
+  await removeEmptyDirectories(stateRoot);
+  if (await exists(stateRoot)) {
+    return false;
+  }
+  return true;
+}
+
+/** Depth-first removal of directories that hold no files. */
+async function removeEmptyDirectories(directory: string): Promise<void> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      await removeEmptyDirectories(path.join(directory, entry.name));
+    }
+  }
+  if ((await readdir(directory)).length === 0) {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function copyOrMoveFile(from: string, to: string, move: boolean): Promise<void> {

@@ -91,13 +91,22 @@ export function formatAttachResult(result: AttachResult): string {
   ].join("\n");
 }
 
+function overlayDisposition(result: ConvertOverlayResult): string {
+  if (result.keepOverlay) {
+    return "kept";
+  }
+  return result.overlayStateRemoved
+    ? "removed"
+    : "kept (state directory still holds files that were not moved)";
+}
+
 export function formatConvertResult(result: ConvertOverlayResult): string {
   return [
     `Converted overlay to standalone: ${result.targetRoot}`,
     `Source: ${result.sourceRoot}`,
     "Mode: standalone",
     `Transfer: ${result.moved ? "move" : "copy"}`,
-    `Overlay: ${result.keepOverlay ? "kept" : "removed"}`,
+    `Overlay: ${overlayDisposition(result)}`,
     `Primary system: ${result.system.name} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
     `Contract: ${result.system.contract_file}`,
     `Manifest: ${result.targetManifestPath}`,

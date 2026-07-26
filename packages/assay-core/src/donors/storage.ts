@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
+import { hostname, uptime } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { z } from "zod";
 
+import { MANAGED_DIR } from "../constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "../errors.js";
-import { resolveWorkspaceLayout } from "../layout.js";
 import { loadManifest } from "../manifest.js";
 import { stringifySortedJson } from "../serialization.js";
 import {
@@ -39,20 +40,43 @@ function recordDigest(value: unknown): string {
   return createHash("sha256").update(stringifySortedJson(value), "utf8").digest("hex");
 }
 
+/**
+ * A donor record file that could not be read or validated. Carries the file so
+ * callers report the record that is actually damaged instead of blaming
+ * `state.json`, which is usually intact.
+ */
+export class DonorRecordFileError extends FrameworkError {
+  readonly file: string;
+
+  constructor(file: string, message: string, options: { readonly cause?: unknown } = {}) {
+    super(message, { ...options, code: "INVALID_DONOR" });
+    this.name = "DonorRecordFileError";
+    this.file = file;
+  }
+}
+
 function expectedRecordId(prefix: string, value: unknown): string {
   return `${prefix}-${recordDigest(value).slice(0, 24)}`;
 }
 
+/**
+ * Root directory for donor state: always `<root>/.assay/donors`.
+ *
+ * Donor records are Assay-owned state, like the event log, ADR index, and
+ * systems registry, all of which address `.assay/` through the shared
+ * constants rather than the layout path map. Every v4 layout — standalone and
+ * overlay alike — puts state under `.assay/`, so using the constant costs
+ * nothing and removes a whole failure mode: a manifest with a stale or
+ * mis-derived `state_root` can no longer split donor records off from the rest
+ * of the workspace state, where `migrate-layout` would leave them behind and
+ * `donor list` would report `(none)`.
+ */
 export async function donorWorkspaceRoot(root: string): Promise<string> {
   const manifest = await loadManifest(root);
   if (!manifest) {
     throw new FrameworkNotFoundError(`No Assay manifest found at ${root}.`);
   }
-  const layout = resolveWorkspaceLayout(manifest);
-  if (!layout) {
-    throw new FrameworkNotFoundError("Assay workspace layout could not be resolved.");
-  }
-  return path.join(root, layout.state_root, "donors");
+  return path.join(root, MANAGED_DIR, "donors");
 }
 
 export function assertDonorId(value: string): string {
@@ -120,40 +144,128 @@ async function readJson<TSchema extends z.ZodTypeAny>(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new FrameworkNotFoundError(`${label} not found: ${file}`);
     }
-    throw new FrameworkError(`${label} is not valid JSON: ${file}`, {
-      code: "INVALID_DONOR",
-      cause: error,
+    throw new DonorRecordFileError(file, `${label} is not valid JSON: ${file}`, { cause: error });
+  }
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    throw new DonorRecordFileError(file, `${label}: ${file} failed validation`, {
+      cause: result.error,
     });
   }
-  return parseDonorValue(schema, value, `${label}: ${file}`);
+  return result.data;
 }
 
-export async function writeImmutableJson(file: string, value: unknown): Promise<boolean> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const content = stringifySortedJson(value);
-  try {
-    await writeFile(file, content, { encoding: "utf8", flag: "wx" });
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-      throw error;
-    }
-    const existing = await readFile(file, "utf8");
-    if (existing !== content) {
-      throw new FrameworkError(`content-addressed donor record collision: ${file}`, {
-        code: "INVALID_DONOR",
-      });
-    }
+/**
+ * True when `state.json` — directly or through a committed decision — attests
+ * to the record stored in `file`. Committed records are history; anything else
+ * on disk is a draft or the residue of an interrupted run.
+ */
+async function isCommittedRecordFile(file: string): Promise<boolean> {
+  const kind = path.basename(path.dirname(file));
+  const recordId = path.basename(file, ".json");
+  const directory = path.dirname(path.dirname(file));
+  const state = await readStateForCommitCheck(directory);
+  if (!state) {
     return false;
   }
+  if (kind === "decisions") {
+    return state.decisions.includes(recordId);
+  }
+  if (
+    kind === "definitions" &&
+    (recordId === state.current_definition ||
+      Object.values(state.targets).some(
+        (target) => target.baseline?.definition_digest === recordId,
+      ))
+  ) {
+    return true;
+  }
+
+  for (const decisionId of state.decisions) {
+    const decision = await readDecisionForCommitCheck(directory, decisionId);
+    if (!decision) continue;
+    if (kind === "definitions" && decision.definition_digest === recordId) return true;
+    if (kind === "inspections" && decision.inspection_id === recordId) return true;
+    if (kind === "evidence" && decision.evidence_ids.includes(recordId)) return true;
+  }
+  return false;
+}
+
+async function readStateForCommitCheck(directory: string): Promise<DonorState | null> {
+  try {
+    return await readJson(stateFile(directory), donorStateSchema, "donor state");
+  } catch {
+    // No readable state means there is no committed history to protect.
+    return null;
+  }
+}
+
+async function readDecisionForCommitCheck(
+  directory: string,
+  decisionId: string,
+): Promise<DonorDecision | null> {
+  try {
+    return await readJson(
+      decisionFile(directory, decisionId),
+      donorDecisionSchema,
+      "donor decision",
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a JSON record that must never be silently overwritten.
+ *
+ * The write goes through a temporary file and a rename so a process that dies
+ * mid-write cannot leave a truncated record behind: readers see either the
+ * previous state or the complete record. Exclusivity is preserved by checking
+ * for the target first and by comparing content when it already exists.
+ *
+ * Returns true when this call produced the file (including a repaired one),
+ * false when a byte-identical record was already present.
+ */
+export async function writeImmutableJson(file: string, value: unknown): Promise<boolean> {
+  const content = stringifySortedJson(value);
+  let existing: string | null;
+  try {
+    existing = await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+    existing = null;
+  }
+
+  if (existing === content) {
+    return false;
+  }
+  if (existing !== null && (await isCommittedRecordFile(file))) {
+    // Committed history attests to these bytes. Rewriting them would rewrite
+    // the record a decision already points at, so this stays an error.
+    throw new FrameworkError(`content-addressed donor record collision: ${file}`, {
+      code: "INVALID_DONOR",
+    });
+  }
+  // Either the record is absent, or a partial/rejected record is present that
+  // nothing in `state.json` references: an interrupted run's leftovers. The
+  // record id is derived from the content being written, so the canonical
+  // bytes are the ones we have here.
+  await writeFileAtomically(file, content);
+  return true;
 }
 
 export async function writeAtomicJson(file: string, value: unknown): Promise<void> {
+  await writeFileAtomically(file, stringifySortedJson(value));
+}
+
+async function writeFileAtomically(file: string, content: string): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
   const handle = await open(temporary, "wx");
   try {
-    await handle.writeFile(stringifySortedJson(value), "utf8");
+    await handle.writeFile(content, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
@@ -167,6 +279,48 @@ export async function writeAtomicJson(file: string, value: unknown): Promise<voi
   }
 }
 
+/**
+ * Grace period before a lock whose holder cannot be confirmed alive is treated
+ * as abandoned. It covers the window between creating the lock file and writing
+ * its payload, and the case of a lock written by another host or another user's
+ * process, where liveness is unknowable from here.
+ */
+const LOCK_UNCONFIRMED_STALE_MS = 60_000;
+
+/**
+ * Age at which a lock is treated as abandoned even though its recorded pid is
+ * alive. A donor operation takes seconds; a lock this old is either a crashed
+ * run whose pid has since been reused by an unrelated process, or a hang. Both
+ * would otherwise wedge the adoption permanently.
+ */
+const LOCK_MAX_AGE_MS = 15 * 60_000;
+
+/** Approximate boot instant, used to detect pid values reused across reboots. */
+function bootToken(): number {
+  return Math.round((Date.now() - uptime() * 1000) / 1000);
+}
+
+interface AdoptionLockPayload {
+  readonly pid: number;
+  readonly host: string;
+  readonly boot: number;
+  readonly owner: string;
+  readonly acquired_at: string;
+}
+
+export interface DonorLockStatus {
+  /** Absolute path of the lock file. */
+  readonly file: string;
+  readonly adoptionId: string;
+  readonly pid: number | null;
+  readonly host: string | null;
+  readonly acquiredAt: string | null;
+  readonly ageMs: number;
+  /** True when the lock may be removed without interrupting a live operation. */
+  readonly stale: boolean;
+  readonly reason: string;
+}
+
 export async function withAdoptionLock<T>(
   root: string,
   adoptionId: string,
@@ -175,19 +329,140 @@ export async function withAdoptionLock<T>(
   const directory = await adoptionRoot(root, adoptionId);
   await mkdir(directory, { recursive: true });
   const lockFile = path.join(directory, ".lock");
+  const payload: AdoptionLockPayload = {
+    pid: process.pid,
+    host: hostname(),
+    boot: bootToken(),
+    owner: randomUUID(),
+    acquired_at: new Date().toISOString(),
+  };
   const handle = await acquireAdoptionLock(lockFile, adoptionId);
 
   try {
-    await handle.writeFile(
-      stringifySortedJson({ pid: process.pid, acquired_at: new Date().toISOString() }),
-      "utf8",
-    );
+    await handle.writeFile(stringifySortedJson(payload), "utf8");
     await handle.sync();
     return await operation(directory);
   } finally {
     await handle.close();
-    await rm(lockFile, { force: true });
+    await releaseOwnedLock(lockFile, payload.owner);
   }
+}
+
+/**
+ * Remove the lock only when it still carries our owner token. A lock judged
+ * stale and taken over by another process must not be deleted from under it.
+ */
+async function releaseOwnedLock(lockFile: string, owner: string): Promise<void> {
+  const current = await readLockPayload(lockFile);
+  if (current !== null && current.owner !== owner) {
+    return;
+  }
+  await rm(lockFile, { force: true });
+}
+
+async function readLockPayload(lockFile: string): Promise<AdoptionLockPayload | null> {
+  let text: string;
+  try {
+    text = await readFile(lockFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return null;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.pid !== "number" || !Number.isInteger(record.pid) || record.pid <= 0) {
+    return null;
+  }
+  return {
+    pid: record.pid,
+    host: typeof record.host === "string" ? record.host : "",
+    boot: typeof record.boot === "number" ? record.boot : Number.NaN,
+    owner: typeof record.owner === "string" ? record.owner : "",
+    acquired_at: typeof record.acquired_at === "string" ? record.acquired_at : "",
+  };
+}
+
+/**
+ * Decide whether an existing lock file may be taken over.
+ *
+ * Every branch that cannot prove the holder is alive resolves to stale after a
+ * bounded wait, because the alternative — the previous behavior — was an
+ * adoption that no command could ever unblock: an empty lock file waited an
+ * hour, `process.kill` reporting EPERM waited forever, and a reused pid waited
+ * forever.
+ */
+async function evaluateLock(lockFile: string, adoptionId: string): Promise<DonorLockStatus | null> {
+  let ageMs: number;
+  try {
+    ageMs = Date.now() - (await stat(lockFile)).mtimeMs;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+
+  const payload = await readLockPayload(lockFile);
+  const base = {
+    file: lockFile,
+    adoptionId,
+    pid: payload?.pid ?? null,
+    host: payload && payload.host.length > 0 ? payload.host : null,
+    acquiredAt: payload && payload.acquired_at.length > 0 ? payload.acquired_at : null,
+    ageMs,
+  };
+
+  if (!payload) {
+    return {
+      ...base,
+      stale: ageMs > LOCK_UNCONFIRMED_STALE_MS,
+      reason: "lock file carries no usable owner record (interrupted acquisition)",
+    };
+  }
+  if (payload.host !== hostname() || payload.boot !== bootToken()) {
+    return {
+      ...base,
+      stale: ageMs > LOCK_UNCONFIRMED_STALE_MS,
+      reason: "lock was taken by a process from another host or before the last reboot",
+    };
+  }
+
+  let liveness: "alive" | "gone" | "unknown";
+  try {
+    process.kill(payload.pid, 0);
+    liveness = "alive";
+  } catch (error) {
+    liveness = (error as NodeJS.ErrnoException).code === "ESRCH" ? "gone" : "unknown";
+  }
+
+  if (liveness === "gone") {
+    return { ...base, stale: true, reason: `holder process ${payload.pid} is no longer running` };
+  }
+  if (liveness === "unknown") {
+    return {
+      ...base,
+      stale: ageMs > LOCK_UNCONFIRMED_STALE_MS,
+      reason: `holder process ${payload.pid} cannot be signalled from this process`,
+    };
+  }
+  return {
+    ...base,
+    stale: ageMs > LOCK_MAX_AGE_MS,
+    reason:
+      ageMs > LOCK_MAX_AGE_MS
+        ? `lock is ${Math.round(ageMs / 60_000)} minutes old; pid ${payload.pid} is now an unrelated process or a hung run`
+        : `held by process ${payload.pid}`,
+  };
 }
 
 async function acquireAdoptionLock(lockFile: string, adoptionId: string): Promise<FileHandle> {
@@ -199,38 +474,59 @@ async function acquireAdoptionLock(lockFile: string, adoptionId: string): Promis
     }
   }
 
-  let stale = false;
-  try {
-    const lock = JSON.parse(await readFile(lockFile, "utf8")) as {
-      readonly pid?: unknown;
-      readonly acquired_at?: unknown;
-    };
-    if (typeof lock.pid === "number" && Number.isInteger(lock.pid)) {
-      try {
-        process.kill(lock.pid, 0);
-      } catch (error) {
-        stale = (error as NodeJS.ErrnoException).code === "ESRCH";
-      }
-    } else {
-      const info = await stat(lockFile);
-      stale = Date.now() - info.mtimeMs > 60 * 60 * 1000;
+  const status = await evaluateLock(lockFile, adoptionId);
+  if (status === null || status.stale) {
+    if (status !== null) {
+      await rm(lockFile, { force: true });
     }
-  } catch {
-    const info = await stat(lockFile);
-    stale = Date.now() - info.mtimeMs > 60 * 60 * 1000;
-  }
-
-  if (stale) {
-    await rm(lockFile, { force: true });
     try {
       return await open(lockFile, "wx");
-    } catch {
-      // Another process may have acquired the lock after stale cleanup.
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+      // Another process acquired the lock after the stale cleanup.
+      throw busyError(adoptionId, "another process acquired the lock first");
     }
   }
-  throw new FrameworkError(`donor adoption is busy: ${adoptionId}`, {
-    code: "DONOR_BUSY",
-  });
+  throw busyError(adoptionId, status.reason);
+}
+
+function busyError(adoptionId: string, reason: string): FrameworkError {
+  return new FrameworkError(
+    `donor adoption is busy: ${adoptionId} (${reason}). If no donor command is running, release the lock.`,
+    { code: "DONOR_BUSY" },
+  );
+}
+
+/** Report the current adoption lock, or null when the adoption is not locked. */
+export async function inspectAdoptionLock(
+  root: string,
+  adoptionId: string,
+): Promise<DonorLockStatus | null> {
+  const directory = await adoptionRoot(root, adoptionId);
+  return evaluateLock(path.join(directory, ".lock"), assertDonorId(adoptionId));
+}
+
+/**
+ * Remove an adoption lock. Without `force` this refuses a lock that still
+ * looks live, so the recovery path cannot be used to interrupt a running
+ * operation.
+ */
+export async function releaseAdoptionLock(
+  root: string,
+  adoptionId: string,
+  options: { readonly force?: boolean } = {},
+): Promise<{ readonly released: boolean; readonly lock: DonorLockStatus | null }> {
+  const lock = await inspectAdoptionLock(root, adoptionId);
+  if (lock === null) {
+    return { released: false, lock: null };
+  }
+  if (!lock.stale && options.force !== true) {
+    throw busyError(adoptionId, `${lock.reason}; pass force to release it anyway`);
+  }
+  await rm(lock.file, { force: true });
+  return { released: true, lock };
 }
 
 export function definitionFile(directory: string, digest: string): string {
@@ -389,27 +685,126 @@ export async function readDonorDecision(
   return decision;
 }
 
-interface StoredJsonRecord<T> {
-  readonly fileId: string;
-  readonly value: T;
+interface RecordDirectoryScan<T> {
+  readonly records: T[];
+  readonly skipped: DonorRecordFileError[];
 }
 
-async function readRecordDirectory<TSchema extends z.ZodTypeAny>(
+function asRecordFileError(file: string, error: unknown): DonorRecordFileError {
+  if (error instanceof DonorRecordFileError) {
+    return error;
+  }
+  return new DonorRecordFileError(
+    file,
+    error instanceof Error ? error.message : `donor record failed validation: ${file}`,
+    { cause: error },
+  );
+}
+
+/**
+ * Read every `.json` record in a directory.
+ *
+ * A record `state.json` does not attest to is skipped rather than thrown: an
+ * interrupted or rejected write leaves a file that no history depends on, and
+ * failing the whole adoption over it would make every other record — including
+ * a perfectly valid `state.json` — unreadable with no in-tool recovery path.
+ * Damaged committed records still throw, because history must not be reported
+ * as intact when it is not.
+ */
+async function scanRecordDirectory<TSchema extends z.ZodTypeAny>(
   directory: string,
   schema: TSchema,
   label: string,
-): Promise<Array<StoredJsonRecord<z.output<TSchema>>>> {
-  if (!(await exists(directory))) return [];
+  validate: (fileId: string, value: z.output<TSchema>) => void,
+): Promise<RecordDirectoryScan<z.output<TSchema>>> {
+  const scan: RecordDirectoryScan<z.output<TSchema>> = { records: [], skipped: [] };
+  if (!(await exists(directory))) return scan;
   const entries = await readdir(directory, { withFileTypes: true });
-  const records: Array<StoredJsonRecord<z.output<TSchema>>> = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    records.push({
-      fileId: entry.name.slice(0, -".json".length),
-      value: await readJson(path.join(directory, entry.name), schema, label),
-    });
+    const file = path.join(directory, entry.name);
+    try {
+      const value = await readJson(file, schema, label);
+      validate(entry.name.slice(0, -".json".length), value);
+      scan.records.push(value);
+    } catch (error) {
+      if (await isCommittedRecordFile(file)) {
+        throw error;
+      }
+      scan.skipped.push(asRecordFileError(file, error));
+    }
   }
-  return records;
+  return scan;
+}
+
+async function scanDonorInspections(
+  root: string,
+  adoptionId: string,
+): Promise<RecordDirectoryScan<DonorInspection>> {
+  const directory = await adoptionRoot(root, adoptionId);
+  const scan = await scanRecordDirectory(
+    path.join(directory, "inspections"),
+    donorInspectionSchema,
+    `donor inspection '${adoptionId}'`,
+    (fileId, record) => {
+      if (fileId !== record.id) {
+        throw new FrameworkError(
+          `donor inspection file identity mismatch: expected '${fileId}', found '${record.id}'`,
+          { code: "INVALID_DONOR" },
+        );
+      }
+      const { id, ...content } = record;
+      if (expectedRecordId("inspection", content) !== id) {
+        throw new FrameworkError(`donor inspection digest mismatch: ${id}`, {
+          code: "INVALID_DONOR",
+        });
+      }
+      if (record.adoption_id !== adoptionId) {
+        throw new FrameworkError(
+          `donor inspection identity mismatch: expected '${adoptionId}', found '${record.adoption_id}'`,
+          { code: "INVALID_DONOR" },
+        );
+      }
+    },
+  );
+  scan.records.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  return scan;
+}
+
+async function scanDonorEvidence(
+  root: string,
+  adoptionId: string,
+): Promise<RecordDirectoryScan<DonorEvidence>> {
+  const directory = await adoptionRoot(root, adoptionId);
+  const scan = await scanRecordDirectory(
+    path.join(directory, "evidence"),
+    donorEvidenceSchema,
+    `donor evidence '${adoptionId}'`,
+    (fileId, record) => {
+      if (fileId !== record.id) {
+        throw new FrameworkError(
+          `donor evidence file identity mismatch: expected '${fileId}', found '${record.id}'`,
+          { code: "INVALID_DONOR" },
+        );
+      }
+      const { id, ...content } = record;
+      if (expectedRecordId("evidence", content) !== id) {
+        throw new FrameworkError(`donor evidence digest mismatch: ${id}`, {
+          code: "INVALID_DONOR",
+        });
+      }
+      if (record.adoption_id !== adoptionId) {
+        throw new FrameworkError(
+          `donor evidence identity mismatch: expected '${adoptionId}', found '${record.adoption_id}'`,
+          { code: "INVALID_DONOR" },
+        );
+      }
+    },
+  );
+  scan.records.sort(
+    (a, b) => a.recorded_at.localeCompare(b.recorded_at) || a.id.localeCompare(b.id),
+  );
+  return scan;
 }
 
 export async function listDonorEvidence(
@@ -417,73 +812,17 @@ export async function listDonorEvidence(
   adoptionId: string,
   inspectionId?: string,
 ): Promise<DonorEvidence[]> {
-  const directory = await adoptionRoot(root, adoptionId);
-  const records = await readRecordDirectory(
-    path.join(directory, "evidence"),
-    donorEvidenceSchema,
-    `donor evidence '${adoptionId}'`,
+  const scan = await scanDonorEvidence(root, adoptionId);
+  return scan.records.filter(
+    (record) => inspectionId === undefined || record.inspection_id === inspectionId,
   );
-  for (const stored of records) {
-    const record = stored.value;
-    if (stored.fileId !== record.id) {
-      throw new FrameworkError(
-        `donor evidence file identity mismatch: expected '${stored.fileId}', found '${record.id}'`,
-        { code: "INVALID_DONOR" },
-      );
-    }
-    const { id, ...content } = record;
-    if (expectedRecordId("evidence", content) !== id) {
-      throw new FrameworkError(`donor evidence digest mismatch: ${id}`, {
-        code: "INVALID_DONOR",
-      });
-    }
-    if (record.adoption_id !== adoptionId) {
-      throw new FrameworkError(
-        `donor evidence identity mismatch: expected '${adoptionId}', found '${record.adoption_id}'`,
-        { code: "INVALID_DONOR" },
-      );
-    }
-  }
-  return records
-    .map((stored) => stored.value)
-    .filter((record) => inspectionId === undefined || record.inspection_id === inspectionId)
-    .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at) || a.id.localeCompare(b.id));
 }
 
 export async function listDonorInspections(
   root: string,
   adoptionId: string,
 ): Promise<DonorInspection[]> {
-  const directory = await adoptionRoot(root, adoptionId);
-  const records = await readRecordDirectory(
-    path.join(directory, "inspections"),
-    donorInspectionSchema,
-    `donor inspection '${adoptionId}'`,
-  );
-  for (const stored of records) {
-    const record = stored.value;
-    if (stored.fileId !== record.id) {
-      throw new FrameworkError(
-        `donor inspection file identity mismatch: expected '${stored.fileId}', found '${record.id}'`,
-        { code: "INVALID_DONOR" },
-      );
-    }
-    const { id, ...content } = record;
-    if (expectedRecordId("inspection", content) !== id) {
-      throw new FrameworkError(`donor inspection digest mismatch: ${id}`, {
-        code: "INVALID_DONOR",
-      });
-    }
-    if (record.adoption_id !== adoptionId) {
-      throw new FrameworkError(
-        `donor inspection identity mismatch: expected '${adoptionId}', found '${record.adoption_id}'`,
-        { code: "INVALID_DONOR" },
-      );
-    }
-  }
-  return records
-    .map((stored) => stored.value)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  return (await scanDonorInspections(root, adoptionId)).records;
 }
 
 export async function listDonorDecisions(
@@ -494,26 +833,68 @@ export async function listDonorDecisions(
   const directory = await adoptionRoot(root, adoptionId);
   const state = await readDonorStateFromDirectory(directory, adoptionId);
   const committed = new Set(state.decisions);
-  const records = await readRecordDirectory(
+  const scan = await scanRecordDirectory(
     path.join(directory, "decisions"),
     donorDecisionSchema,
     `donor decision '${adoptionId}'`,
+    (fileId, record) => {
+      if (fileId !== record.id) {
+        throw new FrameworkError(
+          `donor decision file identity mismatch: expected '${fileId}', found '${record.id}'`,
+          { code: "INVALID_DONOR" },
+        );
+      }
+    },
   );
   const validated: DonorDecision[] = [];
-  for (const stored of records) {
-    const record = stored.value;
-    if (stored.fileId !== record.id) {
-      throw new FrameworkError(
-        `donor decision file identity mismatch: expected '${stored.fileId}', found '${record.id}'`,
-        { code: "INVALID_DONOR" },
-      );
-    }
+  for (const record of scan.records) {
     if (!committed.has(record.id)) continue;
     validated.push(await readDonorDecision(root, adoptionId, record.id));
   }
   return validated
     .filter((record) => targetId === undefined || record.target_id === targetId)
     .sort((a, b) => a.decided_at.localeCompare(b.decided_at) || a.id.localeCompare(b.id));
+}
+
+/**
+ * Record files that were skipped because nothing in `state.json` references
+ * them. `assay check` reports these against the offending file so an operator
+ * can see exactly what to remove.
+ *
+ * Damage to a committed record is not reported here: the integrity pass already
+ * fails the adoption for it. This scan stops at the first such record rather
+ * than duplicating the error under a different path.
+ */
+export async function collectDonorRecordIssues(
+  root: string,
+  adoptionId: string,
+): Promise<DonorRecordFileError[]> {
+  const issues: DonorRecordFileError[] = [];
+  for (const scan of [
+    () => scanDonorInspections(root, adoptionId),
+    () => scanDonorEvidence(root, adoptionId),
+    () => scanDonorDecisionFiles(root, adoptionId),
+  ]) {
+    try {
+      issues.push(...(await scan()).skipped);
+    } catch {
+      // Committed-record failure; already reported by the integrity pass.
+    }
+  }
+  return issues;
+}
+
+async function scanDonorDecisionFiles(
+  root: string,
+  adoptionId: string,
+): Promise<RecordDirectoryScan<DonorDecision>> {
+  const directory = await adoptionRoot(root, adoptionId);
+  return scanRecordDirectory(
+    path.join(directory, "decisions"),
+    donorDecisionSchema,
+    `donor decision '${adoptionId}'`,
+    () => {},
+  );
 }
 
 export async function listDonorStateIds(root: string): Promise<string[]> {

@@ -206,6 +206,12 @@ It should:
 
 In-place conversion is allowed only with an explicit destructive flag, because it would have to move product root files into `systems/<name>/` or otherwise change the meaning of the product Git repository.
 
+`--no-keep-overlay` removes the source `.assay/` once its contents have been relocated, so it requires `--move`. With a copy, the overlay still holds the only copy of that state and the request is refused.
+
+## Update in overlay mode
+
+`assay update` resolves managed template paths through the layout path map. In overlay mode every managed template is written under `.assay/`, and the root files `attach` promises not to touch — `README.md`, `.gitignore`, `AGENTS.md` — are never created or overwritten, including with `--force`.
+
 ## Validation loop
 
 `assay check` validates the selected layout, not a fixed directory list.

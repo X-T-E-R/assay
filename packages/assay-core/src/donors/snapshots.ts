@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
@@ -194,7 +194,20 @@ async function collectTargetFiles(
   }
 }
 
-function containedTargetPath(systemRoot: string, locator: DonorPathLocator): string {
+/**
+ * Resolve a locator to an absolute path and refuse anything that leaves the
+ * registered system.
+ *
+ * `path.resolve` alone only handles textual escapes (`..`, absolute paths). It
+ * says nothing about symbolic links, so `link/src/a.txt` under a system whose
+ * `link` is a symlink to an unrelated directory resolves textually inside the
+ * system while reading bytes from outside it — and those bytes would then be
+ * recorded in an accepted baseline as if they belonged to the target system.
+ * Both the system root and the locator are canonicalized before comparison,
+ * and the deepest existing ancestor stands in for locators that do not exist
+ * yet (a draft target), so a missing file cannot bypass the check.
+ */
+async function containedTargetPath(systemRoot: string, locator: DonorPathLocator): Promise<string> {
   const absolute = path.resolve(systemRoot, ...locator.path.split("/"));
   const relative = path.relative(systemRoot, absolute);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
@@ -202,14 +215,65 @@ function containedTargetPath(systemRoot: string, locator: DonorPathLocator): str
       code: "INVALID_DONOR",
     });
   }
+
+  const realSystemRoot = await canonicalPath(systemRoot);
+  const realTarget = await canonicalExistingAncestor(absolute);
+  if (realSystemRoot === null || realTarget === null) {
+    return absolute;
+  }
+  const realRelative = path.relative(realSystemRoot, realTarget.canonical);
+  if (
+    realTarget.canonical !== realSystemRoot &&
+    (realRelative === ".." ||
+      realRelative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(realRelative))
+  ) {
+    throw new FrameworkError(
+      `target locator escapes registered system through a symbolic link: ${locator.path}`,
+      { code: "INVALID_DONOR" },
+    );
+  }
   return absolute;
+}
+
+async function canonicalPath(target: string): Promise<string | null> {
+  try {
+    return await realpath(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Canonical path of `target`, or of its closest existing ancestor when the
+ * locator itself is absent. Containment of the ancestor is what matters: a
+ * missing file under a symlinked parent is still outside the system.
+ */
+async function canonicalExistingAncestor(
+  target: string,
+): Promise<{ readonly canonical: string } | null> {
+  let current = target;
+  for (;;) {
+    const canonical = await canonicalPath(current);
+    if (canonical !== null) {
+      return { canonical };
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
 }
 
 async function snapshotTargetLocator(
   systemRoot: string,
   locator: DonorPathLocator,
 ): Promise<DonorLocatorSnapshot> {
-  const absolute = containedTargetPath(systemRoot, locator);
+  const absolute = await containedTargetPath(systemRoot, locator);
   let info: Stats;
   try {
     info = await lstat(absolute);

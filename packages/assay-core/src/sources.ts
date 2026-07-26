@@ -632,12 +632,19 @@ async function refreshCheckoutBeforeObservation(
       entry.lineage.checkout?.commit ?? previousObservation?.vcs?.commit ?? null,
     );
   } else if ((await exists(checkout)) && previousObservation) {
-    const checkoutManifest = await collectManifest(checkout, nowIso());
-    if (checkoutManifest.fingerprint.value !== previousObservation.fingerprint.value) {
-      throw new FrameworkError(
-        `managed source checkout has unrecorded changes; preserve or remove them before refresh: ${checkout}`,
-        { code: "IO_ERROR" },
-      );
+    // The guard exists to stop a refresh from discarding local work Assay never
+    // recorded. It needs a recorded fingerprint to compare against: when the
+    // latest observation has none, drift cannot be proven either way, so the
+    // refresh proceeds and records a complete observation instead of failing.
+    const recordedFingerprint = previousObservation.fingerprint?.value;
+    if (recordedFingerprint) {
+      const checkoutManifest = await collectManifest(checkout, nowIso());
+      if (checkoutManifest.fingerprint.value !== recordedFingerprint) {
+        throw new FrameworkError(
+          `managed source checkout has unrecorded changes; preserve or remove them before refresh: ${checkout}`,
+          { code: "IO_ERROR" },
+        );
+      }
     }
   }
 
@@ -759,9 +766,15 @@ function classifyChange(
     if (currentVcs.common_ancestor_with_previous === false) {
       return "replacement";
     }
-  } else if (previousObservation.fingerprint.value === currentManifest.fingerprint.value) {
+  } else if (
+    previousObservation.fingerprint?.value !== undefined &&
+    previousObservation.fingerprint.value === currentManifest.fingerprint.value
+  ) {
     return "same";
   }
+  // A previous observation without a recorded fingerprint cannot prove "same".
+  // Classification falls through to the manifest diff below, which always
+  // yields a real class so the repairing observation is written.
 
   const diff = compareManifests(previousManifest, currentManifest);
   const changedCount = diff.added.length + diff.removed.length + diff.changed.length;

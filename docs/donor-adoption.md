@@ -88,8 +88,14 @@ evidence:
 ```
 
 IDs and paths are normalized and validated. Paths must remain relative and
-contained; absolute paths, `..`, and symbolic-link traversal are rejected.
-Target IDs refer to systems already registered with `assay system register`.
+contained: absolute paths and `..` are rejected, and a target locator is
+canonicalized before it is read, so one that reaches outside the registered
+system through a symbolic link anywhere in its path is rejected as well. This
+holds for a locator that does not exist yet, because the check applies to its
+closest existing ancestor. A locator that is itself a symbolic link, or a
+prefix locator containing one, is reported as unresolvable rather than
+followed. Target IDs refer to systems already registered with
+`assay system register`.
 
 Registration requires source locators to exist in the declared source
 observation. Target locators may still be absent, allowing the relationship to
@@ -242,13 +248,29 @@ State is created lazily:
 Definitions, inspections, evidence, and decisions are immutable,
 content-addressed records. `state.json` is the small current pointer: active
 definition, per-target baselines, committed decision IDs, and a generation
-number. Mutations use an adoption-local lock and atomic file replacement.
+number. Mutations use an adoption-local lock and atomic file replacement, so an
+interrupted command leaves either the previous state or a complete record.
+
+Records are keyed by a digest of their content. Re-running the command that
+produced one is therefore safe: the identical record is recognized and reused.
+If an interrupted run left a record behind that `state.json` never came to
+reference, re-running replaces it. A record that committed history does point at
+is never rewritten.
 
 `assay check` validates only donor persistence integrity. Ordinary upstream
 changes, target drift, dirty targets, and advisory evidence gaps do not become
-global workspace warnings. `assay status` shows only compact adoption and
+global workspace warnings. Each reported problem names the record file that
+failed, and a record outside committed history is reported without invalidating
+the rest of the adoption. `assay status` shows only compact adoption and
 baseline counts. Use `assay donor status <adoption>` for live relationship
 details.
+
+A donor command that dies mid-operation can leave its adoption lock in place.
+The next command reclaims a lock whose holder is gone, and reclaims one whose
+holder cannot be confirmed — an interrupted acquisition, another host, a
+pre-reboot process ID — once it is a minute old. A lock whose holder is
+verifiably alive is respected until it is clearly beyond any real operation's
+duration, so a concurrent command is never interrupted.
 
 ## Source Checkout Safety
 

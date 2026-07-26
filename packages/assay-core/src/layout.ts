@@ -35,15 +35,18 @@ export type WorkspaceArea =
 
 /**
  * Resolve the layout block for a manifest. Layout v3 manifests carry no
- * `layout` field; this returns a standalone fallback whose path map points
- * at the v3 directory names (`.framework/` state at root, work folders at
- * root) so legacy workspaces keep working until `migrate-layout` upgrades
- * them to v4.
+ * `layout` field; this returns a standalone fallback whose work folders sit at
+ * the workspace root, so legacy workspaces keep working until
+ * `migrate-layout` upgrades them to v4.
  *
- * The fallback uses `.framework/` for state paths when the manifest's
- * `layout_version` is below 4, because that is where v3 wrote them. Once a
- * manifest is upgraded to layout 4 it always carries an explicit `layout`
- * block and this fallback is not used.
+ * The fallback's state root is `.assay`, because that is the only location
+ * {@link loadManifest} reads a manifest from — never `layout_version`. A
+ * manifest loaded from `.assay/manifest.json` describes a workspace whose state
+ * already lives in `.assay/`, however stale its recorded version is; inferring
+ * `.framework/` from `layout_version < 4` sends state writes to a directory the
+ * rest of the workspace does not use. A genuine `.framework/` workspace cannot
+ * reach this function: `loadManifest` returns null for it, and commands ask for
+ * `migrate-layout` instead.
  */
 export function resolveWorkspaceLayout(manifest: FrameworkManifest | null): WorkspaceLayout | null {
   if (manifest?.layout) {
@@ -52,7 +55,7 @@ export function resolveWorkspaceLayout(manifest: FrameworkManifest | null): Work
   if (!manifest) {
     return null;
   }
-  return legacyStandaloneLayout(manifest.layout_version);
+  return legacyStandaloneLayout(MANAGED_DIR);
 }
 
 /**
@@ -139,6 +142,51 @@ export function workspaceWorkRelativePath(layout: WorkspaceLayout, relativePath:
   return [layout.work_root, normalized].filter((segment) => segment.length > 0).join("/");
 }
 
+/** Work-folder areas addressable by their first path segment. */
+const WORK_AREA_BY_SEGMENT: Readonly<Record<string, WorkspaceArea>> = {
+  references: "references",
+  analyses: "analyses",
+  iterations: "iterations",
+  knowledge: "knowledge",
+  systems: "systemsContracts",
+};
+
+/**
+ * Resolve an archetype-declared template path against a layout.
+ *
+ * Archetype YAML declares template paths as workspace-root-relative literals
+ * (`README.md`, `analyses/README.md`, `.assay/VERSION`). Those literals are
+ * written for a standalone layout, so an overlay workspace must translate them
+ * before writing or the templates land in the product repository root instead
+ * of `.assay/`.
+ *
+ * - Paths already under the state root keep their declared location.
+ * - Paths that start with a work area segment resolve through that area.
+ * - Everything else resolves against the work root.
+ *
+ * For a standalone layout this is the identity function.
+ */
+export function workspaceTemplateRelativePath(
+  layout: WorkspaceLayout,
+  templatePath: string,
+): string {
+  const normalized = toRelativePosix(templatePath);
+  const stateRoot = toRelativePosix(layout.state_root);
+  if (stateRoot !== "" && (normalized === stateRoot || normalized.startsWith(`${stateRoot}/`))) {
+    return normalized;
+  }
+
+  const [first, ...rest] = normalized.split("/");
+  const area = first === undefined ? undefined : WORK_AREA_BY_SEGMENT[first];
+  if (area && rest.length > 0) {
+    return [workspaceRelativePath(layout, area), ...rest].join("/");
+  }
+  if (area) {
+    return workspaceRelativePath(layout, area);
+  }
+  return workspaceWorkRelativePath(layout, normalized);
+}
+
 function toRelativePosix(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "");
 }
@@ -182,18 +230,14 @@ export function overlayPaths() {
 }
 
 /**
- * Standalone layout pointing at v3 directory names. Used only as a read
- * fallback for manifests that have not yet been migrated to layout 4.
+ * Standalone layout for a manifest with no `layout` block, pointing at the
+ * state directory the manifest was read from. Used only as a read fallback for
+ * manifests that have not yet been migrated to layout 4.
  *
- * Layout v3 wrote state under `.framework/` and work folders at root, so the
- * only difference from {@link defaultStandaloneLayout} is the state_root and
- * the registry/manifest paths. Work folders are identical.
+ * Layout v3 wrote work folders at the workspace root, which is also what
+ * {@link defaultStandaloneLayout} does, so `stateRoot` is the only difference.
  */
-function legacyStandaloneLayout(layoutVersion: number): WorkspaceLayout {
-  // v3 and below used `.framework/` for state. The path map mirrors the v3
-  // constants so commands reading an un-migrated workspace find files where
-  // v3 left them.
-  const stateRoot = layoutVersion < 4 ? ".framework" : MANAGED_DIR;
+function legacyStandaloneLayout(stateRoot: WorkspaceLayout["state_root"]): WorkspaceLayout {
   return {
     version: 4,
     mode: "standalone",

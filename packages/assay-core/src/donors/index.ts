@@ -39,9 +39,11 @@ import {
   snapshotDonorTarget,
 } from "./snapshots.js";
 import {
+  DonorRecordFileError,
   adoptionRoot,
   assertDonorId,
   assertNewAdoptionState,
+  collectDonorRecordIssues,
   decisionFile,
   definitionFile,
   donorWorkspaceRoot,
@@ -66,6 +68,13 @@ import {
 
 export * from "./schemas.js";
 export { snapshotManifestLocator } from "./snapshots.js";
+export {
+  type DonorLockStatus,
+  DonorRecordFileError,
+  collectDonorRecordIssues,
+  inspectAdoptionLock,
+  releaseAdoptionLock,
+} from "./storage.js";
 
 function recordDigest(value: unknown): string {
   return createHash("sha256").update(stringifySortedJson(value), "utf8").digest("hex");
@@ -1353,9 +1362,28 @@ export async function collectDonorIntegrityRows(root: string): Promise<CheckRow[
       });
     } catch (error) {
       rows.push({
-        path: relativeDisplayPath(stateFile(directory), resolvedRoot),
+        // Anchor the row to the file that actually failed. A damaged
+        // inspection or evidence record must not be reported against
+        // state.json, which is usually intact and is not what an operator
+        // needs to look at.
+        path: relativeDisplayPath(
+          error instanceof DonorRecordFileError ? error.file : stateFile(directory),
+          resolvedRoot,
+        ),
         status: "error",
         message: error instanceof Error ? error.message : "donor state failed validation",
+      });
+    }
+
+    // Records nothing references cannot invalidate committed history, so they
+    // no longer abort the adoption — but they are still reported, against the
+    // file that is actually damaged. Leaving them silent is how an interrupted
+    // write or a tampered draft record becomes an unexplained failure later.
+    for (const issue of await collectDonorRecordIssues(resolvedRoot, adoptionId)) {
+      rows.push({
+        path: relativeDisplayPath(issue.file, resolvedRoot),
+        status: "error",
+        message: `${issue.message}. This record is not referenced by state.json, so committed history is unaffected; re-run the command that produced it or delete the file.`,
       });
     }
   }

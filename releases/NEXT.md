@@ -44,7 +44,17 @@ See `docs/background/design-principles.md` for the boundary this follows.
   still the recommended shape, and `check --advisories` can list unfinished
   drafts before closing.
 - `--allow-empty` on `analysis close` is retained only as a hidden no-op so
-  existing scripts keep running. It has no effect.
+  existing scripts keep running. It has no effect, and the `analysis.closed`
+  event no longer carries an `allow_empty` field.
+- `iteration close`, `analysis close`, and the `analyzed` flag in a frozen
+  reference's `reference.yaml` are recorded through the document's header block
+  and named sections instead of the first matching line anywhere in the file. A
+  note that merely mentions `Status: open`, a body line that reads like
+  `- Status: ...`, or a stray `- [ ] adopt` outside `## Decision exit` no longer
+  absorbs the rewrite. When the requested state cannot be recorded — for example
+  a `## Decision exit` section with no checkbox for the chosen exit, or a
+  `reference.yaml` whose `analyzed` flag is missing or not a boolean — the
+  command fails instead of reporting a close that did not happen.
 - External governance markers (`.trellis/`, `.superpowers/`, `docs/adr/`) now
   produce an advisory instead of refusing to create an Assay ADR. `adr new`
   creates the requested ADR in every case; `--force` only suppresses the
@@ -73,6 +83,38 @@ See `docs/background/design-principles.md` for the boundary this follows.
   rolled back to its previous content instead of leaving the two records
   disagreeing. Re-running a close that already succeeded is safe.
 
+## Systems Registered Outside The Workspace
+
+A system can be registered by a path that leaves the workspace
+(`assay system register ../precious`). The registry stores such a path in
+absolute form, and commands now resolve it instead of appending it to the
+workspace root.
+
+- `assay check` reports an out-of-root system that exists on disk as present.
+  Previously it reported `registered system '<name>' missing on disk` plus a
+  missing contract file for a system that was there.
+- `assay system archive --apply` moves the system it names and fails if the
+  archive did not materialize at the destination it reports. Previously it
+  printed `Moved to: ...`, wrote a `system.archived` event, and left the source
+  directory in place.
+- `assay check` also verifies that an archived record's `archive_path` exists,
+  so a registry entry pointing at a missing archive is an error instead of
+  passing unnoticed.
+
+## Error Prefixes
+
+`assay` distinguishes two failure kinds on stderr, and the split has been
+corrected: `Error:` marks something the caller can fix by changing the command,
+and `Runtime error:` is reserved for Assay's own faults (a persisted manifest,
+event, operation report, or update plan that fails schema validation) and for
+unexpected exceptions.
+
+Most user-actionable failures previously printed `Runtime error:` — an archetype
+that does not enable the requested capability, an unknown archetype name, an ADR
+that would supersede itself, and every message raised with an I/O error code.
+They now print `Error:`. Exit codes are unchanged (1 for both), so only scripts
+that match on the prefix need updating.
+
 ## Upgrade Notes
 
 ### `assay check` can newly fail on older workspaces
@@ -81,7 +123,10 @@ A workspace that passed `assay check` before may now exit 1 because incomplete
 source observation records are errors instead of warnings. The reported rows
 name the source and the missing part: no latest observation, a latest
 observation that cannot be read, a missing fingerprint, or a missing capture
-manifest.
+manifest. The source ledger itself is also read strictly now: an unparseable
+`source.yaml`, a `source.yaml` that is not a YAML mapping, or an observation
+that cannot be read is reported as an error row under `references/` instead of
+being skipped silently.
 
 Record a fresh observation for each reported alias:
 
@@ -90,9 +135,11 @@ assay source sync <alias>
 ```
 
 The new observation carries a fingerprint and a capture manifest and becomes the
-source's `latest_observation`. If `source sync` reports `same source state; no
-new observation`, the upstream material is unchanged and the incomplete record
-stays in place; force a full observation instead:
+source's `latest_observation`. A record that is missing its fingerprint always
+produces a new observation, because the missing fingerprint leaves nothing to
+compare the current material against. If `source sync` reports `same source
+state; no new observation` for some other incomplete record, the upstream
+material is unchanged; force a full observation instead:
 
 ```bash
 assay source sync <alias> --class normal

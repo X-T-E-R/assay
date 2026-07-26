@@ -38,6 +38,36 @@ async function tryGit(
   return { exitCode: result.exitCode ?? 0, stdout: result.stdout, stderr: result.stderr };
 }
 
+/**
+ * Reject a caller-supplied value before it reaches a `git` argument list.
+ *
+ * Git parses any argument that starts with `-` as an option, so a ref, branch,
+ * or remote URI such as `--upload-pack=<command>` would run that command even
+ * though the surrounding invocation fails. Values are also rejected when they
+ * are empty or carry NUL/newline characters, which cannot appear in a Git ref
+ * or remote and only show up in crafted input.
+ *
+ * The call sites additionally pass `--end-of-options` / `--` so an option-like
+ * value can never be reinterpreted, but validation is what makes the refusal
+ * explicit and testable.
+ */
+export function assertGitArgumentValue(label: string, value: string): void {
+  if (value === "") {
+    throw new FrameworkError(`${label} must not be empty`, { code: "IO_ERROR" });
+  }
+  if (value.startsWith("-")) {
+    throw new FrameworkError(
+      `${label} must not start with '-' (git would parse '${value}' as an option): ${value}`,
+      { code: "IO_ERROR" },
+    );
+  }
+  if (/[\0\r\n]/.test(value)) {
+    throw new FrameworkError(`${label} must not contain control characters: ${value}`, {
+      code: "IO_ERROR",
+    });
+  }
+}
+
 async function runGit(cwd: string, args: readonly string[], failureLabel: string): Promise<string> {
   const result = await tryGit(cwd, args);
   if (result.exitCode !== 0) {
@@ -117,9 +147,11 @@ export async function syncTargetForCheckout(
   lineage: SourceLineage,
 ): Promise<SourceSyncGitTarget | null> {
   if (options.ref) {
+    assertGitArgumentValue("source ref", options.ref);
     return { kind: "ref", value: options.ref };
   }
   if (options.branch) {
+    assertGitArgumentValue("source branch", options.branch);
     return { kind: "branch", value: options.branch };
   }
 
@@ -129,6 +161,7 @@ export async function syncTargetForCheckout(
   }
 
   if (lineage.checkout?.ref && lineage.checkout.ref !== "HEAD") {
+    assertGitArgumentValue("recorded checkout ref", lineage.checkout.ref);
     return { kind: "branch", value: lineage.checkout.ref };
   }
 
@@ -141,19 +174,27 @@ async function gitRemoteOrigin(checkout: string): Promise<string | null> {
 }
 
 async function resetManagedGitCheckout(checkout: string, target?: string): Promise<void> {
-  await runGit(checkout, target ? ["reset", "--hard", target] : ["reset", "--hard"], "git reset");
+  await runGit(
+    checkout,
+    target ? ["reset", "--hard", "--end-of-options", target] : ["reset", "--hard"],
+    "git reset",
+  );
   await runGit(checkout, ["clean", "-fd"], "git clean");
 }
 
 export async function checkoutGitRef(checkout: string, ref: string): Promise<void> {
-  const checkedOut = await tryGit(checkout, ["checkout", ref]);
+  assertGitArgumentValue("checkout ref", ref);
+  // `--end-of-options` keeps a ref that resembles an option
+  // (`--upload-pack=<command>`) from being parsed as one. Branch resolution is
+  // unchanged: git still prefers a matching branch over a pathspec.
+  const checkedOut = await tryGit(checkout, ["checkout", "--end-of-options", ref]);
   if (checkedOut.exitCode === 0) {
     return;
   }
 
-  const fetched = await tryGit(checkout, ["fetch", "origin", ref]);
+  const fetched = await tryGit(checkout, ["fetch", "origin", "--end-of-options", ref]);
   if (fetched.exitCode === 0) {
-    await runGit(checkout, ["checkout", "FETCH_HEAD"], "git checkout");
+    await runGit(checkout, ["checkout", "--end-of-options", "FETCH_HEAD"], "git checkout");
     return;
   }
 
@@ -169,15 +210,19 @@ export async function cloneGitSource(
   target: SourceSyncGitTarget | null,
   shallow: boolean,
 ): Promise<void> {
+  assertGitArgumentValue("source uri", source);
   await mkdir(path.dirname(checkout), { recursive: true });
   const args = ["clone"];
   if (shallow) {
     args.push("--depth", "1");
   }
   if (target?.kind === "branch") {
+    assertGitArgumentValue("source branch", target.value);
     args.push("--branch", target.value);
   }
-  args.push(source, checkout);
+  // `--` bounds the positional repository/directory pair, so a source URI that
+  // resembles an option cannot become one.
+  args.push("--", source, checkout);
   await runGit(path.dirname(checkout), args, "git clone");
 
   if (target?.kind === "ref") {
@@ -193,12 +238,21 @@ export async function refreshLocalGitCheckout(
 ): Promise<string> {
   const checkout = path.join(entryRoot, "checkout");
   assertManagedCheckout(entryRoot, checkout);
+  assertGitArgumentValue("source uri", sourceUri);
   if (await isGitCheckout(checkout)) {
     const remote = await gitRemoteOrigin(checkout);
     if (remote) {
-      await runGit(checkout, ["remote", "set-url", "origin", sourceUri], "git remote set-url");
+      await runGit(
+        checkout,
+        ["remote", "set-url", "origin", "--end-of-options", sourceUri],
+        "git remote set-url",
+      );
     } else {
-      await runGit(checkout, ["remote", "add", "origin", sourceUri], "git remote add");
+      await runGit(
+        checkout,
+        ["remote", "add", "origin", "--end-of-options", sourceUri],
+        "git remote add",
+      );
     }
     await refreshRemoteGitCheckout(entryRoot, checkout, target);
     return checkout;
@@ -221,7 +275,8 @@ export async function refreshRemoteGitCheckout(
   const remote = await gitRemoteOrigin(checkout);
   if (!remote) {
     if (target) {
-      await runGit(checkout, ["checkout", target.value], "git checkout");
+      assertGitArgumentValue("checkout target", target.value);
+      await runGit(checkout, ["checkout", "--end-of-options", target.value], "git checkout");
       await resetManagedGitCheckout(checkout);
     }
     return;
@@ -230,13 +285,24 @@ export async function refreshRemoteGitCheckout(
   await resetManagedGitCheckout(checkout);
 
   if (target?.kind === "branch") {
+    assertGitArgumentValue("source branch", target.value);
     const remoteRef = `refs/remotes/origin/${target.value}`;
     await runGit(
       checkout,
-      ["fetch", "--prune", "origin", `+refs/heads/${target.value}:${remoteRef}`],
+      [
+        "fetch",
+        "--prune",
+        "origin",
+        "--end-of-options",
+        `+refs/heads/${target.value}:${remoteRef}`,
+      ],
       "git fetch",
     );
-    await runGit(checkout, ["checkout", "-B", target.value, remoteRef], "git checkout");
+    await runGit(
+      checkout,
+      ["checkout", "-B", target.value, "--end-of-options", remoteRef],
+      "git checkout",
+    );
     await resetManagedGitCheckout(checkout, remoteRef);
     return;
   }
@@ -251,8 +317,13 @@ export async function refreshRemoteGitCheckout(
   await runGit(checkout, ["fetch", "--prune", "origin"], "git fetch");
   const branch = await currentCheckoutBranch(checkout);
   if (branch) {
+    assertGitArgumentValue("checkout branch", branch);
     const remoteRef = `refs/remotes/origin/${branch}`;
-    await runGit(checkout, ["checkout", "-B", branch, remoteRef], "git checkout");
+    await runGit(
+      checkout,
+      ["checkout", "-B", branch, "--end-of-options", remoteRef],
+      "git checkout",
+    );
     await resetManagedGitCheckout(checkout, remoteRef);
     return;
   }

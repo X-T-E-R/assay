@@ -559,14 +559,20 @@ describe("donor adoption lifecycle", () => {
     await writeFile(absoluteEvidence, content.replace('"passed"', '"failed"'), "utf8");
 
     const check = await checkFramework({ root: fixture.root });
+    // The row must name the tampered evidence file. Blaming state.json, which
+    // is intact, sends an operator to the wrong file.
     expect(
       check.rows.some(
         (row) =>
-          row.path.includes(".assay/donors/upstream-product/state.json") &&
+          row.path === recorded.path &&
           row.status === "error" &&
           row.message?.includes("evidence digest mismatch"),
       ),
+      JSON.stringify(check.rows, null, 2),
     ).toBe(true);
+    expect(
+      check.rows.some((row) => row.path.includes("state.json") && row.status === "error"),
+    ).toBe(false);
   });
 
   it("detects content-addressed record filename mismatches", async () => {

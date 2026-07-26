@@ -219,6 +219,17 @@ function normalizeRegistryPath(root: string, value: string): string {
   return relativeDisplayPath(path.resolve(root, value), root);
 }
 
+/**
+ * Absolute location of a path recorded in the systems registry. Recorded paths
+ * are workspace-relative when the system lives inside the workspace and
+ * absolute when it does not (`relativeDisplayPath` falls back to the absolute
+ * form), so callers must resolve rather than join: joining an already-absolute
+ * value onto the root produces a path that does not exist.
+ */
+export function resolveRegistryPath(root: string, recordedPath: string): string {
+  return path.resolve(root, recordedPath);
+}
+
 function updateValuesEqual(previous: SystemUpdateValue, current: SystemUpdateValue): boolean {
   if (Array.isArray(previous) || Array.isArray(current)) {
     if (!Array.isArray(previous) || !Array.isArray(current)) {
@@ -532,7 +543,8 @@ export async function archiveSystem(
   const dateStamp = nowIso(now).slice(0, 10);
   const layout = resolveWorkspaceLayout(await loadManifest(root)) ?? defaultStandaloneLayout();
   const archiveBase = archiveBasePath(layout, dateStamp, system.name);
-  const movedTo = path.join(root, archiveBase, path.basename(system.path));
+  const sourcePath = resolveRegistryPath(root, system.path);
+  const movedTo = path.join(root, archiveBase, path.basename(sourcePath));
 
   if (dryRun) {
     return {
@@ -545,13 +557,18 @@ export async function archiveSystem(
     };
   }
 
-  const sourcePath = path.join(root, system.path);
   if (await exists(sourcePath)) {
     await mkdir(path.dirname(movedTo), { recursive: true });
     // copy-first then remove for rollback safety
     const { cp } = await import("node:fs/promises");
     await cp(sourcePath, movedTo, { recursive: true });
     await rm(sourcePath, { recursive: true, force: true });
+    if (!(await exists(movedTo))) {
+      throw new FrameworkError(
+        `system archive did not materialize at the reported destination: ${relativeDisplayPath(movedTo, root)}`,
+        { code: "IO_ERROR" },
+      );
+    }
   }
 
   const archived: SystemRecord = {

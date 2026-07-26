@@ -24,7 +24,7 @@ import {
 import { FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
-import { defaultOverlayLayout, defaultStandaloneLayout } from "./layout.js";
+import { defaultOverlayLayout, defaultStandaloneLayout, resolveWorkspaceLayout } from "./layout.js";
 import { loadLegacyManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
@@ -40,6 +40,7 @@ import type {
   MigrationPlan,
   MigrationStep,
   SystemsRegistry,
+  WorkspaceLayout,
 } from "./schemas/index.js";
 import { migrationPlanSchema, updateAnalysisSchema, updatePlanSchema } from "./schemas/index.js";
 import { renderSystemContract } from "./system-contract.js";
@@ -229,6 +230,10 @@ function requireManifest(manifest: FrameworkManifest | null, root: string): Fram
   return manifest;
 }
 
+function layoutForManifest(manifest: FrameworkManifest | null): WorkspaceLayout {
+  return resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
+}
+
 function projectNameFromManifest(
   manifest: FrameworkManifest | null | undefined,
   fallbackRoot: string,
@@ -366,7 +371,7 @@ export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<Upda
     project,
     manifest.project.archetype,
     manifest.project.mode,
-    { root },
+    { root, layout: layoutForManifest(manifest) },
   )) {
     const target = path.join(root, template.path);
     const record = manifest.managed_files[template.path];
@@ -556,6 +561,7 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
     (
       await desiredRuntimeTemplates(project, manifest.project.archetype, manifest.project.mode, {
         root,
+        layout: layoutForManifest(manifest),
       })
     ).map((template) => [template.path, template]),
   );

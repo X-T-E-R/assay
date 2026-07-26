@@ -54,7 +54,9 @@ cd /path/to/existing-repo
 assay convert --to standalone --target ../existing-repo-assay
 ```
 
-The new workbench hoists `.assay/references` to `references`, `.assay/analyses` to `analyses`, and so on. The original product repo is registered as the primary independent system by relative path (`../existing-repo`). Use `--move` to move instead of copy; use `--no-keep-overlay` to remove the source overlay work folders after a successful move. The product repo and its `.git/` are never modified.
+The new workbench hoists `.assay/references` to `references`, `.assay/analyses` to `analyses`, and so on. Assay state travels with it: manifest, systems registry, ADR index (with ADR paths rewritten to the new layout), events, backups, donor records, and project-local archetypes. The original product repo is registered as the primary independent system by relative path (`../existing-repo`). Use `--move` to move instead of copy. `--no-keep-overlay` removes the emptied `.assay/` from the source and requires `--move`; with a copy the overlay is still the only holder of that state. The product repo and its `.git/` are never modified.
+
+`assay update` follows the workspace layout. In an overlay workspace, managed templates are written under `.assay/`, and root `README.md`, `.gitignore`, and `AGENTS.md` are never created or replaced — including with `--force`.
 
 ## Sources, analyses, and iterations
 

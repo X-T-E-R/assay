@@ -1,6 +1,8 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
 import { FrameworkError } from "./errors.js";
+import { workspaceTemplateRelativePath } from "./layout.js";
 import { type Archetype, type ArchetypeLookupOptions, loadArchetype } from "./profile.js";
+import type { WorkspaceLayout } from "./schemas/index.js";
 
 export interface TemplateFile {
   readonly path: string;
@@ -60,9 +62,13 @@ export function archetypeTemplates(
   project: string,
   mode: "learning" | "absorption",
   archetype: Archetype,
+  layout?: WorkspaceLayout,
 ): TemplateFile[] {
   const result: TemplateFile[] = [];
   for (const entry of archetype.templates) {
+    if (layout && skipTemplateForLayout(layout, entry.path)) {
+      continue;
+    }
     const content =
       entry.content !== undefined
         ? renderArchetypeContent(entry.content, project)
@@ -73,9 +79,21 @@ export function archetypeTemplates(
         { code: "IO_ERROR" },
       );
     }
-    result.push(templateFile({ path: entry.path, templateId: entry.templateId, content }));
+    const templatePath = layout ? workspaceTemplateRelativePath(layout, entry.path) : entry.path;
+    result.push(templateFile({ path: templatePath, templateId: entry.templateId, content }));
   }
   return result;
+}
+
+/**
+ * Root files an attached product repository owns. Overlay workspaces keep all
+ * Assay-managed content under `.assay/`, so these are never written or
+ * replaced there; `assay attach` makes the same promise.
+ */
+const OVERLAY_PROTECTED_ROOT_FILES = new Set(["README.md", ".gitignore", "AGENTS.md"]);
+
+function skipTemplateForLayout(layout: WorkspaceLayout, templatePath: string): boolean {
+  return layout.mode === "overlay" && OVERLAY_PROTECTED_ROOT_FILES.has(templatePath);
 }
 
 /** Substitution surface for archetype-carried template content. */

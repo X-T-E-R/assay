@@ -1,6 +1,7 @@
 import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
+import { parse as parseYaml, parseDocument as parseYamlDocument } from "yaml";
 
 import { defaultAdrIndex, loadAdrIndex, saveAdrIndex } from "./adrs.js";
 import {
@@ -30,7 +31,7 @@ import {
   workspaceWorkRelativePath,
 } from "./layout.js";
 import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
-import { relativeDisplayPath, slugify } from "./paths.js";
+import { isContainedPath, relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
 import {
   dirsForArchetype,
   loadArchetype,
@@ -53,7 +54,7 @@ import {
   getSourceStatus,
   resolveSourceObservation,
 } from "./sources.js";
-import { loadSystemsRegistry } from "./systems-registry.js";
+import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
 import { archetypeTemplates } from "./templates.js";
 import { nowIso } from "./time.js";
 
@@ -66,14 +67,23 @@ const GENERATED_REFERENCE_DIRS = new Set([
   ".next",
 ]);
 
+/**
+ * Runtime template set for a workspace, resolved through its layout.
+ *
+ * Overlay workspaces keep every Assay-managed file under `.assay/`, so the
+ * archetype's root-relative template paths are translated before `update` uses
+ * them. Without the layout, `assay update` would create `README.md`,
+ * `.gitignore`, `analyses/`, and `knowledge/` in an attached product
+ * repository — the files `attach` deliberately leaves alone.
+ */
 export async function desiredRuntimeTemplates(
   project: string,
   archetype: ProjectArchetype,
   mode: ProjectMode,
-  options: { readonly root?: string } = {},
+  options: { readonly root?: string; readonly layout?: WorkspaceLayout } = {},
 ) {
   const archetypeDefinition = await loadArchetype(archetype, options);
-  return archetypeTemplates(project, mode, archetypeDefinition);
+  return archetypeTemplates(project, mode, archetypeDefinition, options.layout);
 }
 
 export interface InitFrameworkOptions {
@@ -393,6 +403,29 @@ function layoutDirectoryPath(layout: WorkspaceLayout, directory: string): string
     : workspaceWorkRelativePath(layout, directory);
 }
 
+/**
+ * Knowledge subdirectory names the workspace's archetype declares (both the
+ * `dirs` and mode-specific lists), e.g. `knowledge/playbooks`. A custom
+ * archetype owns these names, so `check` must not report them as drift.
+ */
+async function archetypeKnowledgeDirs(root: string): Promise<string[]> {
+  try {
+    const installedArchetype = await readInstalledArchetype(root);
+    const archetypeDefinition = await loadArchetype(installedArchetype ?? "study", { root });
+    const mode = await readFrameworkMode(root);
+    const names: string[] = [];
+    for (const directory of dirsForArchetype(archetypeDefinition, mode)) {
+      const segments = directory.split("/");
+      if (segments[0] === "knowledge" && segments[1]) {
+        names.push(segments[1]);
+      }
+    }
+    return names;
+  } catch {
+    return [];
+  }
+}
+
 async function countKnowledgeEntries(root: string, layout: WorkspaceLayout): Promise<number> {
   const knowledgeRoot = path.join(root, workspaceRelativePath(layout, "knowledge"));
   if (!(await exists(knowledgeRoot))) return 0;
@@ -404,8 +437,11 @@ async function countKnowledgeEntries(root: string, layout: WorkspaceLayout): Pro
   }).length;
 }
 
-const OPEN_STATUS_PATTERN = /(?<![a-z])Status:\s*open\b/i;
-
+/**
+ * An iteration counts as open when its plan header declares `Status: open`.
+ * Reading and writing use the same header anchor, so `status` and
+ * `iteration close` cannot disagree about which line holds the state.
+ */
 async function countOpenIterations(root: string, layout: WorkspaceLayout): Promise<number> {
   const iterationsDir = path.join(root, workspaceRelativePath(layout, "iterations"));
   if (!(await exists(iterationsDir))) {
@@ -420,7 +456,7 @@ async function countOpenIterations(root: string, layout: WorkspaceLayout): Promi
     if (!(await exists(planPath))) continue;
     try {
       const content = await readFile(planPath, "utf8");
-      if (OPEN_STATUS_PATTERN.test(content)) {
+      if (readHeaderField(content, "Status")?.toLowerCase() === "open") {
         count += 1;
       }
     } catch {
@@ -796,10 +832,30 @@ export async function checkFramework(
         });
       }
 
-      // Check each active/primary system exists on disk
+      // Check each active/primary system exists on disk. Registry paths are
+      // workspace-relative for systems inside the workspace and absolute for
+      // systems outside it, so they are resolved rather than joined.
       for (const system of Object.values(registry.systems)) {
-        if (system.status === "archived") continue;
-        const systemPath = path.join(root, system.path);
+        if (system.status === "archived") {
+          if (system.archive_path) {
+            const archivePath = resolveRegistryPath(root, system.archive_path);
+            if (!(await exists(archivePath))) {
+              rows.push({
+                path: system.archive_path,
+                status: "error",
+                message: `archived system '${system.name}' has no archive on disk`,
+              });
+            }
+          } else {
+            rows.push({
+              path: SYSTEMS_REGISTRY_FILE,
+              status: "error",
+              message: `archived system '${system.name}' records no archive_path`,
+            });
+          }
+          continue;
+        }
+        const systemPath = resolveRegistryPath(root, system.path);
         if (!(await exists(systemPath))) {
           rows.push({
             path: system.path,
@@ -808,7 +864,7 @@ export async function checkFramework(
           });
         }
         if (system.contract_file) {
-          const contractPath = path.join(root, system.contract_file);
+          const contractPath = resolveRegistryPath(root, system.contract_file);
           if (!(await exists(contractPath))) {
             rows.push({
               path: system.contract_file,
@@ -894,31 +950,33 @@ export async function checkFramework(
   }
 
   // Semantic check 5: knowledge directory-name consistency
-  // The framework owns knowledge subdirectory names (decisions, patterns,
-  // guides, troubleshooting). A legacy bug appended "s" to every knowledge
-  // type, producing a parallel "knowledge/troubleshootings/" directory that
-  // split troubleshooting entries from their README. Flag any knowledge
-  // subdirectory that is not one of the expected names so the drift cannot
-  // hide silently.
+  // The framework owns the base knowledge subdirectory names (decisions,
+  // patterns, guides, troubleshooting). A legacy bug appended "s" to every
+  // knowledge type, producing a parallel "knowledge/troubleshootings/"
+  // directory that split troubleshooting entries from their README. Flag any
+  // knowledge subdirectory that is neither a base name nor declared by the
+  // workspace's archetype, so real drift is visible while a custom archetype's
+  // own knowledge folders stay clean.
   try {
     const knowledgeRoot = workspacePath(root, layout, "knowledge");
     if (await exists(knowledgeRoot)) {
-      const EXPECTED_KNOWLEDGE_DIRS = new Set([
+      const expectedKnowledgeDirs = new Set([
         "decisions",
         "patterns",
         "guides",
         "troubleshooting",
         "templates",
         "evaluations",
+        ...(await archetypeKnowledgeDirs(root)),
       ]);
       const entries = await readdir(knowledgeRoot, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        if (!EXPECTED_KNOWLEDGE_DIRS.has(entry.name)) {
+        if (!expectedKnowledgeDirs.has(entry.name)) {
           rows.push({
             path: workspaceSubpath(layout, "knowledge", entry.name),
             status: "warning",
-            message: `unexpected knowledge subdirectory '${entry.name}' (expected one of: ${[...EXPECTED_KNOWLEDGE_DIRS].join(", ")}). A legacy bug created 'troubleshootings'; move entries into 'knowledge/troubleshooting/'.`,
+            message: `unexpected knowledge subdirectory '${entry.name}' (expected one of: ${[...expectedKnowledgeDirs].join(", ")}). A legacy bug created 'troubleshootings'; move entries into 'knowledge/troubleshooting/'.`,
           });
         }
       }
@@ -1184,15 +1242,155 @@ function hasEmptyKeyObservations(content: string): boolean {
 }
 
 function sectionBody(content: string, heading: string): string | null {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const headingMatch = content.match(new RegExp(`^##\\s+${escaped}\\s*$`, "im"));
-  if (!headingMatch || headingMatch.index === undefined) {
+  const section = findSection(content, heading);
+  return section === null ? null : content.slice(section.bodyStart, section.bodyEnd);
+}
+
+/**
+ * Escape a literal fragment so it can be embedded in a RegExp source.
+ */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+interface MarkdownSection {
+  /** Index just after the heading line, where the section body starts. */
+  readonly bodyStart: number;
+  /** Index of the next `##` heading, or end of document. */
+  readonly bodyEnd: number;
+}
+
+/**
+ * Locate a `## <heading>` section. The heading must occupy a whole line, so a
+ * sentence that merely mentions `## Result` inside another section cannot be
+ * mistaken for the section itself.
+ */
+function findSection(content: string, heading: string): MarkdownSection | null {
+  const pattern = new RegExp(`^##[ \\t]+${escapeRegExp(heading)}[ \\t]*$`, "im");
+  const match = content.match(pattern);
+  if (!match || match.index === undefined) {
     return null;
   }
-  const after = content.slice(headingMatch.index + headingMatch[0].length);
-  // Stop at the next ## heading.
-  const nextHeading = after.match(/\n##\s/);
-  return nextHeading && nextHeading.index !== undefined ? after.slice(0, nextHeading.index) : after;
+  const headingStart = match.index;
+  let bodyStart = headingStart + match[0].length;
+  if (content.startsWith("\r\n", bodyStart)) {
+    bodyStart += 2;
+  } else if (content.startsWith("\n", bodyStart)) {
+    bodyStart += 1;
+  }
+  const after = content.slice(bodyStart);
+  const next = after.match(/^##[ \t]/m);
+  const bodyEnd = next?.index === undefined ? content.length : bodyStart + next.index;
+  return { bodyStart, bodyEnd };
+}
+
+/**
+ * Length of a document's header block: everything before the first `##`
+ * section heading. Workspace state lines (`- Status:`, `- Source alias:`,
+ * `- Freeze path:`, ...) are written into this block, so reads and rewrites
+ * anchor here instead of matching the first lookalike line in the body. A note
+ * such as `- Blocker: Status: open (waiting on upstream)` inside a section can
+ * then neither absorb a rewrite nor be mistaken for the real state.
+ */
+function headerBlockLength(content: string): number {
+  const match = content.match(/^##[ \t]/m);
+  return match?.index === undefined ? content.length : match.index;
+}
+
+function headerFieldPattern(field: string): RegExp {
+  return new RegExp(`^[ \\t]{0,3}(?:[-*][ \\t]+)?${escapeRegExp(field)}:[ \\t]*(.*)$`, "im");
+}
+
+/** Value of a header metadata field, or null when the header does not set it. */
+function readHeaderField(content: string, field: string): string | null {
+  const header = content.slice(0, headerBlockLength(content));
+  const match = header.match(headerFieldPattern(field));
+  return match?.[1] === undefined ? null : match[1].trim();
+}
+
+/** First whitespace-delimited token of a header field, for path/id fields. */
+function readHeaderToken(content: string, field: string): string | null {
+  const value = readHeaderField(content, field);
+  if (value === null) return null;
+  const token = value.split(/\s+/)[0];
+  return token === undefined || token === "" ? null : token;
+}
+
+function insertHeaderLine(header: string, line: string): string {
+  const body = header.replace(/\s+$/, "");
+  if (body === "") {
+    return `${line}\n\n${header}`;
+  }
+  const trailing = header.slice(body.length);
+  return `${body}\n${line}${trailing === "" ? "\n" : trailing}`;
+}
+
+/**
+ * Append a line to the end of a `## <heading>` section, creating the section at
+ * the end of the document when it is absent.
+ */
+function appendToSection(content: string, heading: string, line: string): string {
+  const section = findSection(content, heading);
+  if (section === null) {
+    const separator = content.endsWith("\n") ? "" : "\n";
+    return `${content}${separator}\n## ${heading}\n\n${line}\n`;
+  }
+  const body = content.slice(section.bodyStart, section.bodyEnd);
+  const trimmedBody = body.replace(/\s+$/, "");
+  const newBody = trimmedBody === "" ? `\n${line}\n\n` : `${trimmedBody}\n${line}\n\n`;
+  return `${content.slice(0, section.bodyStart)}${newBody}${content.slice(section.bodyEnd)}`;
+}
+
+/**
+ * Tick the `- [ ] <label>` checkbox inside a specific section. Returns null when
+ * the section has no such checkbox, so callers can refuse instead of reporting a
+ * close that changed nothing. Only the section body is searched, so a
+ * lookalike checkbox in `## Key observations` is never ticked in its place.
+ */
+function checkSectionCheckbox(content: string, heading: string, label: string): string | null {
+  const section = findSection(content, heading);
+  if (section === null) {
+    return null;
+  }
+  const body = content.slice(section.bodyStart, section.bodyEnd);
+  const pattern = new RegExp(
+    `^([ \\t]*[-*][ \\t]+)\\[[ xX]?\\]([ \\t]+${escapeRegExp(label)})\\b`,
+    "im",
+  );
+  const match = body.match(pattern);
+  if (!match) {
+    return null;
+  }
+  const updatedBody = body.replace(pattern, (_full, marker: string, suffix: string) => {
+    return `${marker}[x]${suffix}`;
+  });
+  return `${content.slice(0, section.bodyStart)}${updatedBody}${content.slice(section.bodyEnd)}`;
+}
+
+/**
+ * Write a header metadata field and verify the result. The field is rewritten
+ * in place when the header already declares it and inserted at the end of the
+ * header block otherwise, so the document always records the new state; a
+ * rewrite that did not take effect raises instead of reporting success.
+ */
+function setHeaderField(content: string, field: string, value: string, label: string): string {
+  const headerLength = headerBlockLength(content);
+  const header = content.slice(0, headerLength);
+  const rest = content.slice(headerLength);
+  const pattern = headerFieldPattern(field);
+  const updatedHeader = pattern.test(header)
+    ? header.replace(pattern, (line) => {
+        const marker = line.match(/^[ \t]{0,3}(?:[-*][ \t]+)?/)?.[0] ?? "";
+        return `${marker}${field}: ${value}`;
+      })
+    : insertHeaderLine(header, `- ${field}: ${value}`);
+  const updated = `${updatedHeader}${rest}`;
+  if (readHeaderField(updated, field) !== value) {
+    throw new FrameworkError(`${label}: could not record '${field}: ${value}'`, {
+      code: "IO_ERROR",
+    });
+  }
+  return updated;
 }
 
 function sectionHasHumanContent(content: string, heading: string): boolean {
@@ -1442,9 +1640,9 @@ function yamlScalar(value: string): string {
 }
 
 /**
- * Minimal reference.yaml reader. Extracts the plain scalar fields we write
- * (name, source, freeze_path) without a YAML dependency. Returns the raw
- * string for each found field; unknown/missing fields are undefined.
+ * Read the scalar fields of a reference.yaml case file. Parsing goes through
+ * the YAML library so the reader accepts exactly what the writer can update:
+ * a file this returns values for is a file `markReferenceAnalyzed` can rewrite.
  */
 function parseReferenceYaml(content: string): {
   name?: string;
@@ -1452,36 +1650,65 @@ function parseReferenceYaml(content: string): {
   freezePath?: string;
   analyzed?: boolean;
 } {
-  const result: { name?: string; source?: string; freezePath?: string; analyzed?: boolean } = {};
-  for (const line of content.split("\n")) {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("#") || trimmed === "") continue;
-    const match = trimmed.match(/^([a-z_]+):\s*(.*)$/);
-    if (!match || match[1] === undefined || match[2] === undefined) continue;
-    const key = match[1];
-    let raw = match[2].trim();
-    if (raw === "[]") continue;
-    // Strip a surrounding JSON-style quote pair if present.
-    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
-      raw = raw.slice(1, -1);
-    }
-    if (key === "name") result.name = raw;
-    else if (key === "source") result.source = raw;
-    else if (key === "freeze_path") result.freezePath = raw;
-    else if (key === "analyzed") result.analyzed = raw === "true";
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(content) as unknown;
+  } catch (error) {
+    throw new FrameworkError("reference case file cannot be parsed as YAML", {
+      code: "IO_ERROR",
+      cause: error,
+    });
   }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+  const record = parsed as Record<string, unknown>;
+  const result: { name?: string; source?: string; freezePath?: string; analyzed?: boolean } = {};
+  if (typeof record.name === "string") result.name = record.name;
+  if (typeof record.source === "string") result.source = record.source;
+  if (typeof record.freeze_path === "string") result.freezePath = record.freeze_path;
+  if (typeof record.analyzed === "boolean") result.analyzed = record.analyzed;
   return result;
 }
 
 /**
- * Flip `analyzed: false` to `analyzed: true` in a reference.yaml, preserving
- * all other lines. Returns true if the file was updated.
+ * Set `analyzed: true` in a reference.yaml, preserving comments and every other
+ * field. Returns false when there is no case file to update (a legacy or
+ * hand-made freeze) or when the flag is already true. Raises when the file
+ * exists but its `analyzed` flag cannot be read or written, because a close
+ * that silently fails to mark the reference leaves `check` and the case file
+ * disagreeing.
  */
 async function markReferenceAnalyzed(yamlPath: string): Promise<boolean> {
   if (!(await exists(yamlPath))) return false;
   const content = await readFile(yamlPath, "utf8");
-  if (!/^analyzed:\s*false\s*$/m.test(content)) return false;
-  const updated = content.replace(/^analyzed:\s*false\s*$/m, "analyzed: true");
+  let document: ReturnType<typeof parseYamlDocument>;
+  try {
+    document = parseYamlDocument(content);
+    if (document.errors.length > 0) {
+      throw new Error(document.errors[0]?.message ?? "invalid YAML");
+    }
+  } catch (error) {
+    throw new FrameworkError(`reference case file cannot be parsed: ${yamlPath}`, {
+      code: "IO_ERROR",
+      cause: error,
+    });
+  }
+  const current = document.get("analyzed");
+  if (current === true) return false;
+  if (typeof current !== "boolean") {
+    throw new FrameworkError(
+      `reference case file has no boolean 'analyzed' flag to update: ${yamlPath}`,
+      { code: "IO_ERROR" },
+    );
+  }
+  document.set("analyzed", true);
+  const updated = document.toString();
+  if (parseReferenceYaml(updated).analyzed !== true) {
+    throw new FrameworkError(`reference case file 'analyzed' flag could not be set: ${yamlPath}`, {
+      code: "IO_ERROR",
+    });
+  }
   await writeFile(yamlPath, updated, "utf8");
   return true;
 }
@@ -1578,14 +1805,13 @@ export async function absorbReference(
   });
 
   if (probe.hasContent) {
-    let analysisContent = await readFile(analysis.absolutePath, "utf8");
-    const sectionHeader = "## Architecture / structure";
-    if (analysisContent.includes(sectionHeader)) {
-      analysisContent = analysisContent.replace(sectionHeader, `${sectionHeader}\n\n${probe.body}`);
-    } else {
-      analysisContent += `\n${sectionHeader}\n\n${probe.body}\n`;
-    }
-    await writeFile(analysis.absolutePath, analysisContent, "utf8");
+    const analysisContent = await readFile(analysis.absolutePath, "utf8");
+    const sectionHeader = "Architecture / structure";
+    await writeFile(
+      analysis.absolutePath,
+      appendToSection(analysisContent, sectionHeader, probe.body),
+      "utf8",
+    );
   }
 
   const eventFile = await appendEvent(root, { ...eventPayload, analysis_path: analysis.path }, now);
@@ -1779,9 +2005,12 @@ export async function createAnalysis(
   let refSource = "";
   let refFreezePath = "";
   let sourceBlock = "";
+  let referenceRelativePath: string | null = null;
   if (options.forReference) {
-    const refPath = options.forReference.replace(/\\/g, "/");
-    const refAbsolute = path.join(root, refPath);
+    const reference = resolveContainedPath(root, options.forReference, "reference path");
+    const refPath = reference.relativePath;
+    const refAbsolute = reference.absolutePath;
+    referenceRelativePath = refPath;
     const yamlPath = path.join(refAbsolute, "reference.yaml");
     if (!(await exists(refAbsolute))) {
       throw new FrameworkNotFoundError(`reference not found: ${refPath}`);
@@ -1832,7 +2061,7 @@ export async function createAnalysis(
       event: "analysis.created",
       path: relativePath,
       title: options.title,
-      ...(options.forReference ? { for_reference: options.forReference.replace(/\\/g, "/") } : {}),
+      ...(referenceRelativePath ? { for_reference: referenceRelativePath } : {}),
       ...(options.forSource ? { for_source: options.forSource } : {}),
       ...(options.observation ? { source_observation: options.observation } : {}),
     },
@@ -1911,10 +2140,11 @@ export async function closeIteration(
   const iterationsRelative = workspaceRelativePath(layout, "iterations");
   const iterationsDir = path.join(root, iterationsRelative);
   let iterPath: string | null = null;
-  const selectorNormalized = options.selector.replace(/\\/g, "/");
+  const selector = resolveContainedPath(root, options.selector, "iteration selector");
+  const selectorNormalized = selector.relativePath;
 
   // Try as direct path
-  const directPath = path.join(root, selectorNormalized);
+  const directPath = selector.absolutePath;
   if (await exists(directPath)) {
     iterPath = selectorNormalized;
   } else {
@@ -1945,14 +2175,9 @@ export async function closeIteration(
 
   // Update plan.md: set Status to closed, add Result
   let content = await readFile(planPath, "utf8");
-  content = content.replace(/(?<![a-z])Status:\s*open\b/i, "Status: closed");
-  content = content.replace(
-    /## Result\s*\n/,
-    `## Result\n\n- ${options.result} on ${date}${options.note ? ` — ${options.note}` : ""}\n`,
-  );
-  if (!/## Result/.test(content)) {
-    content += `\n## Result\n\n- ${options.result} on ${date}${options.note ? ` — ${options.note}` : ""}\n`;
-  }
+  const resultLine = `- ${options.result} on ${date}${options.note ? ` — ${options.note}` : ""}`;
+  content = setHeaderField(content, "Status", "closed", `iteration ${iterPath}/plan.md`);
+  content = appendToSection(content, "Result", resultLine);
   await writeFile(planPath, content, "utf8");
 
   const eventFile = await appendEvent(
@@ -1975,18 +2200,19 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   const now = options.now ?? new Date();
   const date = dateStamp(now);
 
-  const analysisPath = options.path.replace(/\\/g, "/");
-  const absolutePath = path.join(root, analysisPath);
+  const analysis = resolveContainedPath(root, options.path, "analysis path");
+  const analysisPath = analysis.relativePath;
+  const absolutePath = analysis.absolutePath;
   if (!(await exists(absolutePath))) {
     throw new FrameworkNotFoundError(`analysis not found: ${analysisPath}`);
   }
 
   let content = await readFile(absolutePath, "utf8");
-  const sourceAliasMatch = content.match(/^- Source alias:\s*(\S+)/m);
-  const sourceObservationMatch = content.match(/^- Source observation:\s*(\S+)/m);
+  const sourceAlias = readHeaderToken(content, "Source alias");
+  const sourceObservation = readHeaderToken(content, "Source observation");
   const sourceBinding =
-    sourceAliasMatch?.[1] && sourceObservationMatch?.[1]
-      ? { alias: sourceAliasMatch[1], observation: sourceObservationMatch[1] }
+    sourceAlias && sourceObservation
+      ? { alias: sourceAlias, observation: sourceObservation }
       : null;
   const sourceResolution = sourceBinding
     ? await resolveSourceObservation({
@@ -2013,15 +2239,22 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
     adr: "adr",
   };
   const statusValue = statusMap[options.exit];
-  if (/- Status:\s*\S+/i.test(content)) {
-    content = content.replace(/- Status:\s*\S+/i, `- Status: ${statusValue}`);
-  } else {
-    content = `# Analysis\n\n- Status: ${statusValue}\n${content}`;
-  }
-  // Check the decision exit checkbox
+  content = setHeaderField(content, "Status", statusValue, `analysis ${analysisPath}`);
+  // Tick the decision-exit checkbox inside the `## Decision exit` section. An
+  // analysis card that does not carry that section records its exit through the
+  // header alone; one that does carry it must contain the matching checkbox,
+  // otherwise the requested exit cannot be recorded and the close fails.
   const exitLabel = options.exit === "adr" ? "ADR" : options.exit;
-  const checkboxPattern = new RegExp(/- \[[\s]?\] /.source + exitLabel + /\b/.source, "i");
-  content = content.replace(checkboxPattern, `- [x] ${exitLabel}`);
+  if (findSection(content, "Decision exit") !== null) {
+    const ticked = checkSectionCheckbox(content, "Decision exit", exitLabel);
+    if (ticked === null) {
+      throw new FrameworkError(
+        `analysis ${analysisPath}: '## Decision exit' has no '- [ ] ${exitLabel}' checkbox to record this exit`,
+        { code: "IO_ERROR" },
+      );
+    }
+    content = ticked;
+  }
   if (options.note) {
     content += `\n> Closed on ${date}: ${options.note}\n`;
   }
@@ -2062,9 +2295,11 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
         throw error;
       }
     }
-    content = content.replace(
-      /^- Source analysis status:\s*\S+/m,
-      "- Source analysis status: closed",
+    content = setHeaderField(
+      content,
+      "Source analysis status",
+      "closed",
+      `analysis ${analysisPath}`,
     );
   }
 
@@ -2098,13 +2333,17 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   // `analyzed` flag to true so `check` stops warning about it. This closes the
   // references → analyses loop: freezing opens the case, closing the analysis
   // marks it resolved.
-  const freezePathMatch = content.match(/^- Freeze path:\s*(\S+)/m);
+  const freezePath = readHeaderToken(content, "Freeze path");
   let analyzedReference: string | null = null;
-  if (freezePathMatch?.[1]) {
-    const freezePath = freezePathMatch[1];
-    const yamlPath = path.join(root, freezePath, "reference.yaml");
-    if (await markReferenceAnalyzed(yamlPath)) {
-      analyzedReference = freezePath;
+  if (freezePath) {
+    // The freeze path is read back out of the analysis header, so it is treated
+    // as untrusted: a path that leaves the workspace is ignored rather than
+    // followed into a write.
+    if (isContainedPath(root, toPosixPath(freezePath))) {
+      const yamlPath = path.join(root, freezePath, "reference.yaml");
+      if (await markReferenceAnalyzed(yamlPath)) {
+        analyzedReference = freezePath;
+      }
     }
   }
 
@@ -2115,7 +2354,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
       path: analysisPath,
       exit: options.exit,
       note: options.note ?? null,
-      ...(options.allowEmpty ? { allow_empty: true } : {}),
       ...(analyzedReference ? { marked_reference_analyzed: analyzedReference } : {}),
       ...(closedSourceObservation
         ? { marked_source_observation_closed: closedSourceObservation }
