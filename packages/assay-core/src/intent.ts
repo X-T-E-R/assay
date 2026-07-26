@@ -15,6 +15,7 @@ import { requireCapability } from "./profile.js";
 import type { FrameworkManifest, SystemRecord, SystemsRegistry } from "./schemas/index.js";
 import { findSystem, loadSystemsRegistry } from "./systems-registry.js";
 import { nowIso } from "./time.js";
+import { yamlArray, yamlString } from "./yaml.js";
 
 /** Subdirectories of the intent work folder. */
 const ORIGINAL_DIR = "original";
@@ -65,6 +66,12 @@ export interface CaptureIntentResult {
   readonly created: boolean;
   readonly absolutePath: string;
   readonly eventFile?: string;
+  /**
+   * Option names whose requested value differs from the record that already
+   * exists. A capture is append-only, so these were not applied; empty
+   * whenever the record was written by this call.
+   */
+  readonly ignoredOptions: readonly string[];
 }
 
 export interface PromoteIntentOptions {
@@ -88,11 +95,21 @@ export interface PromoteIntentResult {
   readonly eventFile: string;
 }
 
+/**
+ * Whether a listed record still matches what was recorded. `modified` is a
+ * readable record whose body no longer hashes to its own digest; `unreadable`
+ * is a file that no longer parses as an intent record at all.
+ */
+export type IntentIntegrity = "ok" | "modified" | "unreadable";
+
 export interface IntentListEntry extends IntentCapture {
   /** Workspace-relative requirement paths that declare `derives_from: <id>`. */
   readonly requirements: readonly string[];
   /** ADR ids that declare `related_intent: <id>`. */
   readonly decisions: readonly string[];
+  readonly integrity: IntentIntegrity;
+  /** Set when `integrity` is not `ok`: what is wrong and how to resolve it. */
+  readonly integrityMessage?: string;
 }
 
 export interface ListIntentOptions {
@@ -149,14 +166,6 @@ function dateStamp(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
-}
-
-function yamlString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
-function yamlArray(values: readonly string[]): string {
-  return `[${values.map((value) => yamlString(value)).join(", ")}]`;
 }
 
 /**
@@ -237,36 +246,81 @@ function renderCapture(capture: IntentCapture, body: string): string {
 }
 
 /**
- * Read a recorded capture and prove it still holds the text it was recorded
+ * Outcome of reading one capture file. Everything except `ok` is a record that
+ * no longer matches what was written; the callers differ only in whether they
+ * refuse or report it, so the check happens once and the decision is theirs.
+ */
+type CaptureInspection =
+  | { readonly integrity: "ok"; readonly capture: IntentCapture }
+  | { readonly integrity: "modified"; readonly capture: IntentCapture; readonly message: string }
+  | { readonly integrity: "unreadable"; readonly capture: IntentCapture; readonly message: string };
+
+/**
+ * Read a recorded capture and check it still holds the text it was recorded
  * with. Captures are append-only: the digest in the frontmatter is what makes
  * a later identical capture a no-op instead of an overwrite, so a body that no
  * longer hashes to it is a modified record, not a new one.
  */
-async function readCapture(
+async function inspectCapture(
   root: string,
   relativePath: string,
   id: string,
-): Promise<IntentCapture | null> {
+): Promise<CaptureInspection | null> {
   const absolutePath = path.join(root, relativePath);
   if (!(await exists(absolutePath))) {
     return null;
   }
   const record = splitRecord(await readFile(absolutePath, "utf8"));
   if (!record) {
-    throw new FrameworkError(
-      `intent capture '${id}' is not a readable intent record: ${relativePath}. Restore it from version control instead of editing captures in place.`,
-    );
+    return {
+      integrity: "unreadable",
+      // Nothing in the file can be trusted as frontmatter, so the entry
+      // carries only what the filename already proves.
+      capture: {
+        id,
+        path: relativePath,
+        system: "",
+        sha256: "",
+        capturedAt: "",
+        source: null,
+        supersedes: [],
+        shadow: false,
+      },
+      message: `intent capture '${id}' is not a readable intent record: ${relativePath}. Restore it from version control instead of editing captures in place.`,
+    };
   }
   const header = record.header as Record<string, unknown>;
   const capture = captureFromRecord(id, relativePath, header, record.body);
   const recorded = headerString(header, "sha256");
   const actual = computeHash(record.body);
   if (recorded !== null && recorded !== actual) {
-    throw new FrameworkError(
-      `intent capture '${id}' was modified after recording (recorded sha256 ${recorded}, current ${actual}). Captures are append-only: restore the file, or record the corrected text as a new capture with --supersedes ${id}.`,
-    );
+    return {
+      integrity: "modified",
+      capture,
+      message: `intent capture '${id}' was modified after recording (recorded sha256 ${recorded}, current ${actual}). Captures are append-only: restore the file, or record the corrected text as a new capture with --supersedes ${id}.`,
+    };
   }
-  return capture;
+  return { integrity: "ok", capture };
+}
+
+/**
+ * Read a capture, refusing anything that no longer matches its recording.
+ * Every path that writes or promotes goes through this; only `intent list`
+ * downgrades a bad record to a marked entry instead of an error.
+ */
+async function readCapture(
+  root: string,
+  relativePath: string,
+  id: string,
+): Promise<IntentCapture | null> {
+  const inspection = await inspectCapture(root, relativePath, id);
+  if (inspection === null) {
+    return null;
+  }
+  if (inspection.integrity !== "ok") {
+    throw new FrameworkError(inspection.message);
+  }
+  return inspection.capture;
 }
 
 async function requireSystemsRegistryForIntent(root: string): Promise<SystemsRegistry> {
@@ -345,6 +399,85 @@ async function intentText(root: string, options: CaptureIntentOptions): Promise<
   return options.text;
 }
 
+/**
+ * Resolve `--supersedes` to ids this workspace actually holds. A correction
+ * chain is only worth anything if every link resolves, and a mistyped id would
+ * otherwise be stored verbatim and point at nothing forever.
+ */
+async function resolveSupersedes(
+  root: string,
+  manifest: FrameworkManifest,
+  requested: readonly string[] | undefined,
+): Promise<string[]> {
+  const ids = [
+    ...new Set(
+      (requested ?? []).map((value) => value.trim().toLowerCase()).filter((id) => id.length > 0),
+    ),
+  ];
+  const problems: string[] = [];
+  for (const id of ids) {
+    if (!CAPTURE_ID_PATTERN.test(id)) {
+      problems.push(`'${id}' is not a capture id (expected <YYYYMMDD>-<12 hex>)`);
+      continue;
+    }
+    if (!(await exists(path.join(root, intentPath(manifest, ORIGINAL_DIR, `${id}.md`))))) {
+      problems.push(`'${id}' is not a recorded capture in this workspace`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new FrameworkError(
+      `--supersedes must name recorded intent captures: ${problems.join("; ")}. Run \`assay intent list\` to see the recorded capture ids.`,
+    );
+  }
+  return ids;
+}
+
+/**
+ * A capture is content-addressed, so the same text always lands on the same
+ * record. That is only a no-op when the second call meant the same record: a
+ * different system, or a different authority marking, is a different claim and
+ * must not disappear into a silent success.
+ */
+function assertSameCaptureScope(
+  existing: IntentCapture,
+  id: string,
+  systemName: string,
+  shadow: boolean,
+): void {
+  if (existing.system !== systemName) {
+    throw new FrameworkError(
+      `identical text is already recorded for system '${existing.system}' as capture '${id}'; a capture is scoped to one system, so recording it for '${systemName}' would leave it scoped to '${existing.system}'. Capture text specific to '${systemName}', or read the existing record with \`assay intent list --system ${existing.system}\`.`,
+    );
+  }
+  if (existing.shadow !== shadow) {
+    const recordedAs = existing.shadow ? "a shadow copy" : "the authoritative record";
+    const requestedAs = shadow ? "a shadow copy" : "the authoritative record";
+    throw new FrameworkError(
+      `identical text is already recorded for system '${systemName}' as capture '${id}', marked as ${recordedAs}; this call would record it as ${requestedAs}. Captures are append-only: restore the intent authority the record was made under, or record the corrected text as a new capture with --supersedes ${id}.`,
+    );
+  }
+}
+
+/** Requested metadata an existing, unchanged record does not carry. */
+function ignoredCaptureOptions(
+  existing: IntentCapture,
+  source: string | undefined,
+  supersedes: readonly string[],
+): string[] {
+  const ignored: string[] = [];
+  if (source !== undefined && source !== existing.source) {
+    ignored.push("--source");
+  }
+  const recorded = new Set(existing.supersedes);
+  if (
+    supersedes.length > 0 &&
+    (supersedes.length !== recorded.size || supersedes.some((id) => !recorded.has(id)))
+  ) {
+    ignored.push("--supersedes");
+  }
+  return ignored;
+}
+
 export async function captureIntent(options: CaptureIntentOptions): Promise<CaptureIntentResult> {
   const root = path.resolve(options.root);
   const manifest = await requireFrameworkManifest(root);
@@ -365,6 +498,8 @@ export async function captureIntent(options: CaptureIntentOptions): Promise<Capt
   const relativePath = intentPath(manifest, ORIGINAL_DIR, `${id}.md`);
   const absolutePath = path.join(root, relativePath);
 
+  const supersedes = await resolveSupersedes(root, manifest, options.supersedes);
+
   const existing = await readCapture(root, relativePath, id);
   if (existing) {
     if (existing.sha256 !== sha256) {
@@ -372,7 +507,14 @@ export async function captureIntent(options: CaptureIntentOptions): Promise<Capt
         `intent capture '${id}' already records different text (sha256 ${existing.sha256}); refusing to overwrite it.`,
       );
     }
-    return { root, capture: existing, created: false, absolutePath };
+    assertSameCaptureScope(existing, id, system.name, shadow);
+    return {
+      root,
+      capture: existing,
+      created: false,
+      absolutePath,
+      ignoredOptions: ignoredCaptureOptions(existing, options.source, supersedes),
+    };
   }
 
   const capture: IntentCapture = {
@@ -382,7 +524,7 @@ export async function captureIntent(options: CaptureIntentOptions): Promise<Capt
     sha256,
     capturedAt: nowIso(now),
     source: options.source ?? null,
-    supersedes: [...new Set(options.supersedes ?? [])],
+    supersedes,
     shadow,
   };
 
@@ -408,6 +550,7 @@ export async function captureIntent(options: CaptureIntentOptions): Promise<Capt
     created: true,
     absolutePath,
     eventFile: relativeDisplayPath(eventFile, root),
+    ignoredOptions: [],
   };
 }
 
@@ -654,13 +797,22 @@ export async function listIntent(options: ListIntentOptions): Promise<ListIntent
 
   const captures: IntentListEntry[] = [];
   for (const id of await listCaptureIds(root, originalRoot)) {
-    const capture = await readCapture(root, `${originalRoot}/${id}.md`, id);
-    if (!capture) continue;
-    if (systemFilter !== null && !systems.includes(capture.system)) continue;
+    // Listing is how a workspace finds out one of its records went bad, so a
+    // damaged capture is reported in place rather than allowed to take every
+    // other capture down with it. Writing and promoting still refuse outright.
+    const inspection = await inspectCapture(root, `${originalRoot}/${id}.md`, id);
+    if (!inspection) continue;
+    const { capture } = inspection;
+    // An unreadable record has no trustworthy system name, so it survives the
+    // filter: dropping it would hide the damage from every scoped listing.
+    const scoped = inspection.integrity === "unreadable" || systems.includes(capture.system);
+    if (systemFilter !== null && !scoped) continue;
     captures.push({
       ...capture,
       requirements: requirements.get(id) ?? [],
       decisions: decisions.get(id) ?? [],
+      integrity: inspection.integrity,
+      ...(inspection.integrity === "ok" ? {} : { integrityMessage: inspection.message }),
     });
   }
 

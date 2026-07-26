@@ -140,6 +140,91 @@ describe("intent capture", () => {
     expect(await readFile(recordPath, "utf8")).toBe(`${original}Someone reworded this later.\n`);
   });
 
+  it("refuses identical text already recorded for another system", async () => {
+    const root = await intentWorkspace("CaptureSystemConflict");
+    const first = await captureIntent({ root, text: INTENT_TEXT });
+    await mkdir(path.join(root, "systems", "next"), { recursive: true });
+    await registerSystem(root, { path: "systems/next" });
+
+    await expect(captureIntent({ root, text: INTENT_TEXT, system: "next" })).rejects.toThrow(
+      /identical text is already recorded for system 'app'.*a capture is scoped to one system/s,
+    );
+
+    // The first record keeps its scope and no second record appears.
+    expect(await readFile(path.join(root, first.capture.path), "utf8")).toContain('system: "app"');
+    expect((await listIntent({ root })).captures).toHaveLength(1);
+  });
+
+  it("refuses identical text already recorded under a different authority marking", async () => {
+    const root = await intentWorkspace("CaptureShadowConflict");
+    const first = await captureIntent({ root, text: INTENT_TEXT });
+    await updateSystem(root, "app", {
+      intentAuthority: { mode: "external", pointer: "https://atlas.example/app/intent" },
+    });
+
+    await expect(captureIntent({ root, text: INTENT_TEXT, force: true })).rejects.toThrow(
+      /marked as the authoritative record; this call would record it as a shadow copy/,
+    );
+
+    expect(await readFile(path.join(root, first.capture.path), "utf8")).not.toContain("shadow:");
+    expect((await listIntent({ root })).captures[0]?.shadow).toBe(false);
+  });
+
+  it("names the metadata a repeat capture could not apply", async () => {
+    const root = await intentWorkspace("CaptureIgnoredOptions");
+    const first = await captureIntent({ root, text: INTENT_TEXT, source: "kickoff call" });
+    const other = await captureIntent({ root, text: "A second, different intent." });
+
+    const again = await captureIntent({
+      root,
+      text: INTENT_TEXT,
+      source: "retro",
+      supersedes: [other.capture.id],
+    });
+
+    expect(again.created).toBe(false);
+    expect(again.ignoredOptions).toEqual(["--source", "--supersedes"]);
+    // Naming them is all that happens: the record is untouched.
+    const content = await readFile(path.join(root, first.capture.path), "utf8");
+    expect(content).toContain('source: "kickoff call"');
+    expect(content).not.toContain("supersedes:");
+
+    const unchanged = await captureIntent({ root, text: INTENT_TEXT, source: "kickoff call" });
+    expect(unchanged.ignoredOptions).toEqual([]);
+  });
+
+  it("refuses --supersedes ids that name no recorded capture", async () => {
+    const root = await intentWorkspace("SupersedesUnknown");
+    const first = await captureIntent({ root, text: INTENT_TEXT });
+    const typo = `${first.capture.id.slice(0, -1)}${first.capture.id.endsWith("0") ? "1" : "0"}`;
+
+    await expect(
+      captureIntent({
+        root,
+        text: `${INTENT_TEXT} Excel is out of scope.`,
+        supersedes: [typo, "yesterdays-note"],
+      }),
+    ).rejects.toThrow(
+      new RegExp(
+        `--supersedes must name recorded intent captures.*'${typo}' is not a recorded capture.*'yesterdays-note' is not a capture id`,
+        "s",
+      ),
+    );
+
+    // A prefix resolves selectors, not correction chains: it names no record.
+    await expect(
+      captureIntent({
+        root,
+        text: `${INTENT_TEXT} Excel is out of scope.`,
+        supersedes: [first.capture.id.slice(0, 12)],
+      }),
+    ).rejects.toThrow(/is not a capture id/);
+
+    expect((await listIntent({ root })).captures.map((entry) => entry.id)).toEqual([
+      first.capture.id,
+    ]);
+  });
+
   it("records a correction as a new capture instead of editing the old one", async () => {
     const root = await intentWorkspace("CaptureAppendOnly");
     const first = await captureIntent({ root, text: INTENT_TEXT });
@@ -362,6 +447,43 @@ describe("intent list", () => {
     const root = await intentWorkspace("ListReadme");
 
     expect((await listIntent({ root })).captures).toEqual([]);
+  });
+
+  it("marks a damaged record instead of failing the whole listing", async () => {
+    const root = await intentWorkspace("ListIntegrity");
+    const intact = await captureIntent({ root, text: INTENT_TEXT });
+    const edited = await captureIntent({ root, text: "Totals must reconcile with the ledger." });
+    const broken = await captureIntent({ root, text: "Retention is ninety days." });
+
+    const editedPath = path.join(root, edited.capture.path);
+    await writeFile(editedPath, `${await readFile(editedPath, "utf8")}Reworded later.\n`, "utf8");
+    await writeFile(path.join(root, broken.capture.path), "not an intent record\n", "utf8");
+
+    const listed = await listIntent({ root });
+    const byId = new Map(listed.captures.map((entry) => [entry.id, entry]));
+    expect([...byId.keys()].sort()).toEqual(
+      [intact.capture.id, edited.capture.id, broken.capture.id].sort(),
+    );
+    expect(byId.get(intact.capture.id)?.integrity).toBe("ok");
+    expect(byId.get(intact.capture.id)?.integrityMessage).toBeUndefined();
+    expect(byId.get(edited.capture.id)?.integrity).toBe("modified");
+    expect(byId.get(edited.capture.id)?.integrityMessage).toMatch(/was modified after recording/);
+    expect(byId.get(broken.capture.id)?.integrity).toBe("unreadable");
+    expect(byId.get(broken.capture.id)?.integrityMessage).toMatch(/not a readable intent record/);
+
+    // A record too damaged to name its system stays visible in a scoped view.
+    const scoped = await listIntent({ root, system: "app" });
+    expect(scoped.captures.map((entry) => entry.id).sort()).toEqual(
+      [intact.capture.id, edited.capture.id, broken.capture.id].sort(),
+    );
+
+    // Reporting damage in the listing does not soften the write paths.
+    await expect(
+      promoteIntent({ root, capture: edited.capture.id, to: "requirement" }),
+    ).rejects.toThrow(/was modified after recording/);
+    await expect(captureIntent({ root, text: "Retention is ninety days." })).rejects.toThrow(
+      /not a readable intent record/,
+    );
   });
 });
 

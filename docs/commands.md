@@ -156,7 +156,9 @@ Use `system register` only for first-time registration; it rejects duplicate nam
 `external` names another home through `--intent-pointer`, and `none` means the
 system deliberately keeps no intent record. `assay intent capture` refuses to
 write for `external` and `none`. The registry is the machine-readable home; the
-sidecar contract mirrors the field when it is generated at registration.
+sidecar contract mirrors the field only when `register` generates the contract,
+so a later `system update` leaves an existing contract untouched, and the root
+contract written by `assay attach` does not carry the field at all.
 `system update --no-intent-authority` clears the field back to the default.
 
 The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
@@ -180,8 +182,11 @@ assay intent list [--system <name>] [--include-lineage] [--json] [--root <dir>]
 
 Captures are append-only:
 
-- Capturing identical text again is a no-op and writes no second record.
+- Capturing identical text again is a no-op and writes no second record. `--source` and `--supersedes` passed to that repeat call cannot be applied to the record that already exists, so the command names them as ignored instead of reporting a change it did not make.
+- Capturing identical text against a different system, or with a different shadow marking, fails. A capture is scoped to one system, and letting the second call succeed would leave the text scoped to the first one.
+- `--supersedes` takes recorded capture ids. An id that is not one is refused and named, so a correction chain never points at a capture the workspace does not have.
 - Capturing text whose record was edited after it was written fails, naming the recorded and current digests. Restore the file, or record the corrected wording as a new capture with `--supersedes <capture-id>`.
+- `intent list` reports a record that no longer matches what was recorded as `[modified after recording]`, or `[unreadable record]` when it no longer parses at all, and keeps listing every other capture. The marker is in `--json` output as an `integrity` field.
 
 Every capture is scoped to one registered system. `--system` accepts a name or unique prefix and defaults to the current primary; the resolved name is written into the record, so a capture keeps naming the system it was about after `system promote` moves the primary pointer. `intent list --system <name> --include-lineage` follows the registry `supersedes` chain so captures made against a replaced system stay visible.
 

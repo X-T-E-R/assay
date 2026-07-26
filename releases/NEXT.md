@@ -39,10 +39,18 @@ assay intent list [--system <name>] [--include-lineage] [--json]
   verbatim, plus the resolved system name, the full SHA-256 of the body, and the
   capture time. `--file` is workspace-relative and refuses to leave the
   workspace.
-- Captures are append-only. Identical text captured again is a no-op. Text whose
-  record was edited after it was written is refused, naming the recorded and the
-  current digest; corrections are recorded as a new capture with
-  `--supersedes <capture-id>`.
+- Captures are append-only. Identical text captured again is a no-op, and
+  `--source` or `--supersedes` passed to that repeat call are named as ignored
+  rather than silently dropped. The same text against a different system, or
+  with a different shadow marking, is refused instead of resolving to the first
+  record. `--supersedes` takes recorded capture ids and refuses the ones it
+  cannot find. Text whose record was edited after it was written is refused,
+  naming the recorded and the current digest; corrections are recorded as a new
+  capture with `--supersedes <capture-id>`.
+- A damaged record is reported, not fatal: `intent list` marks it
+  `[modified after recording]` or `[unreadable record]` — `integrity` in
+  `--json` — and lists every other capture normally. Capturing and promoting
+  still refuse to touch it.
 - Every capture is scoped to one registered system, resolved at capture time, so
   a record keeps naming the system it was about after `system promote` moves the
   primary pointer. `intent list --system <name> --include-lineage` follows the
@@ -58,8 +66,14 @@ assay intent list [--system <name>] [--include-lineage] [--json]
 
 `system register` and `system update` accept
 `--intent-authority inline|external|none` with an optional `--intent-pointer`.
-The registry record is the machine-readable home; the generated sidecar contract
-mirrors the field. Absent means `inline`.
+The systems registry is the machine-readable home and the only place every
+command reads it from. Absent means `inline`.
+
+A system's sidecar contract carries the field only when `register` generates the
+contract, so a later `system update` changes the registry without rewriting the
+contract, and the root contract an overlay workspace gets from `assay attach`
+does not carry it at all. Read the registry — `assay system show <name>` — when
+the two could disagree.
 
 `intent capture` refuses to write for `external` and `none` and prints the
 pointer. This is an authority boundary, not a policy check: Assay does not

@@ -13,6 +13,7 @@ import type { FrameworkManifest, WorkspaceLayout } from "./schemas/index.js";
 import { type AdrIndex, type AdrRecord, type AdrStatus, adrIndexSchema } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
 import { nowIso } from "./time.js";
+import { yamlArray, yamlNullable, yamlString } from "./yaml.js";
 
 export interface AdrIndexOptions {
   readonly now?: Date;
@@ -144,18 +145,6 @@ function adrNumberLabel(number: number): string {
 
 function adrId(number: number, slug: string): string {
   return `ADR-${adrNumberLabel(number)}-${slug}`;
-}
-
-function yamlString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
-function yamlNullable(value: string | null): string {
-  return value === null ? "null" : yamlString(value);
-}
-
-function yamlArray(values: readonly string[]): string {
-  return `[${values.map((value) => yamlString(value)).join(", ")}]`;
 }
 
 function adrFrontmatter(adr: AdrRecord): string {

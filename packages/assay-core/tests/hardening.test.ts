@@ -3,11 +3,15 @@ import path from "node:path";
 import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import {
+  acceptAdr,
+  addCapability,
   addSource,
   applyUpdate,
   attachExistingRepo,
+  captureIntent,
   checkFramework,
   closeAnalysis,
   closeIteration,
@@ -16,6 +20,9 @@ import {
   createAnalysis,
   initFramework,
   listAdrs,
+  listIntent,
+  promoteIntent,
+  registerSystem,
   switchSource,
   syncSource,
 } from "../src/index.js";
@@ -186,6 +193,91 @@ describe("git ref arguments cannot be parsed as git options", () => {
     },
     GIT_TIMEOUT_MS,
   );
+});
+
+/**
+ * Frontmatter is written as text, so any value that can carry a newline can
+ * also carry a second `---` terminator. The record would still be written, and
+ * only the next read would fail — permanently, because captures and ADR
+ * markdown are not rewritten from the value that produced them.
+ */
+const TERMINATOR_PAYLOAD = 'ticket #42\n---\n\ninjected: "yes"';
+
+/** The same payload plus the control characters a quoted scalar cannot hold raw. */
+const CONTROL_PAYLOAD = `${TERMINATOR_PAYLOAD}\r\tbell:\u0007`;
+
+function frontmatterOf(markdown: string): Record<string, unknown> {
+  const header = markdown.match(/^---\n([\s\S]*?)\n---\n/)?.[1];
+  expect(header, "record has no frontmatter block").toBeDefined();
+  return parseYaml(header as string) as Record<string, unknown>;
+}
+
+describe("frontmatter values cannot terminate their own record", () => {
+  it("round-trips an intent source carrying a frontmatter terminator", async () => {
+    const root = await standaloneWorkspace("IntentSourceInjection", "library");
+    await addCapability({ root, module: "intent" });
+    await mkdir(path.join(root, "systems", "app"), { recursive: true });
+    await registerSystem(root, { path: "systems/app", primary: true });
+    const text = "Exports must include every column the table shows.\n";
+
+    const captured = await captureIntent({ root, text, source: CONTROL_PAYLOAD });
+
+    const content = await readFile(path.join(root, captured.capture.path), "utf8");
+    expect(frontmatterOf(content).source).toBe(CONTROL_PAYLOAD);
+    expect(content.endsWith(`\n\n${text}`)).toBe(true);
+
+    // readCapture and the listing both have to survive it, and the digest has
+    // to still match, or the record is unusable from here on.
+    const listed = await listIntent({ root });
+    expect(listed.captures).toHaveLength(1);
+    expect(listed.captures[0]?.source).toBe(CONTROL_PAYLOAD);
+    expect(listed.captures[0]?.integrity).toBe("ok");
+
+    const again = await captureIntent({ root, text, source: CONTROL_PAYLOAD });
+    expect(again.created).toBe(false);
+    expect((await checkFramework({ root })).ok).toBe(true);
+  });
+
+  it("round-trips a promoted requirement title carrying a frontmatter terminator", async () => {
+    const root = await standaloneWorkspace("RequirementTitleInjection", "library");
+    await addCapability({ root, module: "intent" });
+    await mkdir(path.join(root, "systems", "app"), { recursive: true });
+    await registerSystem(root, { path: "systems/app", primary: true });
+    const captured = await captureIntent({ root, text: "Retention is ninety days.\n" });
+
+    const promoted = await promoteIntent({
+      root,
+      capture: captured.capture.id,
+      to: "requirement",
+      title: TERMINATOR_PAYLOAD,
+    });
+
+    const header = frontmatterOf(await readFile(path.join(root, promoted.path), "utf8"));
+    expect(header.title).toBe(TERMINATOR_PAYLOAD);
+    expect(header.derives_from).toBe(captured.capture.id);
+    expect(header.injected).toBeUndefined();
+    // The requirement is still discoverable from the capture it derives from.
+    expect((await listIntent({ root })).captures[0]?.requirements).toEqual([promoted.path]);
+  });
+
+  it("round-trips an ADR title carrying a frontmatter terminator through accept", async () => {
+    const root = await standaloneWorkspace("AdrTitleInjection");
+
+    const created = await createAdr(root, { title: TERMINATOR_PAYLOAD });
+
+    const header = frontmatterOf(await readFile(path.join(root, created.adr.path), "utf8"));
+    expect(header.title).toBe(TERMINATOR_PAYLOAD);
+    expect(header.status).toBe("proposed");
+    expect(header.injected).toBeUndefined();
+
+    // `accept` rewrites the frontmatter in place by matching the terminator.
+    await acceptAdr(root, created.adr.id);
+    const accepted = await readFile(path.join(root, created.adr.path), "utf8");
+    expect(frontmatterOf(accepted).title).toBe(TERMINATOR_PAYLOAD);
+    expect(frontmatterOf(accepted).status).toBe("accepted");
+    expect(accepted).toContain("## Consequences");
+    expect((await listAdrs(root)).adrs[0]?.title).toBe(TERMINATOR_PAYLOAD);
+  });
 });
 
 describe("workspace path arguments stay inside the workspace", () => {

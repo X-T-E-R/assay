@@ -165,6 +165,13 @@ export function formatIntentCapture(result: CaptureIntentResult): string {
     ...(capture.shadow
       ? ["Shadow: yes (the authoritative record for this system lives elsewhere)"]
       : []),
+    // Captures are append-only, so metadata passed to a repeat capture cannot
+    // be applied. Say so instead of exiting 0 as if it had been.
+    ...(result.ignoredOptions.length > 0
+      ? [
+          `Ignored: ${result.ignoredOptions.join(", ")} (the recorded capture keeps the metadata it was written with; record a correction with --supersedes ${capture.id})`,
+        ]
+      : []),
     ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
   ].join("\n");
 }
@@ -194,6 +201,8 @@ export function formatIntentList(result: ListIntentResult): string {
     `Intent captures for ${scope}`,
     ...result.captures.map((capture) => {
       const markers = [
+        ...(capture.integrity === "modified" ? ["modified after recording"] : []),
+        ...(capture.integrity === "unreadable" ? ["unreadable record"] : []),
         ...(capture.shadow ? ["shadow"] : []),
         ...(capture.supersedes.length > 0 ? [`supersedes ${capture.supersedes.join(",")}`] : []),
         ...(capture.requirements.length > 0
@@ -202,7 +211,10 @@ export function formatIntentList(result: ListIntentResult): string {
         ...(capture.decisions.length > 0 ? [`ADR ${capture.decisions.join(",")}`] : []),
       ];
       const suffix = markers.length > 0 ? ` [${markers.join("; ")}]` : "";
-      return `  - ${capture.id}  ${capture.system.padEnd(20)} ${capture.capturedAt}${suffix}`;
+      // A record damaged past parsing has no frontmatter left to report.
+      const system = capture.system || "(unknown)";
+      const capturedAt = capture.capturedAt || "(unknown)";
+      return `  - ${capture.id}  ${system.padEnd(20)} ${capturedAt}${suffix}`;
     }),
   ].join("\n");
 }

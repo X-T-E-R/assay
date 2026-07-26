@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type BuiltCliRunner,
@@ -192,6 +192,97 @@ describe("assay intent CLI", () => {
     expect(listed.stdout).toContain("ADR ADR-0001-share-one-totals-query");
 
     expect((await runCli(["check", "--root", root])).exitCode).toBe(0);
+  });
+
+  it("refuses `promote --to decision` without the adr capability and writes no ADR", async () => {
+    const root = await intentWorkspace("IntentPromoteNoAdr");
+    const id = await captureId(root, INTENT_TEXT);
+
+    const result = await runCli([
+      "intent",
+      "promote",
+      id,
+      "--to",
+      "decision",
+      "--title",
+      "Share one totals query",
+      "--root",
+      root,
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("capability not enabled in archetype library: adr");
+    expect(result.stderr).toContain("assay capability add adr");
+
+    // Nothing partial: no index, no ADR markdown, no link from the capture.
+    expect(await pathExists(path.join(root, ".assay", "adrs.json"))).toBe(false);
+    expect(await pathExists(path.join(root, "knowledge", "decisions"))).toBe(false);
+    const listed = await runCli(["intent", "list", "--json", "--root", root]);
+    const payload = JSON.parse(listed.stdout) as { captures: { decisions: string[] }[] };
+    expect(payload.captures[0]?.decisions).toEqual([]);
+  });
+
+  it("names ignored metadata when the same text is captured again", async () => {
+    const root = await intentWorkspace("IntentRecaptureMetadata");
+    expect(
+      (await runCli(["intent", "capture", "--text", INTENT_TEXT, "--root", root])).exitCode,
+    ).toBe(0);
+
+    const again = await runCli([
+      "intent",
+      "capture",
+      "--text",
+      INTENT_TEXT,
+      "--source",
+      "retro",
+      "--root",
+      root,
+    ]);
+
+    expect(again.exitCode).toBe(0);
+    expect(again.stdout).toContain("Intent already captured");
+    expect(again.stdout).toContain("Ignored: --source");
+  });
+
+  it("refuses a --supersedes id that names no recorded capture", async () => {
+    const root = await intentWorkspace("IntentSupersedesTypo");
+    await captureId(root, INTENT_TEXT);
+
+    const result = await runCli([
+      "intent",
+      "capture",
+      "--text",
+      "The report must also show the currency.",
+      "--supersedes",
+      "20260101-abcdefabcdef",
+      "--root",
+      root,
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("20260101-abcdefabcdef");
+    expect(result.stderr).toContain("is not a recorded capture");
+    expect((await runCli(["intent", "list", "--root", root])).stdout).not.toContain("supersedes");
+  });
+
+  it("marks a tampered capture in the listing and keeps listing the rest", async () => {
+    const root = await intentWorkspace("IntentListIntegrity");
+    const intact = await captureId(root, INTENT_TEXT);
+    const edited = await captureId(root, "Refunds must reconcile with the ledger.");
+    const recordPath = path.join(root, "intent", "original", `${edited}.md`);
+    await writeFile(recordPath, `${await readFile(recordPath, "utf8")}Reworded later.\n`, "utf8");
+
+    const listed = await runCli(["intent", "list", "--root", root]);
+    expect(listed.exitCode, listed.stderr).toBe(0);
+    expect(listed.stdout).toContain(intact);
+    expect(listed.stdout).toContain(`${edited}  app`);
+    expect(listed.stdout).toContain("[modified after recording]");
+
+    const json = await runCli(["intent", "list", "--json", "--root", root]);
+    const payload = JSON.parse(json.stdout) as { captures: { id: string; integrity: string }[] };
+    expect(payload.captures.find((entry) => entry.id === edited)?.integrity).toBe("modified");
+    expect(payload.captures.find((entry) => entry.id === intact)?.integrity).toBe("ok");
   });
 
   it("rejects an unsupported promotion target", async () => {
