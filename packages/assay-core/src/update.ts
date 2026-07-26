@@ -234,6 +234,19 @@ function layoutForManifest(manifest: FrameworkManifest | null): WorkspaceLayout 
   return resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
 }
 
+/**
+ * Capability list to hand to `desiredRuntimeTemplates`, so templates
+ * scaffolded by `assay capability add` stay under update management. Omitted
+ * entirely when the manifest predates the field.
+ */
+function manifestCapabilities(manifest: FrameworkManifest): {
+  readonly capabilities?: readonly string[];
+} {
+  return manifest.project.capabilities === undefined
+    ? {}
+    : { capabilities: manifest.project.capabilities };
+}
+
 function projectNameFromManifest(
   manifest: FrameworkManifest | null | undefined,
   fallbackRoot: string,
@@ -371,7 +384,7 @@ export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<Upda
     project,
     manifest.project.archetype,
     manifest.project.mode,
-    { root, layout: layoutForManifest(manifest) },
+    { root, layout: layoutForManifest(manifest), ...manifestCapabilities(manifest) },
   )) {
     const target = path.join(root, template.path);
     const record = manifest.managed_files[template.path];
@@ -562,6 +575,7 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
       await desiredRuntimeTemplates(project, manifest.project.archetype, manifest.project.mode, {
         root,
         layout: layoutForManifest(manifest),
+        ...manifestCapabilities(manifest),
       })
     ).map((template) => [template.path, template]),
   );

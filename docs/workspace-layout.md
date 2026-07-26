@@ -25,6 +25,17 @@ Archetype-specific working directories sit alongside this base.
 
 Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
 
+## Capability module structure
+
+Capability modules own a small, fixed part of the layout. An archetype that declares a module scaffolds it at init; `assay capability add <module>` scaffolds the same structure in a workspace that did not start with it and records the module under `project.capabilities` in the manifest.
+
+| Module | Adds |
+| --- | --- |
+| `adr` | `knowledge/decisions/` with `README.md` and `ADR-TEMPLATE.md`, plus the `.assay/adrs.json` index. |
+| `iteration` | `iterations/` and `iterations/templates/` with `README.md` and `iteration-plan.md`. |
+
+These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them.
+
 ## Donor state
 
 Donor adoption records live under the Assay state directory in both layout modes:

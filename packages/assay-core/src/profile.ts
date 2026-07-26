@@ -8,7 +8,7 @@ import { parse } from "yaml";
 import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
-import type { ProjectArchetype, ProjectMode } from "./schemas/index.js";
+import type { FrameworkManifest, ProjectArchetype, ProjectMode } from "./schemas/index.js";
 
 export interface ArchetypeTemplateEntry {
   readonly path: string;
@@ -65,6 +65,93 @@ export const SUPPORTED_CAPABILITY_MODULES = ["adr", "iteration"] as const;
 export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
 
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
+
+/** Directories and templates one capability module owns. */
+export interface ModuleScaffold {
+  readonly dirs: readonly string[];
+  readonly templates: readonly ArchetypeTemplateEntry[];
+}
+
+/**
+ * Structure each capability module contributes to a workspace. `init` and
+ * `assay capability add` scaffold through this table, so a module enabled
+ * after init lands the same layout it would have at init time. Paths are
+ * declared workspace-root-relative like archetype templates and are translated
+ * through the workspace layout before anything is written.
+ *
+ * Archetype YAML may declare the same paths; both scaffold paths merge by path
+ * so an overlapping file is written once.
+ */
+export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>> = {
+  adr: {
+    dirs: ["knowledge/decisions"],
+    templates: [
+      { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" },
+      {
+        path: "knowledge/decisions/ADR-TEMPLATE.md",
+        templateId: "knowledge.decisions.adr_template",
+      },
+    ],
+  },
+  iteration: {
+    dirs: ["iterations/templates"],
+    templates: [
+      { path: "iterations/README.md", templateId: "iterations.readme" },
+      { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" },
+    ],
+  },
+};
+
+export function isCapabilityModule(value: string): value is CapabilityModule {
+  return SUPPORTED_CAPABILITY_SET.has(value);
+}
+
+/**
+ * Narrow user input to a capability module this build can scaffold. Unknown
+ * names are rejected here rather than recorded in the manifest, so a typo
+ * cannot leave a workspace declaring a capability nothing implements.
+ */
+export function requireCapabilityModule(value: string): CapabilityModule {
+  const trimmed = value.trim();
+  if (isCapabilityModule(trimmed)) {
+    return trimmed;
+  }
+  throw new FrameworkError(
+    `unsupported capability module '${value}'; supported modules: ${SUPPORTED_CAPABILITY_MODULES.join(", ")}`,
+  );
+}
+
+/** Supported capability modules a manifest declares, deduplicated and sorted. */
+export function declaredCapabilities(
+  manifest: Pick<FrameworkManifest, "project"> | null | undefined,
+): CapabilityModule[] {
+  const declared = new Set<CapabilityModule>();
+  for (const value of manifest?.project.capabilities ?? []) {
+    if (isCapabilityModule(value)) {
+      declared.add(value);
+    }
+  }
+  return [...declared].sort();
+}
+
+/**
+ * Capability modules a workspace actually has: the archetype's own modules
+ * plus every module added later through `assay capability add`. Manifest
+ * entries this build does not implement are ignored here; `capability list`
+ * reports them so they stay visible.
+ */
+export function effectiveCapabilities(
+  archetype: Pick<Archetype, "modules"> | null | undefined,
+  capabilities: readonly string[] | undefined,
+): CapabilityModule[] {
+  const modules = new Set<CapabilityModule>(archetype?.modules ?? []);
+  for (const value of capabilities ?? []) {
+    if (isCapabilityModule(value)) {
+      modules.add(value);
+    }
+  }
+  return [...modules].sort();
+}
 const DEFAULT_ARCHETYPE: ProjectArchetype = "study";
 const PROJECT_ARCHETYPES_DIR = path.join(MANAGED_DIR, "archetypes");
 const BUILTIN_ARCHETYPES_DIR = path.resolve(fileURLToPath(import.meta.url), "..", "..", "profiles");
@@ -375,13 +462,17 @@ export function archetypeHasCapability(
   return archetype.modules.includes(capability);
 }
 
-export async function readInstalledArchetype(root: string): Promise<ProjectArchetype | null> {
+async function readInstalledManifest(root: string): Promise<FrameworkManifest | null> {
   try {
-    const manifest = await loadManifest(root);
-    return manifest?.project.archetype ?? null;
+    return await loadManifest(root);
   } catch {
     return null;
   }
+}
+
+export async function readInstalledArchetype(root: string): Promise<ProjectArchetype | null> {
+  const manifest = await readInstalledManifest(root);
+  return manifest?.project.archetype ?? null;
 }
 
 export async function loadInstalledArchetype(root: string): Promise<Archetype | null> {
@@ -393,8 +484,12 @@ export async function installedArchetypeHasCapability(
   root: string,
   capability: CapabilityModule,
 ): Promise<boolean> {
-  const archetype = await loadInstalledArchetype(root);
-  return archetype ? archetypeHasCapability(archetype, capability) : false;
+  const manifest = await readInstalledManifest(root);
+  if (!manifest) {
+    return false;
+  }
+  const archetype = await loadArchetype(manifest.project.archetype, { root });
+  return effectiveCapabilities(archetype, manifest.project.capabilities).includes(capability);
 }
 
 export const isCapabilityEnabled = installedArchetypeHasCapability;
@@ -410,9 +505,9 @@ export async function requireCapability(
     );
   }
   const archetype = await loadArchetype(manifest.project.archetype, { root });
-  if (!archetypeHasCapability(archetype, capability)) {
+  if (!effectiveCapabilities(archetype, manifest.project.capabilities).includes(capability)) {
     throw new FrameworkError(
-      `capability not enabled in archetype ${manifest.project.archetype}: ${capability}`,
+      `capability not enabled in archetype ${manifest.project.archetype}: ${capability}. Run \`assay capability add ${capability}\` to enable it in this workspace.`,
     );
   }
   return archetype;

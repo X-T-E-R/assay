@@ -1,4 +1,5 @@
 import type {
+  AddCapabilityResult,
   AdoptExistingProjectResult,
   AdrRecord,
   ApplyUpdateResult,
@@ -14,6 +15,7 @@ import type {
   DonorStatusResult,
   FrameworkStatusResult,
   InitFrameworkResult,
+  ListCapabilitiesResult,
   MigrateLayoutResult,
   OperationReport,
   SourceDiffResult,
@@ -111,6 +113,34 @@ export function formatConvertResult(result: ConvertOverlayResult): string {
     `Contract: ${result.system.contract_file}`,
     `Manifest: ${result.targetManifestPath}`,
     `Event: ${result.eventFile}`,
+  ].join("\n");
+}
+
+export function formatCapabilityAdd(result: AddCapabilityResult): string {
+  const enabled = `Enabled capabilities: ${result.capabilities.join(", ") || "(none)"}`;
+  if (result.alreadyEnabled) {
+    const origin =
+      result.source === "archetype" ? "provided by archetype" : "already added to this workspace";
+    return [`Capability already enabled: ${result.module} (${origin})`, enabled].join("\n");
+  }
+  return [
+    `Added capability: ${result.module}`,
+    enabled,
+    formatReport(result.report),
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+  ].join("\n");
+}
+
+export function formatCapabilityList(result: ListCapabilitiesResult): string {
+  const lines = result.capabilities.map((entry) => {
+    if (!entry.supported) {
+      return `${entry.module}: recorded in the manifest, not supported by this build`;
+    }
+    return `${entry.module}: ${entry.enabled ? `enabled (${entry.source})` : "not enabled"}`;
+  });
+  return [
+    `Capability modules for ${result.project} (archetype ${result.archetype}):`,
+    ...lines.map((line) => `  - ${line}`),
   ].join("\n");
 }
 

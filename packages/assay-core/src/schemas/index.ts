@@ -23,6 +23,11 @@ export const frameworkProjectSchema = z
     core: z.string().min(1).optional(),
     archetype: projectArchetypeSchema.default("study"),
     mode: projectModeSchema.default("learning"),
+    // Capability modules enabled after init by `assay capability add`. The
+    // effective set is the archetype's modules plus these. Kept as plain
+    // strings so a workspace stays loadable when it records a module this
+    // build does not implement; use sites decide what a name means.
+    capabilities: z.array(z.string().min(1)).optional(),
   })
   .strict();
 

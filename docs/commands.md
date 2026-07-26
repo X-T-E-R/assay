@@ -145,6 +145,26 @@ present, `adr new` reports an advisory about parallel decision records and
 still creates the requested Assay ADR. The legacy `--force` option only
 suppresses that advisory; it is not required for creation.
 
+## Capability modules
+
+Capability modules are optional workspace features: `adr` enables the ADR commands and index, `iteration` enables the iteration commands and templates. An archetype turns some of them on at init, and `capability add` turns the rest on later, so the archetype chosen at init does not lock the workspace out of a capability it needs afterwards.
+
+```bash
+assay capability add <module> [--root <dir>]
+assay capability list [--root <dir>] [--json]
+```
+
+`capability add` creates the module's directories and templates through the workspace layout — under `.assay/` in an overlay workspace, at the root in a standalone one — writes any state file the module needs (`adr` creates `.assay/adrs.json`), records the module in the manifest, and appends a `capability.added` event. Files that already exist are left alone, and a module the workspace already has reports that and changes nothing, so the command is safe to re-run.
+
+```bash
+assay capability add adr        # a library workspace gains knowledge/decisions/ and adr commands
+assay adr new "Adopt overlay layout"
+```
+
+`capability list` shows every module with how the workspace obtained it: `archetype` for modules the archetype provides, `added` for modules enabled afterwards.
+
+Templates a capability scaffolds are managed files like any other, so `assay update` reconciles them and `assay check` reports the module's directories as required structure.
+
 ## Custom archetypes
 
 Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `iteration`), `dirs`, and `templates`.

@@ -1,7 +1,14 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
 import { FrameworkError } from "./errors.js";
 import { workspaceTemplateRelativePath } from "./layout.js";
-import { type Archetype, type ArchetypeLookupOptions, loadArchetype } from "./profile.js";
+import {
+  type Archetype,
+  type ArchetypeLookupOptions,
+  type ArchetypeTemplateEntry,
+  type CapabilityModule,
+  MODULE_SCAFFOLDS,
+  loadArchetype,
+} from "./profile.js";
 import type { WorkspaceLayout } from "./schemas/index.js";
 
 export interface TemplateFile {
@@ -64,8 +71,55 @@ export function archetypeTemplates(
   archetype: Archetype,
   layout?: WorkspaceLayout,
 ): TemplateFile[] {
+  return renderTemplateEntries(archetype.templates, project, mode, archetype, layout);
+}
+
+/**
+ * Template files the given capability modules contribute. `init` and
+ * `assay capability add` both render through here, so a module scaffolds the
+ * same files whenever it is enabled.
+ */
+export function capabilityTemplates(
+  project: string,
+  mode: "learning" | "absorption",
+  archetype: Archetype,
+  capabilities: readonly CapabilityModule[],
+  layout?: WorkspaceLayout,
+): TemplateFile[] {
+  return renderTemplateEntries(
+    capabilities.flatMap((capability) => MODULE_SCAFFOLDS[capability].templates),
+    project,
+    mode,
+    archetype,
+    layout,
+  );
+}
+
+/**
+ * Merge template lists by resolved path. Earlier lists win, so an archetype
+ * that declares a capability module's file keeps ownership of its content.
+ */
+export function mergeTemplateFiles(...lists: readonly (readonly TemplateFile[])[]): TemplateFile[] {
+  const merged = new Map<string, TemplateFile>();
+  for (const list of lists) {
+    for (const template of list) {
+      if (!merged.has(template.path)) {
+        merged.set(template.path, template);
+      }
+    }
+  }
+  return [...merged.values()];
+}
+
+function renderTemplateEntries(
+  entries: readonly ArchetypeTemplateEntry[],
+  project: string,
+  mode: "learning" | "absorption",
+  archetype: Archetype,
+  layout?: WorkspaceLayout,
+): TemplateFile[] {
   const result: TemplateFile[] = [];
-  for (const entry of archetype.templates) {
+  for (const entry of entries) {
     if (layout && skipTemplateForLayout(layout, entry.path)) {
       continue;
     }

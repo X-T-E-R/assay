@@ -10,12 +10,14 @@ import {
   type KnowledgeType,
   SOURCE_CAPTURE_MODES,
   SOURCE_CHANGE_CLASSES,
+  SUPPORTED_CAPABILITY_MODULES,
   type SourceCaptureMode,
   type SourceChangeClass,
   type SystemVcs,
   type WorkspacePrivacy,
   absorbReference,
   acceptAdr,
+  addCapability,
   addKnowledge,
   addReference,
   addSource,
@@ -48,6 +50,7 @@ import {
   inspectDonorAdoption,
   listAdrs,
   listAvailableArchetypes,
+  listCapabilities,
   listDonorAdoptions,
   listProjectRecords,
   listSystems,
@@ -78,6 +81,8 @@ import {
   formatAdrList,
   formatAdrRecord,
   formatAttachResult,
+  formatCapabilityAdd,
+  formatCapabilityList,
   formatCheckResult,
   formatConvertResult,
   formatDonorAdoption,
@@ -585,6 +590,35 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       for (const archetype of archetypes) {
         writeLine(output, "stdout", `- ${archetype.name} (${archetype.source}): ${archetype.path}`);
       }
+    });
+
+  const capability = program
+    .command("capability")
+    .description("Enable and inspect optional capability modules");
+
+  capability
+    .command("add")
+    .description("Enable a capability module in an existing workspace")
+    .argument("<module>", `capability module: ${SUPPORTED_CAPABILITY_MODULES.join(", ")}`)
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (module, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      writeLine(output, "stdout", formatCapabilityAdd(await addCapability({ root, module })));
+    });
+
+  capability
+    .command("list")
+    .description("List capability modules and how each one was enabled")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await listCapabilities({ root });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", formatCapabilityList(result));
     });
 
   const reference = program.command("reference").description("Reference operations");

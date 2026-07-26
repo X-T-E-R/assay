@@ -42,6 +42,10 @@ assay status                                 # systems + living source summary +
 assay update --dry-run                       # always dry-run first
 assay migrate-layout --dry-run               # always dry-run first; legacy layouts are migration input only
 
+# Capability modules (optional features the archetype may not have enabled)
+assay capability list [--json]               # which modules are enabled, and whether by archetype or added later
+assay capability add <module>                # built-ins: adr|iteration; idempotent, safe to re-run
+
 # Living sources / reference analysis / iteration / knowledge
 assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|archive]
 assay source sync [alias] [--branch <branch>] [--ref <ref>] [--class same|patch|normal|major|replacement]
@@ -102,6 +106,15 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 ## Framework structure
 
 Target projects use an archetype-specific layout over a shared base (`.assay/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), `hypotheses/` + `experiments/` (`science`), `candidates/` + `scorecards/` (`evaluation`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
+
+## Capability modules
+
+`adr` and `iteration` are optional capability modules. An archetype enables some of them at init — `study` and `evaluation` ship `adr`, `solve`/`science`/`explore` ship `iteration`, `library` ships neither — and the rest can be enabled at any time.
+
+- When a command reports `capability not enabled`, run `assay capability add <module>` instead of re-initializing the workspace or switching archetypes.
+- `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.
+- `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming an ADR or iteration command is unavailable.
+- Capability-scaffolded files are managed files: `update` reconciles them and `check` treats their directories as required structure.
 
 ## Systems and version control
 

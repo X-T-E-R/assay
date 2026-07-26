@@ -519,3 +519,86 @@ describe("assay knowledge add CLI", () => {
     }
   });
 });
+
+describe("assay capability CLI", () => {
+  it("adds a module the archetype lacks and reports the scaffolded files", async () => {
+    const root = await initWorkspace("CapAdd", "library");
+
+    const added = await runCli(["capability", "add", "adr", "--root", root]);
+
+    expect(added.exitCode).toBe(0);
+    expect(added.stderr).toBe("");
+    expect(added.stdout).toContain("Added capability: adr");
+    expect(added.stdout).toContain("Enabled capabilities: adr");
+    expect(added.stdout).toContain("knowledge/decisions/ADR-TEMPLATE.md");
+    expect(added.stdout).toContain("Event:");
+    expect(await exists(path.join(root, "knowledge", "decisions", "README.md"))).toBe(true);
+
+    const adr = await runCli(["adr", "new", "First Decision", "--root", root]);
+    expect(adr.exitCode).toBe(0);
+    expect(adr.stdout).toContain("Created ADR: ADR-0001-first-decision");
+
+    const check = await runCli(["check", "--root", root]);
+    expect(check.exitCode).toBe(0);
+    expect(check.stdout).toContain("Framework check: ok");
+  });
+
+  it("reports an already-enabled module without failing", async () => {
+    const root = await initWorkspace("CapRerun", "library");
+    await runCli(["capability", "add", "iteration", "--root", root]);
+
+    const rerun = await runCli(["capability", "add", "iteration", "--root", root]);
+
+    expect(rerun.exitCode).toBe(0);
+    expect(rerun.stderr).toBe("");
+    expect(rerun.stdout).toContain("Capability already enabled: iteration");
+
+    const provided = await runCli([
+      "capability",
+      "add",
+      "adr",
+      "--root",
+      await initWorkspace("CapStudy"),
+    ]);
+    expect(provided.exitCode).toBe(0);
+    expect(provided.stdout).toContain("Capability already enabled: adr (provided by archetype)");
+  });
+
+  it("rejects an unsupported module name", async () => {
+    const root = await initWorkspace("CapUnknown", "library");
+
+    const result = await runCli(["capability", "add", "telepathy", "--root", root]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Error: unsupported capability module 'telepathy'");
+    expect(result.stderr).toContain("supported modules: adr, iteration");
+  });
+
+  it("lists modules and distinguishes archetype-provided from added", async () => {
+    const root = await initWorkspace("CapList");
+    await runCli(["capability", "add", "iteration", "--root", root]);
+
+    const listed = await runCli(["capability", "list", "--root", root]);
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain("Capability modules for CapList (archetype study):");
+    expect(listed.stdout).toContain("adr: enabled (archetype)");
+    expect(listed.stdout).toContain("iteration: enabled (added)");
+
+    const json = await runCli(["capability", "list", "--root", root, "--json"]);
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout).capabilities).toEqual([
+      { module: "adr", enabled: true, source: "archetype", supported: true },
+      { module: "iteration", enabled: true, source: "added", supported: true },
+    ]);
+  });
+
+  it("marks modules that are not enabled", async () => {
+    const root = await initWorkspace("CapListNone", "library");
+
+    const listed = await runCli(["capability", "list", "--root", root]);
+
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain("adr: not enabled");
+    expect(listed.stdout).toContain("iteration: not enabled");
+  });
+});
