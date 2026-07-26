@@ -1,188 +1,128 @@
 # Next Release Draft
 
 This draft tracks user-visible changes that should be reviewed before the next
-Assay release version is chosen. Planned version: `0.3.0`.
+Assay release version is chosen. Planned version: `0.4.0`.
 
-## Donor Adoption
+## Capability Modules
 
-- New `assay donor` command family records how selected material from a living
-  source became part of one or more registered target systems: `register`,
-  `update`, `list`, `show`, `status`, `inspect`, `evidence add`, `verify`,
-  `decide`, `history`, and `rollback record`.
-- A donor adoption is declared as one complete JSON or YAML definition: one
-  living source, one or more independently accepted targets, and mappings that
-  bind source locators to target locators by exact path or directory prefix.
-- `donor inspect` captures direct byte-change facts on both sides. It is
-  optional: `donor decide` without `--inspection` captures the current
-  snapshots inside the decision operation.
-- Evidence is advisory by default and gates `accept` only when the definition
-  marks a check `required`.
-- Definitions, inspections, evidence, and decisions are immutable
-  content-addressed records under `.assay/donors/<adoption-id>/`, with a small
-  `state.json` pointer for the active definition, per-target baselines, and
-  committed decisions.
-- `assay status` shows compact adoption and baseline counts. `assay check`
-  validates donor persistence integrity only; upstream changes, target drift,
-  and advisory evidence gaps stay out of the global check.
-- Donor commands never edit target files, run target commands, create commits,
-  or restore revisions. See `docs/donor-adoption.md`.
+Enabling a capability is no longer tied to the archetype chosen at init.
 
-## Check Severity And Advisory Reminders
+- `assay capability add <module>` scaffolds a module's directories, templates,
+  and state files in an existing workspace, records the module under
+  `project.capabilities` in the manifest, and appends a `capability.added`
+  event. Existing files are never overwritten, and re-running on a module the
+  workspace already has reports that and changes nothing.
+- `assay capability list [--json]` shows every module and how the workspace
+  obtained it: `archetype` for modules the archetype provides, `added` for
+  modules enabled afterwards. A manifest entry this build does not implement is
+  listed as unsupported rather than dropped.
+- Paths are resolved through the workspace layout, so `capability add` in an
+  overlay workspace scaffolds under `.assay/` and never into the attached
+  product repository's root.
+- Capability-scaffolded files are managed files: `assay update` reconciles them
+  and `assay check` treats the module's directories as required structure.
+- The effective capability set is the archetype's own modules plus the recorded
+  ones. A workspace whose manifest predates the field keeps working unchanged.
 
-`assay check` now separates persisted-record integrity from workflow reminders.
-See `docs/background/design-principles.md` for the boundary this follows.
+## Product Intent
 
-- The default `assay check` reports required structure, registries and
-  indexes, managed-file state, source observation integrity, and donor
-  persistence.
-- Workflow and content reminders moved behind `assay check --advisories`: open
-  iterations, unanalyzed frozen references, empty draft analyses, lingering
-  `.old/` adoption archives, pending queue entries, and major source
-  observations that have not been re-reviewed.
-- `analysis close` records the caller's explicit exit and no longer inspects
-  section content. `## Key observations` and the matching decision section are
-  still the recommended shape, and `check --advisories` can list unfinished
-  drafts before closing.
-- `--allow-empty` on `analysis close` is retained only as a hidden no-op so
-  existing scripts keep running. It has no effect, and the `analysis.closed`
-  event no longer carries an `allow_empty` field.
-- `iteration close`, `analysis close`, and the `analyzed` flag in a frozen
-  reference's `reference.yaml` are recorded through the document's header block
-  and named sections instead of the first matching line anywhere in the file. A
-  note that merely mentions `Status: open`, a body line that reads like
-  `- Status: ...`, or a stray `- [ ] adopt` outside `## Decision exit` no longer
-  absorbs the rewrite. When the requested state cannot be recorded — for example
-  a `## Decision exit` section with no checkbox for the chosen exit, or a
-  `reference.yaml` whose `analyzed` flag is missing or not a boolean — the
-  command fails instead of reporting a close that did not happen.
-- External governance markers (`.trellis/`, `.superpowers/`, `docs/adr/`) now
-  produce an advisory instead of refusing to create an Assay ADR. `adr new`
-  creates the requested ADR in every case; `--force` only suppresses the
-  advisory.
-- Source observation state moved the other way. A living source whose latest
-  observation is missing, unreachable, or lacks a fingerprint or capture
-  manifest is now an error, because those records are what makes later
-  comparison and donor inspection trustworthy.
+`intent` is the third capability module, alongside `adr` and `iteration`. No
+archetype enables it by default; turn it on with `assay capability add intent`.
 
-## Living Sources
+```bash
+assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force]
+assay intent promote <capture> --to requirement|decision [--title <title>]
+assay intent list [--system <name>] [--include-lineage] [--json]
+```
 
-- `source sync` refreshes managed Git checkouts before observing them, including
-  local Git sources and remote/origin-backed checkouts.
-- Source observations can be reviewed through `analysis new --for-source
-  <alias> [--observation <id>]`; closing the analysis marks the observation as
-  reviewed.
-- `assay status` includes a compact living-source summary so users can see open
-  or revalidation-needed source work without first discovering `source status`.
-- `source sync` and `source switch` now refuse to refresh a managed checkout
-  that holds work Assay has not recorded: modified or untracked Git files, a
-  local commit that is not the recorded revision, or directory-checkout bytes
-  that differ from the latest observation. The managed checkout is Assay's own
-  working copy of upstream material, so a refresh may reset or replace it.
-- `analysis close` now writes the analysis card and the bound source
-  observation as one unit. If either write fails, the source observation is
-  rolled back to its previous content instead of leaving the two records
-  disagreeing. Re-running a close that already succeeded is safe.
+- `capture` writes `intent/original/<YYYYMMDD>-<sha256:12>.md` holding the text
+  verbatim, plus the resolved system name, the full SHA-256 of the body, and the
+  capture time. `--file` is workspace-relative and refuses to leave the
+  workspace.
+- Captures are append-only. Identical text captured again is a no-op. Text whose
+  record was edited after it was written is refused, naming the recorded and the
+  current digest; corrections are recorded as a new capture with
+  `--supersedes <capture-id>`.
+- Every capture is scoped to one registered system, resolved at capture time, so
+  a record keeps naming the system it was about after `system promote` moves the
+  primary pointer. `intent list --system <name> --include-lineage` follows the
+  registry `supersedes` chain across replacements.
+- `promote --to requirement` writes `intent/requirements/<date>-<slug>.md`
+  carrying `derives_from`. `promote --to decision` creates an ADR with
+  `related_intent` and `system` set. There is no `intent/decisions/`; decisions
+  stay in the ADR module.
+- `assay status` counts both intent directories as zones once the module is
+  enabled.
 
-## Systems Registered Outside The Workspace
+### Intent authority
 
-A system can be registered by a path that leaves the workspace
-(`assay system register ../precious`). The registry stores such a path in
-absolute form, and commands now resolve it instead of appending it to the
-workspace root.
+`system register` and `system update` accept
+`--intent-authority inline|external|none` with an optional `--intent-pointer`.
+The registry record is the machine-readable home; the generated sidecar contract
+mirrors the field. Absent means `inline`.
 
-- `assay check` reports an out-of-root system that exists on disk as present.
-  Previously it reported `registered system '<name>' missing on disk` plus a
-  missing contract file for a system that was there.
-- `assay system archive --apply` moves the system it names and fails if the
-  archive did not materialize at the destination it reports. Previously it
-  printed `Moved to: ...`, wrote a `system.archived` event, and left the source
-  directory in place.
-- `assay check` also verifies that an archived record's `archive_path` exists,
-  so a registry entry pointing at a missing archive is an error instead of
-  passing unnoticed.
+`intent capture` refuses to write for `external` and `none` and prints the
+pointer. This is an authority boundary, not a policy check: Assay does not
+verify the pointer is reachable. `--force` records the text anyway, marked
+`shadow: true` and flagged in `intent list`, so a local convenience copy is never
+mistaken for the authoritative record.
 
-## Error Prefixes
+### Content boundary
 
-`assay` distinguishes two failure kinds on stderr, and the split has been
-corrected: `Error:` marks something the caller can fix by changing the command,
-and `Runtime error:` is reserved for Assay's own faults (a persisted manifest,
-event, operation report, or update plan that fails schema validation) and for
-unexpected exceptions.
+Assay stores captured text as given and does not scan, redact, or classify it.
+Removing credentials and personal data before capturing is the caller's
+responsibility. See `docs/agent-instructions.md`.
 
-Most user-actionable failures previously printed `Runtime error:` — an archetype
-that does not enable the requested capability, an unknown archetype name, an ADR
-that would supersede itself, and every message raised with an I/O error code.
-They now print `Error:`. Exit codes are unchanged (1 for both), so only scripts
-that match on the prefix need updating.
+## Convert Carries Intent
+
+`assay convert --to standalone` hoists `.assay/intent` to `intent/` and rewrites
+`intent/`-prefixed managed-file paths, alongside the work folders it already
+moved. Without this, converting an overlay that had captured intent would leave
+the records behind in the source `.assay/` and report every one of them as
+missing in the new workspace.
+
+## New Advisories
+
+Both appear only under `assay check --advisories` and never fail the check.
+
+- Intent enabled in a `privacy: private` overlay: `.assay/` is excluded from the
+  product repository and has no history of its own, which is a poor home for the
+  least reproducible records in the workspace. The advisory recommends
+  `--privacy private-git`.
+- A system with `status: superseded` that no other system records in its
+  `supersedes` chain. `system promote` demotes the previous primary without
+  writing a lineage link, so such a system is unreachable from the current
+  primary and its intent drops out of `intent list --include-lineage`.
 
 ## Upgrade Notes
 
-### `assay check` can newly fail on older workspaces
+### One-way door: older Assay builds reject the new state files
 
-A workspace that passed `assay check` before may now exit 1 because incomplete
-source observation records are errors instead of warnings. The reported rows
-name the source and the missing part: no latest observation, a latest
-observation that cannot be read, a missing fingerprint, or a missing capture
-manifest. The source ledger itself is also read strictly now: an unparseable
-`source.yaml`, a `source.yaml` that is not a YAML mapping, or an observation
-that cannot be read is reported as an error row under `references/` instead of
-being skipped silently.
+Manifest and ADR-index schemas are strict, so a workspace touched by 0.4.0 may
+not load in an earlier build:
 
-Record a fresh observation for each reported alias:
+- A manifest that records `project.capabilities` — written by
+  `assay capability add` — fails validation on 0.3.0 and earlier.
+- An `adrs.json` containing `related_intent` or `system` on any ADR — written by
+  `assay intent promote --to decision` — fails validation on 0.3.0 and earlier.
+- A systems registry containing `intent_authority` on any system — written by
+  `system register`/`system update` — fails validation on 0.3.0 and earlier.
 
-```bash
-assay source sync <alias>
-```
+None of the three fields is written unless the corresponding command is used, so
+a workspace that only runs the 0.3.0 command set stays readable by 0.3.0. Once
+one of them is written there is no downgrade path other than removing the field
+by hand. Upgrade every machine that shares a workspace before enabling
+capabilities on it.
 
-The new observation carries a fingerprint and a capture manifest and becomes the
-source's `latest_observation`. A record that is missing its fingerprint always
-produces a new observation, because the missing fingerprint leaves nothing to
-compare the current material against. If `source sync` reports `same source
-state; no new observation` for some other incomplete record, the upstream
-material is unchanged; force a full observation instead:
+### No layout change
 
-```bash
-assay source sync <alias> --class normal
-```
+`LAYOUT_VERSION` stays at 4 and there is no migration. Everything added here is
+additive and optional: the intent work folder is resolved through the work root
+rather than the strict `layout.paths` map, so manifests written by either build
+keep validating in the other as long as the fields above are absent.
 
-If `source sync` refuses because the managed checkout holds unrecorded work,
-resolve that first as described below.
+### Nothing removed
 
-In the other direction, the default check is quieter: open iterations,
-unfinished drafts, `.old/` archives, pending queues, unanalyzed frozen
-references, and major-change revalidation now appear only with
-`assay check --advisories`. None of them ever failed the check, so scripts that
-only read the exit code are unaffected; scripts that parse warning rows should
-add `--advisories`.
-
-### `source sync` can newly fail on a dirty managed checkout
-
-If you edited, experimented in, or committed inside `references/<alias>/checkout/`,
-`source sync` and `source switch` now stop before touching it. Decide what that
-work is:
-
-- work you want to keep: move or copy it out of the managed checkout (a patch,
-  a branch in a clone of your own, or a file under `analyses/`), then restore
-  the checkout to the recorded revision and re-run the command;
-- work you do not need: discard it in the checkout, then re-run the command.
-
-Assay does not clean the checkout for you, because it cannot tell which of
-those two cases you are in.
-
-### Public type narrowing (compile-time break for API consumers)
-
-Code that imports the Assay core package may stop compiling:
-
-- `GovernanceDetection.action` is now `"warn" | "none"`. The `"block"` member is
-  gone. Callers that switched on `"block"` or compared against it should treat
-  external governance as advisory.
-- `FrameworkErrorCode` no longer includes `"GOVERNANCE_DEFERRED"`, and adds
-  `"INVALID_DONOR"`, `"DONOR_POLICY_BLOCKED"`, `"DONOR_STALE"`, and
-  `"DONOR_BUSY"`. Exhaustive switches over the union need the new members;
-  handlers keyed on `"GOVERNANCE_DEFERRED"` can be deleted.
-- `CloseAnalysisOptions.allowEmpty` is deprecated and ignored.
-- `changelog()` now takes the release date as a `today: string` argument instead
-  of embedding a fixed date, matching `bootstrapIterationPlan(today)`.
-
-Nothing here changes CLI behavior; only source-level consumers of the core
-package need to react.
+No command, flag, or exported type was removed in this release. Existing
+workspaces need no action to keep working; `intent` does nothing until it is
+explicitly enabled.

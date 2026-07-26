@@ -61,7 +61,7 @@ export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): reado
 export type ProfileTemplateEntry = ArchetypeTemplateEntry;
 export type Profile = Archetype;
 
-export const SUPPORTED_CAPABILITY_MODULES = ["adr", "iteration"] as const;
+export const SUPPORTED_CAPABILITY_MODULES = ["adr", "intent", "iteration"] as const;
 export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
 
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
@@ -91,6 +91,14 @@ export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>
         path: "knowledge/decisions/ADR-TEMPLATE.md",
         templateId: "knowledge.decisions.adr_template",
       },
+    ],
+  },
+  intent: {
+    dirs: ["intent/original", "intent/requirements"],
+    templates: [
+      { path: "intent/README.md", templateId: "intent.readme" },
+      { path: "intent/original/README.md", templateId: "intent.original.readme" },
+      { path: "intent/requirements/README.md", templateId: "intent.requirements.readme" },
     ],
   },
   iteration: {

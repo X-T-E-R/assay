@@ -32,9 +32,31 @@ Capability modules own a small, fixed part of the layout. An archetype that decl
 | Module | Adds |
 | --- | --- |
 | `adr` | `knowledge/decisions/` with `README.md` and `ADR-TEMPLATE.md`, plus the `.assay/adrs.json` index. |
+| `intent` | `intent/`, `intent/original/`, and `intent/requirements/`, each with a `README.md`. |
 | `iteration` | `iterations/` and `iterations/templates/` with `README.md` and `iteration-plan.md`. |
 
 These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them.
+
+## Intent records
+
+The intent module keeps two kinds of file, both plain Markdown with YAML frontmatter:
+
+```text
+intent/original/<YYYYMMDD>-<sha256:12>.md    verbatim capture; frontmatter carries
+                                             system, sha256, captured_at, and
+                                             optionally source, supersedes, shadow
+intent/requirements/<date>-<slug>.md         requirement carrying derives_from
+```
+
+The capture filename is derived from the SHA-256 of its own body, and the full digest is recorded in the frontmatter. That is what makes captures append-only: a re-capture of the same text lands on the same path and changes nothing, while a record whose body no longer matches its digest is reported instead of silently replaced. Corrections are new captures with `supersedes: [<capture-id>]`, never edits.
+
+Decisions have no directory here. `assay intent promote --to decision` creates an ADR through the `adr` module with `related_intent` and `system` set.
+
+`assay status` counts both intent directories as zones once the module is enabled.
+
+### Intent in a private overlay
+
+`assay attach --privacy private` keeps `.assay/` out of product commits and gives it no history of its own. Intent captures are the least reproducible records Assay holds — nothing else can reconstruct what was originally asked for — so storing them in a directory with no version history risks losing them to a single mistake. When intent is enabled in a private overlay, `assay check --advisories` recommends `--privacy private-git`, which initializes a separate Git repository inside `.assay/`. The advisory never fails the check.
 
 ## Donor state
 
@@ -82,4 +104,4 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, and registering the original product repo as an external independent primary system. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.

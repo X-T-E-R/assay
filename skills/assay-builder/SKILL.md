@@ -1,6 +1,6 @@
 ---
 name: assay-builder
-description: "Build, adopt, update, analyze, and iterate Assay workspaces. Use when the user wants to initialize an Assay project, adopt an existing project into Assay, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-Assay knowledge management workflows."
+description: "Build, adopt, update, analyze, and iterate Assay workspaces. Use when the user wants to initialize an Assay project, adopt an existing project into Assay, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, capture product intent verbatim and promote it into requirements or decisions, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-Assay knowledge management workflows."
 ---
 
 # Assay Builder
@@ -44,7 +44,12 @@ assay migrate-layout --dry-run               # always dry-run first; legacy layo
 
 # Capability modules (optional features the archetype may not have enabled)
 assay capability list [--json]               # which modules are enabled, and whether by archetype or added later
-assay capability add <module>                # built-ins: adr|iteration; idempotent, safe to re-run
+assay capability add <module>                # built-ins: adr|intent|iteration; idempotent, safe to re-run
+
+# Product intent (what was asked for, kept apart from what was built)
+assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force]
+assay intent promote <capture-id> --to requirement|decision [--title <title>]
+assay intent list [--system <name>] [--include-lineage] [--json]
 
 # Living sources / reference analysis / iteration / knowledge
 assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|archive]
@@ -84,8 +89,8 @@ assay adr list [--status proposed|accepted|superseded|deprecated] [--json]
 assay adr show <selector> [--json]
 
 # System registry
-assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
-assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
+assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>] [--intent-authority inline|external|none] [--intent-pointer <pointer>]
+assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>] [--intent-authority inline|external|none | --no-intent-authority] [--intent-pointer <pointer>]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status primary|active|superseded|archived] [--json]
@@ -109,12 +114,39 @@ Target projects use an archetype-specific layout over a shared base (`.assay/`, 
 
 ## Capability modules
 
-`adr` and `iteration` are optional capability modules. An archetype enables some of them at init — `study` and `evaluation` ship `adr`, `solve`/`science`/`explore` ship `iteration`, `library` ships neither — and the rest can be enabled at any time.
+`adr`, `intent`, and `iteration` are optional capability modules. An archetype enables some of them at init — `study` and `evaluation` ship `adr`, `solve`/`science`/`explore` ship `iteration`, `library` ships neither, and no archetype ships `intent` — and the rest can be enabled at any time.
 
 - When a command reports `capability not enabled`, run `assay capability add <module>` instead of re-initializing the workspace or switching archetypes.
 - `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.
-- `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming an ADR or iteration command is unavailable.
+- `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming an ADR, intent, or iteration command is unavailable.
 - Capability-scaffolded files are managed files: `update` reconciles them and `check` treats their directories as required structure.
+
+## Product intent
+
+Intent is what was asked for, kept apart from what was built. Capture it when the wording itself is the evidence: a feature request, a scope correction, a constraint someone stated out loud. Do not paraphrase into a requirement first — that is what `promote` is for.
+
+- `intent capture` writes `intent/original/<YYYYMMDD>-<sha256:12>.md` with the text verbatim plus the resolved system, the body's SHA-256, and the capture time. `--file` is workspace-relative and refuses to leave the workspace; use `--text` for material from elsewhere.
+- Records are append-only. Re-capturing identical text is a no-op. Re-capturing text whose record was edited afterwards fails with both digests. Never edit a file under `intent/original/`; capture the corrected wording with `--supersedes <capture-id>`.
+- Every capture is scoped to one registered system, resolved at capture time. Register the system first. After `system promote` moves the primary pointer, old captures keep naming the system they were about; use `intent list --system <name> --include-lineage` to follow the registry `supersedes` chain across replacements.
+- If the system records `intent_authority: external` or `none`, capture refuses and prints the pointer. That is an authority boundary, not a policy check — Assay does not verify the pointer is reachable. `--force` records a `shadow: true` copy for local convenience; `intent list` flags it. Prefer recording in the authoritative place.
+- `promote --to requirement` writes `intent/requirements/<date>-<slug>.md` with `derives_from`. `promote --to decision` creates an ADR carrying `related_intent` and `system`, so the decision cites the words it answers. There is no `intent/decisions/`.
+- **Assay stores captured text as given.** It does not scan or redact. Remove credentials and personal data before capturing, and ask the user before capturing a conversation they have not reviewed. See the repo's `docs/agent-instructions.md`.
+- In a private overlay (`attach --privacy private`), `.assay/` has no version history. `check --advisories` recommends `private-git` when intent is enabled there; act on it before the workspace accumulates captures.
+
+### Recovering intent when adopting an existing project
+
+An adopted project usually has its intent scattered across issues, chat logs, and old docs rather than in the repo. Recover it in one pass instead of leaving it in `.old/`:
+
+```bash
+assay adopt --apply --name <project> --analyze   # existing content lands in .old/<timestamp>/
+assay system register systems/<primary> --primary
+assay capability add intent
+# then, for each distinct statement of intent found in the archive:
+assay intent capture --file .old/<timestamp>/docs/original-brief.md --source ".old/<timestamp>/docs/original-brief.md"
+assay intent capture --text "<quoted request from an issue or chat>" --source "issue #142"
+```
+
+Capture the statements, not the whole archive: one record per distinct thing that was asked for, each with a `--source` that says where the wording came from. Then promote the ones that are still live into requirements or ADRs, and let `intent list` show what has been converted and what is still just a request. Backfilled captures carry the date they were recorded, not the date they were written; keep the original date in `--source`.
 
 ## Systems and version control
 
@@ -124,6 +156,7 @@ Each system under `systems/` may be an independently version-controlled reposito
 - `vcs: embedded` — system files live in the root repo directly.
 - Exactly one system has `status: primary` at any time. Use `system promote` to switch; the previous primary becomes `superseded` automatically.
 - Use `system update <selector>` to correct metadata for an existing record, for example `assay system update skill-creator --vcs independent-git --vcs-ref main` after a system was registered as `embedded` by mistake. Do not re-run `system register`; duplicate registration is intentionally rejected.
+- `--intent-authority inline|external|none` (with `--intent-pointer` for `external`) declares where a system's product intent is authoritative. Absent means `inline`. Set `external` when another tool owns the intent record, so `intent capture` fail-closes here instead of creating a second source of truth.
 - Archive non-primary systems with `system archive --apply` (copy-first move into `systems/archive/`).
 
 Never hand-edit `.assay/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration notes for legacy layouts, read `references/systems-registry.md`.
@@ -184,6 +217,9 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 - Do not adopt an already initialized Assay workspace; use `update` or `migrate-layout` instead.
 - Do not put external project source under `systems/`; in learning mode add it as a living source under `references/<alias>/` with `source add`, or use frozen references only for explicit full-capture/legacy evidence. In absorption mode land project-owned material under `problem/` via `absorb`.
 - Do not hand-edit `.assay/manifest.json`, `.assay/systems-registry.json`, or `.assay/adrs.json`; use the CLI.
+- Do not edit, rename, or delete files under `intent/original/`. Record a corrected capture with `--supersedes` instead.
+- Do not paraphrase intent while capturing it, and do not capture a whole transcript when one paragraph carries the request. Paraphrase in `promote`, not in `capture`.
+- Do not use `intent capture --force` to work around a system whose intent authority is external; record it where the authority says, unless the user explicitly wants a local shadow copy.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
 - Do not leave iterations open indefinitely; use `check --advisories` when you want a list of open plans.
@@ -214,13 +250,13 @@ Run `assay check --advisories` separately when workflow reminders are useful.
 `check` reports four severity levels:
 
 - `[ok]` — directory or managed file present and unchanged.
-- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, or independent-git system without `.git`. With `--advisories`, also includes open iterations, unanalyzed frozen references, major source observations that may need revalidation, empty draft analyses, stale `.old/` adoption archives, and pending queue entries. Warnings never fail the check.
+- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, or independent-git system without `.git`. With `--advisories`, also includes open iterations, unanalyzed frozen references, major source observations that may need revalidation, empty draft analyses, stale `.old/` adoption archives, pending queue entries, intent enabled in an unversioned private overlay, and superseded systems that no supersedes chain points at. Warnings never fail the check.
 - `[missing]` — required directory or manifest absent.
 - `[error]` — managed file missing from disk, registered system path missing, source observation records missing required fingerprint/manifest state, two primary systems, inconsistent ADR supersede links, or invalid donor persistence. **Exits non-zero.**
 
 Workflow/content reminders are opt-in because they describe work state, not corruption. Structure, registry/index consistency, managed-record integrity, and donor persistence remain in the default check.
 
-`status` shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, a compact `Donor adoptions` summary when donor records exist, `Open iterations`, and `Knowledge entries`. For update and migrate, always run `--dry-run` first and review the plan before `--apply`. Dry-run commands must not create project files or project-registry records.
+`status` shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, a compact `Donor adoptions` summary when donor records exist, `Open iterations`, `Knowledge entries`, and `intent/original` plus `intent/requirements` zone counts once the intent module is enabled. For update and migrate, always run `--dry-run` first and review the plan before `--apply`. Dry-run commands must not create project files or project-registry records.
 
 ## Final response checklist
 
@@ -232,6 +268,7 @@ Report:
 - Whether migration was only planned or applied.
 - Which reference/analysis/iteration/knowledge artifacts were produced.
 - Which ADRs were created, accepted, superseded, deprecated, or left proposed.
+- Which intent captures were recorded (with their systems), which were promoted into requirements or ADRs, and which are still unconverted requests.
 - Registered systems and the current `primary`.
 - **Content-completeness**: count of living sources and whether latest observations have provenance/fingerprints/manifests; count of frozen references analyzed vs unanalyzed; count of open draft analyses and whether their `Key observations` are non-empty; whether `.old/` still contains un-migrated stamps. This is what distinguishes "files were created" from "content was actually absorbed".
 - Any open iterations or unresolved reminders reported by `check --advisories`, when that audit was requested.

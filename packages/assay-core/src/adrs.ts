@@ -26,6 +26,10 @@ export interface CreateAdrInput {
   readonly title: string;
   readonly relatedAnalysis?: string;
   readonly relatedIteration?: string;
+  /** Intent capture id this decision answers; set by `intent promote --to decision`. */
+  readonly relatedIntent?: string;
+  /** Registered system the decision is scoped to. */
+  readonly system?: string;
 }
 
 export interface AdrMutationResult {
@@ -165,6 +169,12 @@ function adrFrontmatter(adr: AdrRecord): string {
     `superseded_by: ${yamlNullable(adr.superseded_by)}`,
     `related_analysis: ${yamlNullable(adr.related_analysis)}`,
     `related_iteration: ${yamlNullable(adr.related_iteration)}`,
+    // Emitted only when set, so ADRs written without the intent module keep
+    // exactly the frontmatter earlier releases produced.
+    ...(adr.related_intent === undefined
+      ? []
+      : [`related_intent: ${yamlString(adr.related_intent)}`]),
+    ...(adr.system === undefined ? [] : [`system: ${yamlString(adr.system)}`]),
     "---",
   ].join("\n");
 }
@@ -282,6 +292,8 @@ export async function createAdr(
     superseded_by: null,
     related_analysis: input.relatedAnalysis ?? null,
     related_iteration: input.relatedIteration ?? null,
+    ...(input.relatedIntent === undefined ? {} : { related_intent: input.relatedIntent }),
+    ...(input.system === undefined ? {} : { system: input.system }),
   };
   index.adrs[id] = adr;
   index.next_number = number + 1;

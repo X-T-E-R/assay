@@ -5,6 +5,7 @@ import type {
   ApplyUpdateResult,
   AssayProjectRecord,
   AttachResult,
+  CaptureIntentResult,
   CheckFrameworkResult,
   ConvertOverlayResult,
   DonorAdoptionListResult,
@@ -16,8 +17,10 @@ import type {
   FrameworkStatusResult,
   InitFrameworkResult,
   ListCapabilitiesResult,
+  ListIntentResult,
   MigrateLayoutResult,
   OperationReport,
+  PromoteIntentResult,
   SourceDiffResult,
   SourceLogResult,
   SourceStatusResult,
@@ -27,6 +30,7 @@ import type {
   UpdatePlan,
   VerifyDonorInspectionResult,
 } from "assay-core";
+import { describeIntentAuthority } from "assay-core";
 
 function section(title: string, lines: readonly string[]): string[] {
   if (lines.length === 0) {
@@ -141,6 +145,61 @@ export function formatCapabilityList(result: ListCapabilitiesResult): string {
   return [
     `Capability modules for ${result.project} (archetype ${result.archetype}):`,
     ...lines.map((line) => `  - ${line}`),
+  ].join("\n");
+}
+
+export function formatIntentCapture(result: CaptureIntentResult): string {
+  const { capture } = result;
+  return [
+    result.created
+      ? `Captured intent: ${capture.id}`
+      : `Intent already captured: ${capture.id} (identical text; nothing written)`,
+    `Path: ${capture.path}`,
+    `System: ${capture.system}`,
+    `SHA-256: ${capture.sha256}`,
+    ...(capture.supersedes.length > 0 ? [`Supersedes: ${capture.supersedes.join(", ")}`] : []),
+    ...(capture.shadow
+      ? ["Shadow: yes (the authoritative record for this system lives elsewhere)"]
+      : []),
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+  ].join("\n");
+}
+
+export function formatIntentPromotion(result: PromoteIntentResult): string {
+  return [
+    `Promoted intent ${result.capture.id} to ${result.to}`,
+    ...(result.adrId ? [`ADR: ${result.adrId}`] : []),
+    `Title: ${result.title}`,
+    `Path: ${result.path}`,
+    `System: ${result.capture.system}`,
+    `Event: ${result.eventFile}`,
+  ].join("\n");
+}
+
+export function formatIntentList(result: ListIntentResult): string {
+  const scope =
+    result.system === null
+      ? "all systems"
+      : result.systems.length > 1
+        ? `system ${result.system} (lineage: ${result.systems.join(", ")})`
+        : `system ${result.system}`;
+  if (result.captures.length === 0) {
+    return [`Intent captures for ${scope}`, "(none)"].join("\n");
+  }
+  return [
+    `Intent captures for ${scope}`,
+    ...result.captures.map((capture) => {
+      const markers = [
+        ...(capture.shadow ? ["shadow"] : []),
+        ...(capture.supersedes.length > 0 ? [`supersedes ${capture.supersedes.join(",")}`] : []),
+        ...(capture.requirements.length > 0
+          ? [`${capture.requirements.length} requirement(s)`]
+          : []),
+        ...(capture.decisions.length > 0 ? [`ADR ${capture.decisions.join(",")}`] : []),
+      ];
+      const suffix = markers.length > 0 ? ` [${markers.join("; ")}]` : "";
+      return `  - ${capture.id}  ${capture.system.padEnd(20)} ${capture.capturedAt}${suffix}`;
+    }),
   ].join("\n");
 }
 
@@ -581,6 +640,7 @@ export function formatSystemRecord(system: SystemRecord): string {
     `  version:        ${system.version}`,
     `  contract:       ${system.contract_file ?? "-"}`,
     `  supersedes:     ${supersedesLine(system)}`,
+    `  intent:         ${describeIntentAuthority(system.intent_authority) ?? "inline (default)"}`,
     `  absorbed on:    ${system.absorbed_on ?? "-"}`,
     `  archived on:    ${system.archived_on ?? "-"}`,
     `  archive path:   ${system.archive_path ?? "-"}`,
@@ -621,6 +681,10 @@ export function formatAdrRecord(adr: AdrRecord): string {
     `  superseded by:     ${adr.superseded_by ?? "-"}`,
     `  related analysis:  ${adr.related_analysis ?? "-"}`,
     `  related iteration: ${adr.related_iteration ?? "-"}`,
+    // Shown only when the ADR carries them, so ADRs written without the intent
+    // module keep the same output shape.
+    ...(adr.related_intent === undefined ? [] : [`  related intent:    ${adr.related_intent}`]),
+    ...(adr.system === undefined ? [] : [`  system:            ${adr.system}`]),
   ].join("\n");
 }
 

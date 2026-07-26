@@ -116,8 +116,8 @@ and integrity behavior.
 ## Systems, ADRs, and project registry
 
 ```bash
-assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>]
-assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
+assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>] [--intent-authority inline|external|none] [--intent-pointer <pointer>]
+assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>] [--intent-authority inline|external|none | --no-intent-authority] [--intent-pointer <pointer>]
 assay system promote <selector> [--root <dir>]
 assay system archive <selector> [--root <dir>] [--dry-run | --apply]
 assay system list [--root <dir>] [--status primary|active|superseded|archived] [--json]
@@ -138,6 +138,14 @@ assay projects prune [--dry-run] [--json]
 
 Use `system register` only for first-time registration; it rejects duplicate names so accidental re-registration is visible. Use `system update <selector>` to correct metadata on an existing record, such as changing `vcs` from `embedded` to `independent-git` and setting `--vcs-ref main`. Omitted update fields are preserved. `--primary` uses the same one-primary behavior as `system promote`, and archived systems are read-only.
 
+`--intent-authority` records where a system's product intent is authoritative:
+`inline` (the default when the field is absent) means this workspace owns it,
+`external` names another home through `--intent-pointer`, and `none` means the
+system deliberately keeps no intent record. `assay intent capture` refuses to
+write for `external` and `none`. The registry is the machine-readable home; the
+sidecar contract mirrors the field when it is generated at registration.
+`system update --no-intent-authority` clears the field back to the default.
+
 The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
 
 When `.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory is
@@ -145,9 +153,41 @@ present, `adr new` reports an advisory about parallel decision records and
 still creates the requested Assay ADR. The legacy `--force` option only
 suppresses that advisory; it is not required for creation.
 
+## Product intent
+
+Intent records what was actually asked for, kept separate from what was later built. It is an optional capability module; enable it with `assay capability add intent`.
+
+```bash
+assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force] [--root <dir>]
+assay intent promote <capture> --to requirement|decision [--title <title>] [--root <dir>]
+assay intent list [--system <name>] [--include-lineage] [--json] [--root <dir>]
+```
+
+`capture` writes `intent/original/<YYYYMMDD>-<sha256:12>.md` holding the text verbatim, plus the resolved system name, the full SHA-256 of the body, and the capture time. `--file` is resolved relative to the workspace root and refuses to leave it; pass text from elsewhere with `--text`.
+
+Captures are append-only:
+
+- Capturing identical text again is a no-op and writes no second record.
+- Capturing text whose record was edited after it was written fails, naming the recorded and current digests. Restore the file, or record the corrected wording as a new capture with `--supersedes <capture-id>`.
+
+Every capture is scoped to one registered system. `--system` accepts a name or unique prefix and defaults to the current primary; the resolved name is written into the record, so a capture keeps naming the system it was about after `system promote` moves the primary pointer. `intent list --system <name> --include-lineage` follows the registry `supersedes` chain so captures made against a replaced system stay visible.
+
+If the named system records `intent_authority: external` or `none`, `capture` refuses and prints the pointer. `--force` records the text anyway, marked `shadow: true` in the record and flagged in `intent list`, so a convenience copy is never mistaken for the authoritative one.
+
+`promote --to requirement` writes `intent/requirements/<date>-<slug>.md` carrying `derives_from`. `promote --to decision` creates an ADR through the `adr` capability with `related_intent` and `system` set, so the decision points back at the words it answers.
+
+```bash
+assay capability add intent
+assay intent capture --text "Exports must match what the table shows." --source "kickoff call"
+assay intent promote 20260726-0a1b2c3d4e5f --to requirement --title "Full-fidelity export"
+assay intent list --system billing --include-lineage
+```
+
+Assay stores captured text as given. Redact credentials and personal data before capturing; see [Agent Instructions](agent-instructions.md).
+
 ## Capability modules
 
-Capability modules are optional workspace features: `adr` enables the ADR commands and index, `iteration` enables the iteration commands and templates. An archetype turns some of them on at init, and `capability add` turns the rest on later, so the archetype chosen at init does not lock the workspace out of a capability it needs afterwards.
+Capability modules are optional workspace features: `adr` enables the ADR commands and index, `intent` enables the intent commands and directories, `iteration` enables the iteration commands and templates. An archetype turns some of them on at init, and `capability add` turns the rest on later, so the archetype chosen at init does not lock the workspace out of a capability it needs afterwards.
 
 ```bash
 assay capability add <module> [--root <dir>]
@@ -167,7 +207,7 @@ Templates a capability scaffolds are managed files like any other, so `assay upd
 
 ## Custom archetypes
 
-Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `iteration`), `dirs`, and `templates`.
+Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `intent`, `iteration`), `dirs`, and `templates`.
 
 Template entries can carry their own content, so an archetype pack does not depend on built-in templateIds:
 

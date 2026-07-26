@@ -47,7 +47,21 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 | Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
 | Keep durable reusable knowledge | `library` | shared systems and knowledge as the base layer |
 
-Most work starts as `study`, `solve`, or `explore`: study outside examples, solve a measurable target, or explore when the target shape is still open. The command surface stays small: `source`, `analysis`, `donor`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+Most work starts as `study`, `solve`, or `explore`: study outside examples, solve a measurable target, or explore when the target shape is still open. The command surface stays small: `source`, `analysis`, `donor`, `intent`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+
+## Turn capabilities on when you need them
+
+Capability modules are optional features. An archetype enables some at init; the rest can be added to a live workspace at any time, so the choice you made on day one never locks you out.
+
+| Module | Turns on | Enable it with |
+| --- | --- | --- |
+| `adr` | Numbered architecture decisions with status and supersede chains | `assay capability add adr` |
+| `intent` | Verbatim capture of what was asked for, promoted into requirements or ADRs | `assay capability add intent` |
+| `iteration` | Planned changes to your own systems, opened and closed with a result | `assay capability add iteration` |
+
+`assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run.
+
+Intent is the newest of the three, and the one most often missing from a repo: months later the code is still there but the reason for it is not. `assay intent capture` stores the original wording, content-addressed and append-only, scoped to a registered system, so a requirement or an ADR can point back at the words it came from.
 
 ## Quick start
 

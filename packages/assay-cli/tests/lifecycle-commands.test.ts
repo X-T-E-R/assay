@@ -571,7 +571,7 @@ describe("assay capability CLI", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: unsupported capability module 'telepathy'");
-    expect(result.stderr).toContain("supported modules: adr, iteration");
+    expect(result.stderr).toContain("supported modules: adr, intent, iteration");
   });
 
   it("lists modules and distinguishes archetype-provided from added", async () => {
@@ -582,12 +582,14 @@ describe("assay capability CLI", () => {
     expect(listed.exitCode).toBe(0);
     expect(listed.stdout).toContain("Capability modules for CapList (archetype study):");
     expect(listed.stdout).toContain("adr: enabled (archetype)");
+    expect(listed.stdout).toContain("intent: not enabled");
     expect(listed.stdout).toContain("iteration: enabled (added)");
 
     const json = await runCli(["capability", "list", "--root", root, "--json"]);
     expect(json.exitCode).toBe(0);
     expect(JSON.parse(json.stdout).capabilities).toEqual([
       { module: "adr", enabled: true, source: "archetype", supported: true },
+      { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: true, source: "added", supported: true },
     ]);
   });

@@ -171,7 +171,7 @@ describe("addCapability", () => {
 
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(FrameworkError);
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(
-      /supported modules: adr, iteration/,
+      /supported modules: adr, intent, iteration/,
     );
     expect((await loadManifest(root))?.project.capabilities).toBeUndefined();
   });
@@ -297,6 +297,7 @@ describe("listCapabilities", () => {
     expect(result.archetype).toBe("study");
     expect(result.capabilities).toEqual([
       { module: "adr", enabled: true, source: "archetype", supported: true },
+      { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: true, source: "added", supported: true },
     ]);
   });
@@ -308,6 +309,7 @@ describe("listCapabilities", () => {
 
     expect(result.capabilities).toEqual([
       { module: "adr", enabled: false, source: null, supported: true },
+      { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: false, source: null, supported: true },
     ]);
   });

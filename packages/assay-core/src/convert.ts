@@ -9,6 +9,7 @@ import {
   defaultStandaloneLayout,
   resolveWorkspaceLayout,
   workspacePath,
+  workspaceWorkRelativePath,
 } from "./layout.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { relativeDisplayPath } from "./paths.js";
@@ -42,6 +43,14 @@ export interface ConvertOverlayResult {
 
 /** Work areas hoisted out of `.assay/` when detaching an overlay. */
 const OVERLAY_WORK_AREAS = ["references", "analyses", "iterations", "knowledge"] as const;
+
+/**
+ * Work folders that live under the work root without a `layout.paths` key, so
+ * they are hoisted and rewritten by their own name. Anything listed here that
+ * is missing from both the hoist and the managed-path rewrite would be
+ * stranded in the source overlay after a move.
+ */
+const OVERLAY_WORK_DIRECTORIES = ["intent"] as const;
 
 /**
  * Layout `paths` keys whose location differs between overlay and standalone.
@@ -159,6 +168,15 @@ export async function convertOverlayToStandalone(
   for (const area of OVERLAY_WORK_AREAS) {
     const from = workspacePath(sourceRoot, sourceLayout, area);
     const to = workspacePath(targetRoot, targetLayout, area);
+    if (await exists(from)) {
+      await mkdir(path.dirname(to), { recursive: true });
+      await copyOrMoveDir(from, to, move);
+    }
+  }
+
+  for (const directory of OVERLAY_WORK_DIRECTORIES) {
+    const from = path.join(sourceRoot, workspaceWorkRelativePath(sourceLayout, directory));
+    const to = path.join(targetRoot, workspaceWorkRelativePath(targetLayout, directory));
     if (await exists(from)) {
       await mkdir(path.dirname(to), { recursive: true });
       await copyOrMoveDir(from, to, move);
@@ -373,6 +391,13 @@ function relayoutWorkPath(
     const from = `${sourceLayout.paths[key]}/`;
     if (filePath.startsWith(from)) {
       return `${targetLayout.paths[key]}/${filePath.slice(from.length)}`;
+    }
+  }
+  for (const directory of OVERLAY_WORK_DIRECTORIES) {
+    const from = `${workspaceWorkRelativePath(sourceLayout, directory)}/`;
+    if (filePath.startsWith(from)) {
+      const to = workspaceWorkRelativePath(targetLayout, directory);
+      return `${to}/${filePath.slice(from.length)}`;
     }
   }
   return filePath;

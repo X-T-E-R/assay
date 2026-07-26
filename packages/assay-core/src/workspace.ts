@@ -24,6 +24,8 @@ import { fileHash } from "./hashing.js";
 import {
   type WorkspaceArea,
   defaultStandaloneLayout,
+  intentRootPath,
+  intentSubpath,
   resolveWorkspaceLayout,
   workspacePath,
   workspaceRelativePath,
@@ -474,6 +476,27 @@ function layoutDirectoryPath(layout: WorkspaceLayout, directory: string): string
 /** Workspace-root-relative directories owned by the given capability modules. */
 function capabilityDirs(capabilities: readonly CapabilityModule[]): string[] {
   return [...new Set(capabilities.flatMap((capability) => MODULE_SCAFFOLDS[capability].dirs))];
+}
+
+/**
+ * Capability modules a workspace actually has, for reporting paths that only
+ * exist when a module is enabled. Falls back to the manifest's own list when
+ * the archetype cannot be loaded, so a broken archetype hides structure rather
+ * than failing the caller.
+ */
+async function enabledCapabilities(
+  root: string,
+  manifest: FrameworkManifest | null,
+): Promise<CapabilityModule[]> {
+  if (!manifest) {
+    return [];
+  }
+  try {
+    const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
+    return effectiveCapabilities(archetypeDefinition, manifest.project.capabilities);
+  } catch {
+    return declaredCapabilities(manifest);
+  }
 }
 
 /**
@@ -1330,6 +1353,53 @@ export async function checkFramework(
     }
   }
 
+  // Advisory check 5: intent captured into an unversioned private overlay.
+  // A private overlay keeps `.assay/` out of the product repository and gives
+  // it no history of its own, and intent captures are the least regenerable
+  // records Assay holds: nothing else can reconstruct what was originally
+  // asked for. Recommending `private-git` is a workspace-setup suggestion,
+  // never a failure.
+  if (includeAdvisories && layout.mode === "overlay" && layout.privacy === "private") {
+    try {
+      if ((await enabledCapabilities(root, manifestForLayout)).includes("intent")) {
+        rows.push({
+          path: intentRootPath(layout),
+          status: "warning",
+          message:
+            "intent is enabled in a private overlay, so captures live in the one directory that has no version history. Re-attach with `--privacy private-git`, or initialize a Git repository inside .assay/, so captured intent can be recovered.",
+        });
+      }
+    } catch {
+      // capability state is reported elsewhere; skip the advisory
+    }
+  }
+
+  // Advisory check 6: superseded systems no chain points at. `system promote`
+  // demotes the previous primary without writing a supersedes link, so an
+  // unreferenced superseded system is unreachable from the current primary and
+  // its intent captures drop out of `intent list --include-lineage`.
+  if (includeAdvisories) {
+    try {
+      const registry = await loadSystemsRegistry(root);
+      if (registry) {
+        const referenced = new Set(
+          Object.values(registry.systems).flatMap((system) => system.supersedes),
+        );
+        for (const system of Object.values(registry.systems)) {
+          if (system.status === "superseded" && !referenced.has(system.name)) {
+            rows.push({
+              path: SYSTEMS_REGISTRY_FILE,
+              status: "warning",
+              message: `system '${system.name}' is superseded but no system records it in a supersedes chain, so its lineage cannot be followed. Record the replacement with \`assay system update <replacement> --supersedes ${system.name}\`.`,
+            });
+          }
+        }
+      }
+    } catch {
+      // registry problems are reported by the structural registry check
+    }
+  }
+
   // Semantic check 6: living source observation integrity. Major-change
   // revalidation is an opt-in advisory; missing referenced records remain
   // visible in the default structural check.
@@ -1671,6 +1741,9 @@ export async function getFrameworkStatus(
   const root = path.resolve(options.root);
   const manifest = await loadManifest(root);
   const layout = layoutForManifest(manifest);
+  // Intent zones are reported only where the module exists, so workspaces
+  // without it do not gain two permanently empty rows.
+  const capabilities = await enabledCapabilities(root, manifest);
   const zones = await Promise.all(
     [
       workspaceSubpath(layout, "references", "frozen"),
@@ -1678,6 +1751,9 @@ export async function getFrameworkStatus(
       workspaceSubpath(layout, "analyses", "patterns"),
       workspaceRelativePath(layout, "iterations"),
       workspaceRelativePath(layout, "knowledge"),
+      ...(capabilities.includes("intent")
+        ? [intentSubpath(layout, "original"), intentSubpath(layout, "requirements")]
+        : []),
     ].map(async (zone) => ({ path: zone, files: await countFiles(path.join(root, zone)) })),
   );
 

@@ -102,7 +102,7 @@ describe("archetype loader", () => {
   });
 
   it("does not expose events as an optional capability module", () => {
-    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["adr", "iteration"]);
+    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["adr", "intent", "iteration"]);
   });
 
   it("loads project-local archetypes before user-global and built-in archetypes", async () => {

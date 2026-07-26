@@ -47,7 +47,21 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
 | 保存持久的可复用知识 | `library` | 共享 systems 和 knowledge 作为基座 |
 
-多数工作从 `study`、`solve` 或 `explore` 开始：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。命令面很小：`source`、`analysis`、`donor`、`iteration`、`adr`、`knowledge`、`system`、`check`。
+多数工作从 `study`、`solve` 或 `explore` 开始：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。命令面很小：`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
+
+## 需要时再打开能力模块
+
+能力模块是可选功能。archetype 会在 init 时启用其中一部分，其余的随时可以加到已有工作区里，第一天的选择不会把你锁死。
+
+| 模块 | 打开什么 | 启用方式 |
+| --- | --- | --- |
+| `adr` | 带状态和取代链的编号架构决策 | `assay capability add adr` |
+| `intent` | 原样记录当初提出的诉求，再推进为需求或 ADR | `assay capability add intent` |
+| `iteration` | 对自有系统的受控改动，可开启并按结果关闭 | `assay capability add iteration` |
+
+`assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。
+
+`intent` 是三者中最新的一个，也是仓库里最常缺失的一环：几个月后代码还在，当初为什么要做却已经找不到了。`assay intent capture` 按内容寻址、只追加地保存原始措辞，并绑定到已注册的系统，之后的需求或 ADR 就能指回它所依据的那段话。
 
 ## 快速开始
 

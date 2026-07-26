@@ -6,6 +6,7 @@ import {
   type AssayProjectRegistryStatus,
   CURRENT_VERSION,
   type DonorDecisionOutcome,
+  type IntentPromotionTarget,
   type IterationResult,
   type KnowledgeType,
   SOURCE_CAPTURE_MODES,
@@ -13,6 +14,8 @@ import {
   SUPPORTED_CAPABILITY_MODULES,
   type SourceCaptureMode,
   type SourceChangeClass,
+  type SystemIntentAuthority,
+  type SystemIntentAuthorityMode,
   type SystemVcs,
   type WorkspacePrivacy,
   absorbReference,
@@ -26,6 +29,7 @@ import {
   archiveSystem,
   attachExistingRepo,
   captureEvent,
+  captureIntent,
   checkFramework,
   closeAnalysis,
   closeIteration,
@@ -52,10 +56,12 @@ import {
   listAvailableArchetypes,
   listCapabilities,
   listDonorAdoptions,
+  listIntent,
   listProjectRecords,
   listSystems,
   loadManifest,
   migrateLayout,
+  promoteIntent,
   promoteSystem,
   pruneProjects,
   recordDonorEvidenceFromFile,
@@ -93,6 +99,9 @@ import {
   formatDonorStatus,
   formatDonorVerification,
   formatInitResult,
+  formatIntentCapture,
+  formatIntentList,
+  formatIntentPromotion,
   formatMigrationResult,
   formatProjectList,
   formatProjectRecord,
@@ -143,6 +152,7 @@ const PROJECT_STATUSES: readonly AssayProjectRegistryStatus[] = [
 ];
 
 const ADR_STATUSES: readonly AdrStatus[] = ["proposed", "accepted", "superseded", "deprecated"];
+const INTENT_AUTHORITY_MODES: readonly SystemIntentAuthorityMode[] = ["inline", "external", "none"];
 const ABSORPTION_OUTLETS: readonly AbsorptionOutlet[] = ["problem", "intake"];
 
 type AbsorptionOutlet = "problem" | "intake";
@@ -208,6 +218,40 @@ function parseAdrStatusFilter(status?: string): AdrStatus | undefined {
     return status as AdrStatus;
   }
   throw new Error(`--status must be one of: ${ADR_STATUSES.join(", ")}`);
+}
+
+/**
+ * Build the registry's intent-authority value from the two CLI options that
+ * describe it. The pointer is meaningless without a mode, so passing it alone
+ * is a usage error rather than a silently dropped argument.
+ */
+function parseIntentAuthority(
+  mode: string | undefined,
+  pointer: string | undefined,
+): SystemIntentAuthority | undefined {
+  if (mode === undefined) {
+    if (pointer !== undefined) {
+      throw new Error("--intent-pointer requires --intent-authority <mode>");
+    }
+    return undefined;
+  }
+  if (!INTENT_AUTHORITY_MODES.includes(mode as SystemIntentAuthorityMode)) {
+    throw new Error(`--intent-authority must be one of: ${INTENT_AUTHORITY_MODES.join(", ")}`);
+  }
+  return {
+    mode: mode as SystemIntentAuthorityMode,
+    ...(pointer === undefined ? {} : { pointer }),
+  };
+}
+
+function splitList(value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 async function writeArchetypeCommandResult(
@@ -1284,6 +1328,78 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", formatAdrRecord(record));
     });
 
+  const intent = program
+    .command("intent")
+    .description("Capture product intent verbatim and promote it into requirements or decisions");
+
+  intent
+    .command("capture")
+    .description("Record product intent verbatim against a registered system")
+    .option("--text <text>", "intent text to capture")
+    .option("--file <path>", "workspace-relative file whose contents are the intent text")
+    .option("--system <name>", "system name or unique prefix; defaults to the primary system")
+    .option("--source <text>", "where the intent came from (conversation, ticket, meeting)")
+    .option("--supersedes <ids>", "comma-separated capture ids this record corrects")
+    .option("--force", "record a shadow copy when the system's intent authority is elsewhere")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const supersedes = splitList(commandOptions.supersedes);
+      const result = await captureIntent({
+        root,
+        ...(commandOptions.text === undefined ? {} : { text: commandOptions.text }),
+        ...(commandOptions.file === undefined ? {} : { file: commandOptions.file }),
+        ...(commandOptions.system === undefined ? {} : { system: commandOptions.system }),
+        ...(commandOptions.source === undefined ? {} : { source: commandOptions.source }),
+        ...(supersedes === undefined ? {} : { supersedes }),
+        force: commandOptions.force ?? false,
+      });
+      writeLine(output, "stdout", formatIntentCapture(result));
+    });
+
+  intent
+    .command("promote")
+    .description("Derive a requirement or an ADR from a recorded intent capture")
+    .argument("<capture>", "intent capture id or unique id prefix")
+    .addOption(
+      new Option("--to <target>", "promotion target")
+        .choices(["requirement", "decision"])
+        .makeOptionMandatory(),
+    )
+    .option("--title <title>", "title for the requirement or ADR")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (capture, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await promoteIntent({
+        root,
+        capture,
+        to: commandOptions.to as IntentPromotionTarget,
+        ...(commandOptions.title === undefined ? {} : { title: commandOptions.title }),
+      });
+      writeLine(output, "stdout", formatIntentPromotion(result));
+    });
+
+  intent
+    .command("list")
+    .description("List recorded intent captures and what they became")
+    .option("--system <name>", "system name or unique prefix to filter by")
+    .option("--include-lineage", "also include systems the filtered system supersedes")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await listIntent({
+        root,
+        ...(commandOptions.system === undefined ? {} : { system: commandOptions.system }),
+        includeLineage: commandOptions.includeLineage ?? false,
+      });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", formatIntentList(result));
+    });
+
   const system = program.command("system").description("System registry operations");
 
   system
@@ -1303,15 +1419,21 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--system-version <version>", "system semantic version")
     .option("--primary", "set this system as the primary system")
     .option("--supersedes <names>", "comma-separated superseded system names")
+    .addOption(
+      new Option(
+        "--intent-authority <mode>",
+        "where this system's product intent is authoritative",
+      ).choices([...INTENT_AUTHORITY_MODES]),
+    )
+    .option("--intent-pointer <pointer>", "where the external intent authority lives")
     .action(async (systemPath, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const vcs = commandOptions.vcs as SystemVcs | undefined;
-      const supersedes = commandOptions.supersedes
-        ? commandOptions.supersedes
-            .split(",")
-            .map((value) => value.trim())
-            .filter(Boolean)
-        : [];
+      const supersedes = splitList(commandOptions.supersedes) ?? [];
+      const intentAuthority = parseIntentAuthority(
+        commandOptions.intentAuthority,
+        commandOptions.intentPointer,
+      );
       const result = await registerSystem(root, {
         path: systemPath,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
@@ -1322,6 +1444,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           : { version: commandOptions.systemVersion }),
         primary: commandOptions.primary ?? false,
         supersedes,
+        ...(intentAuthority === undefined ? {} : { intentAuthority }),
       });
       writeLine(output, "stdout", `Registered system: ${result.system.name}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
@@ -1349,16 +1472,27 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--no-contract-file", "clear the contract file path")
     .option("--primary", "set this system as the primary system")
     .option("--supersedes <names>", "comma-separated superseded system names")
+    .addOption(
+      new Option(
+        "--intent-authority <mode>",
+        "where this system's product intent is authoritative",
+      ).choices([...INTENT_AUTHORITY_MODES]),
+    )
+    .option("--no-intent-authority", "clear the recorded intent authority (back to inline)")
+    .option("--intent-pointer <pointer>", "where the external intent authority lives")
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const vcs = commandOptions.vcs as SystemVcs | undefined;
-      const supersedes =
-        commandOptions.supersedes === undefined
-          ? undefined
-          : commandOptions.supersedes
-              .split(",")
-              .map((value) => value.trim())
-              .filter(Boolean);
+      const supersedes = splitList(commandOptions.supersedes);
+      const intentAuthority =
+        commandOptions.intentAuthority === false
+          ? null
+          : parseIntentAuthority(
+              typeof commandOptions.intentAuthority === "string"
+                ? commandOptions.intentAuthority
+                : undefined,
+              commandOptions.intentPointer,
+            );
       const contractFile =
         commandOptions.contractFile === false
           ? null
@@ -1374,6 +1508,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           : { version: commandOptions.systemVersion }),
         ...(contractFile === undefined ? {} : { contractFile }),
         ...(supersedes === undefined ? {} : { supersedes }),
+        ...(intentAuthority === undefined ? {} : { intentAuthority }),
         ...(commandOptions.primary ? { primary: true } : {}),
       });
       const changedFields = result.changes.map((change) => change.field).join(", ");
