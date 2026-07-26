@@ -1,6 +1,11 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
+import {
+  BARE_ARCHETYPE,
+  createTempDirectoryFixture,
+  pathExists as exists,
+  writeBareArchetype,
+} from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -44,7 +49,8 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
 /** Standalone workspace with the intent capability and one registered primary system. */
 async function intentWorkspace(name: string, systemName = "app"): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
-  await initFramework({ target: root, name, archetype: "library" });
+  await writeBareArchetype(root);
+  await initFramework({ target: root, name, archetype: BARE_ARCHETYPE });
   await addCapability({ root, module: "intent" });
   await mkdir(path.join(root, "systems", systemName), { recursive: true });
   await registerSystem(root, { path: `systems/${systemName}`, primary: true });
@@ -60,7 +66,14 @@ async function overlayIntentWorkspace(name: string): Promise<string> {
   await git(root, ["config", "user.name", "Assay Test"]);
   await git(root, ["add", "package.json"]);
   await git(root, ["commit", "-m", "initial"]);
-  await attachExistingRepo({ root, name, archetype: "library", privacy: "private", noTrack: true });
+  await writeBareArchetype(root);
+  await attachExistingRepo({
+    root,
+    name,
+    archetype: BARE_ARCHETYPE,
+    privacy: "private",
+    noTrack: true,
+  });
   await addCapability({ root, module: "intent" });
   return root;
 }
@@ -243,12 +256,13 @@ describe("intent capture", () => {
 
   it("requires the intent capability", async () => {
     const root = path.join(await tempDirs.createTempDir(), "NoCapability");
-    await initFramework({ target: root, name: "NoCapability", archetype: "library" });
+    await writeBareArchetype(root);
+    await initFramework({ target: root, name: "NoCapability", archetype: BARE_ARCHETYPE });
     await mkdir(path.join(root, "systems", "app"), { recursive: true });
     await registerSystem(root, { path: "systems/app", primary: true });
 
     await expect(captureIntent({ root, text: INTENT_TEXT })).rejects.toThrow(
-      /capability not enabled in archetype library: intent/,
+      `capability not enabled in archetype ${BARE_ARCHETYPE}: intent`,
     );
   });
 
@@ -322,7 +336,8 @@ describe("intent authority", () => {
 
   it("mirrors the authority into the generated system contract", async () => {
     const root = path.join(await tempDirs.createTempDir(), "AuthorityContract");
-    await initFramework({ target: root, name: "AuthorityContract", archetype: "library" });
+    await writeBareArchetype(root);
+    await initFramework({ target: root, name: "AuthorityContract", archetype: BARE_ARCHETYPE });
     await mkdir(path.join(root, "systems", "app"), { recursive: true });
 
     await registerSystem(root, {
@@ -550,7 +565,12 @@ describe("intent in an overlay workspace", () => {
     const withIntent = await intentWorkspace("StatusWithIntent");
     await captureIntent({ root: withIntent, text: INTENT_TEXT });
     const withoutRoot = path.join(await tempDirs.createTempDir(), "StatusWithoutIntent");
-    await initFramework({ target: withoutRoot, name: "StatusWithoutIntent", archetype: "library" });
+    await writeBareArchetype(withoutRoot);
+    await initFramework({
+      target: withoutRoot,
+      name: "StatusWithoutIntent",
+      archetype: BARE_ARCHETYPE,
+    });
 
     const withZones = (await getFrameworkStatus({ root: withIntent })).zones;
     expect(withZones).toContainEqual({
@@ -620,10 +640,11 @@ describe("intent advisories", () => {
     await git(root, ["config", "user.name", "Assay Test"]);
     await git(root, ["add", "package.json"]);
     await git(root, ["commit", "-m", "initial"]);
+    await writeBareArchetype(root);
     await attachExistingRepo({
       root,
       name: "AdvisoryNoIntent",
-      archetype: "library",
+      archetype: BARE_ARCHETYPE,
       privacy: "private",
       noTrack: true,
     });

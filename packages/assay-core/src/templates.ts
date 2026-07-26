@@ -235,22 +235,6 @@ function templateContentById(
       return solveAttemptsReadme();
     case "solve.tools.readme":
       return solveToolsReadme();
-    case "science.hypotheses.readme":
-      return scienceHypothesesReadme();
-    case "science.experiments.readme":
-      return scienceExperimentsReadme();
-    case "science.datasets.readme":
-      return scienceDatasetsReadme();
-    case "science.findings.readme":
-      return scienceFindingsReadme();
-    case "science.papers.readme":
-      return sciencePapersReadme();
-    case "evaluation.candidates.readme":
-      return evaluationCandidatesReadme();
-    case "evaluation.criteria":
-      return evaluationCriteria();
-    case "evaluation.scorecards.readme":
-      return evaluationScorecardsReadme();
     case "explore.approaches.readme":
       return exploreApproachesReadme();
     case "explore.trials.readme":
@@ -772,94 +756,6 @@ export function solveToolsReadme(): string {
     - \`tools/report/\` — objective-specific reporting helpers if benchmark output needs a repeatable publication format.
 
     Tools that are not objective-specific belong elsewhere, such as generic build scripts under the relevant system source.
-  `);
-}
-
-export function scienceHypothesesReadme(): string {
-  return dedent(`
-    # hypotheses/
-
-    Candidate claims before evidence is collected.
-
-    Each hypothesis should name the claim, expected observation, falsification condition, and linked experiment plan.
-  `);
-}
-
-export function scienceExperimentsReadme(): string {
-  return dedent(`
-    # experiments/
-
-    Experiment plans and execution notes.
-
-    Keep protocol, variables, environment, and result links together so evidence can be audited later.
-  `);
-}
-
-export function scienceDatasetsReadme(): string {
-  return dedent(`
-    # datasets/
-
-    Dataset cards, provenance, licenses, transformations, and quality notes.
-
-    Preserve enough detail for another run to understand what evidence was used.
-  `);
-}
-
-export function scienceFindingsReadme(): string {
-  return dedent(`
-    # findings/
-
-    Evidence-backed findings.
-
-    A finding should link to hypotheses, experiments, datasets, and limitations. Separate observed evidence from interpretation.
-  `);
-}
-
-export function sciencePapersReadme(): string {
-  return dedent(`
-    # papers/
-
-    Drafts, outlines, figures, and publication notes.
-
-    Keep claims traceable to findings and evidence instead of prose-only memory.
-  `);
-}
-
-export function evaluationCandidatesReadme(): string {
-  return dedent(`
-    # candidates/
-
-    External candidates under review.
-
-    Give each candidate a source, version, evaluation scope, and known constraints before scoring.
-  `);
-}
-
-export function evaluationCriteria(): string {
-  return dedent(`
-    # Evaluation Criteria
-
-    This file defines the decision matrix before scoring starts.
-
-    | Criterion | Weight | Measurement | Notes |
-    | --- | ---: | --- | --- |
-    | Fit | 1 | | |
-    | Risk | 1 | | |
-    | Operability | 1 | | |
-
-    ## Final selection
-
-    Record the final selection only after scorecards are complete and an ADR captures the decision.
-  `);
-}
-
-export function evaluationScorecardsReadme(): string {
-  return dedent(`
-    # scorecards/
-
-    Scorecards apply the decision matrix to each candidate.
-
-    Keep raw observations, criterion scores, weighting notes, and final selection rationale separate so tradeoffs stay visible.
   `);
 }
 

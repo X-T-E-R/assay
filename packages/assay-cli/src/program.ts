@@ -308,6 +308,58 @@ async function writeArchetypeCommandResult(
   writeLine(output, "stdout", `Mode: ${payload.mode}`);
 }
 
+/**
+ * Where an analysis goes after it closes depends on how it closed: an adopted
+ * pattern becomes knowledge, a decision becomes an ADR, an experiment becomes
+ * an iteration. Naming the one command that fits the exit is the whole point of
+ * the hint — a generic "record the outcome" line would be prose.
+ */
+function analysisCloseNextLine(analysisPath: string, exit: string): string {
+  switch (exit) {
+    case "adopt":
+      return `Next: \`assay knowledge add pattern "<title>" --from-analysis ${analysisPath}\` to keep what survived.`;
+    case "adr":
+      return 'Next: `assay adr new "<decision title>"` to record the decision this analysis reached.';
+    case "experiment":
+      return 'Next: `assay iteration start "<what you are trying>"` to run the experiment this analysis proposed.';
+    default:
+      return "Next: `assay status` shows what is still open in this workspace.";
+  }
+}
+
+/**
+ * What follows registering a system. A non-primary one has an obvious next
+ * step; for the primary one the freshly generated contract carries metadata and
+ * no description yet. Both hold in every archetype, unlike `iteration start`,
+ * which only exists where the iteration module is enabled.
+ */
+function systemRegisterNextLine(system: {
+  readonly name: string;
+  readonly status: string;
+  readonly contract_file: string | null;
+}): string {
+  if (system.status !== "primary") {
+    return `Next: \`assay system promote ${system.name}\` when it becomes the primary system.`;
+  }
+  return system.contract_file
+    ? `Next: describe what ${system.name} does in ${system.contract_file}.`
+    : `Next: \`assay system show ${system.name}\` to confirm what was recorded.`;
+}
+
+/** The first command a freshly scaffolded capability module makes available. */
+function capabilityAddNextLine(module: string): string {
+  switch (module) {
+    case "adr":
+      return 'Next: `assay adr new "<decision title>"`.';
+    case "intent":
+      return 'Next: `assay intent capture --text "<what the product is for>"`.';
+    case "iteration":
+      return 'Next: `assay iteration start "<what you are changing>"`.';
+    default:
+      return "Next: `assay capability list` shows what this workspace now has.";
+  }
+}
+
 export function createProgram(options: CreateProgramOptions = {}): Command {
   const output = createOutput(options);
   const program = new Command()
@@ -685,7 +737,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (module, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      writeLine(output, "stdout", formatCapabilityAdd(await addCapability({ root, module })));
+      const result = await addCapability({ root, module });
+      writeLine(output, "stdout", formatCapabilityAdd(result));
+      if (!result.alreadyEnabled) {
+        writeLine(output, "stdout", capabilityAddNextLine(result.module));
+      }
     });
 
   capability
@@ -770,6 +826,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       }
       writeLine(output, "stdout", `Materials: ${result.materialsPath}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        "Next: `assay status` reports when this source moves upstream and which adopted mappings it reaches.",
+      );
     });
 
   source
@@ -1253,6 +1314,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Created analysis: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        `Next: fill ## Key observations, then \`assay analysis close ${result.path} --exit adopt|reject|experiment|adr\`.`,
+      );
     });
 
   analysis
@@ -1283,6 +1349,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Closed analysis: ${result.path}`);
       writeLine(output, "stdout", `Exit: ${commandOptions.exit}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(output, "stdout", analysisCloseNextLine(result.path, commandOptions.exit));
     });
 
   const iteration = program.command("iteration").description("Iteration operations");
@@ -1297,6 +1364,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Started iteration: ${result.path}`);
       writeLine(output, "stdout", `Plan: ${result.planPath}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        `Next: fill ${result.planPath}, then \`assay iteration close ${result.path} --result applied|rejected|retest\`.`,
+      );
     });
 
   iteration
@@ -1320,6 +1392,13 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Closed iteration: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        commandOptions.result === "applied"
+          ? `Next: \`assay knowledge add pattern "<title>" --from-iteration ${result.path}\` if this produced something reusable.`
+          : "Next: `assay status` shows what is still open in this workspace.",
+      );
     });
 
   const event = program.command("event").description("Event ledger operations");
@@ -1572,6 +1651,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Contract: ${result.system.contract_file ?? "-"}`);
       writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(output, "stdout", systemRegisterNextLine(result.system));
     });
 
   system
@@ -1761,6 +1841,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Added knowledge: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        `Next: write the entry in ${result.path}; \`assay check\` reports the workspace's knowledge structure.`,
+      );
     });
 
   return program;

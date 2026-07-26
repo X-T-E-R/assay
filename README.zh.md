@@ -42,12 +42,9 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | --- | --- | --- |
 | 学习外部项目且不丢失来源 | `study` | 活体来源、参考分析、模式笔记、决策出口 |
 | 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、迭代 |
-| 跑证据导向实验 | `science` | hypotheses、experiments、datasets、findings |
-| 比较工具、库或方案 | `evaluation` | candidates、criteria、scorecards、可转 ADR 的决策 |
 | 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
-| 保存持久的可复用知识 | `library` | 共享 systems 和 knowledge 作为基座 |
 
-多数工作从 `study`、`solve` 或 `explore` 开始：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。命令面很小：`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
+三个内置 archetype 覆盖工作实际会呈现的三种形态：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。需要别的结构时，在 `.assay/archetypes/` 或 `~/.assay/archetypes/` 下写一份自定义 archetype YAML，见 `docs/workspace-layout.md`。命令面很小：`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
 
 ## 需要时再打开能力模块
 

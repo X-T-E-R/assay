@@ -211,7 +211,19 @@ so a later `system update` leaves an existing contract untouched, and the root
 contract written by `assay attach` does not carry the field at all.
 `system update --no-intent-authority` clears the field back to the default.
 
-The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
+The built-in archetypes are `study`, `solve`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
+
+`research` is the old name of `study` and still loads: a manifest that records
+it resolves to `study`, and `assay update` rewrites the manifest to the current
+name. An archetype file you provide under that name takes precedence over the
+alias.
+
+`science`, `evaluation`, and `library` were removed in 0.4.0. Asking for one by
+name fails with a message that names the removal and what to use instead. A
+workspace whose manifest still records one keeps working: `check` and `status`
+report the base structure and say in one line why the archetype's own
+directories are missing from the report. To keep a removed shape, copy its
+directories into your own archetype YAML under `.assay/archetypes/`.
 
 When `.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory is
 present, `adr new` reports an advisory about parallel decision records and
@@ -265,7 +277,7 @@ assay capability list [--root <dir>] [--json]
 `capability add` creates the module's directories and templates through the workspace layout — under `.assay/` in an overlay workspace, at the root in a standalone one — writes any state file the module needs (`adr` creates `.assay/adrs.json`), records the module in the manifest, and appends a `capability.added` event. Files that already exist are left alone, and a module the workspace already has reports that and changes nothing, so the command is safe to re-run.
 
 ```bash
-assay capability add adr        # a library workspace gains knowledge/decisions/ and adr commands
+assay capability add adr        # an explore workspace gains knowledge/decisions/ and adr commands
 assay adr new "Adopt overlay layout"
 ```
 

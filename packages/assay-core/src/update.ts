@@ -27,6 +27,7 @@ import { computeHash, fileHash } from "./hashing.js";
 import { defaultOverlayLayout, defaultStandaloneLayout, resolveWorkspaceLayout } from "./layout.js";
 import { loadLegacyManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
+import { archetypeAliasTarget } from "./profile.js";
 import {
   type OperationReport,
   type UpdateAnalysis,
@@ -336,6 +337,22 @@ function upgradeManifestToCurrentLayout(manifest: FrameworkManifest): void {
   manifest.layout = upgradedLayoutFor(manifest);
 }
 
+/**
+ * Move a manifest onto the current name of an archetype that was renamed.
+ * Loading already resolves the old name, so nothing is broken while it sits
+ * there; `update` is where the record catches up, because asking anyone to run
+ * a migration command for this would mean it never happens.
+ */
+function rewriteRenamedArchetype(manifest: FrameworkManifest, report: OperationReport): void {
+  const current = archetypeAliasTarget(manifest.project.archetype);
+  if (!current) {
+    return;
+  }
+  const previous = manifest.project.archetype;
+  manifest.project.archetype = current;
+  report.notes.push(`archetype: renamed ${previous} to ${current} in the manifest`);
+}
+
 function legacyCoreNameForV2Manifest(manifest: FrameworkManifest, root: string): string {
   // Compatibility island for v2→v3 migration only. New runtime/update template
   // analysis must read manifest.project.archetype/mode and must not use
@@ -625,6 +642,7 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
 
   recordAssayAgentsResult(report, await applyAssayAgentsBlock({ root, mode: agentsMode }));
 
+  rewriteRenamedArchetype(manifest, report);
   manifest.framework_version = CURRENT_VERSION;
   await saveManifest(root, manifest);
   const eventFile = await appendEvent(root, {

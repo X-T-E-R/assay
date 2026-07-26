@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
-import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
+import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
 import type { FrameworkManifest, ProjectArchetype, ProjectMode } from "./schemas/index.js";
@@ -203,6 +203,31 @@ const DEFAULT_ARCHETYPE: ProjectArchetype = "study";
 const PROJECT_ARCHETYPES_DIR = path.join(MANAGED_DIR, "archetypes");
 const BUILTIN_ARCHETYPES_DIR = path.resolve(fileURLToPath(import.meta.url), "..", "..", "profiles");
 
+/**
+ * Archetypes that were renamed after workspaces had already recorded the old
+ * name. Loading resolves the old name to the current one, so an existing
+ * manifest keeps working with no migration step; `assay update` rewrites the
+ * manifest in passing. A project- or user-level archetype file with the old
+ * name still wins, because the alias is only consulted after the lookup fails.
+ */
+const ARCHETYPE_ALIASES = new Map<string, ProjectArchetype>([["research", "study"]]);
+
+/**
+ * Archetypes this build no longer ships. Naming them keeps `--archetype
+ * science` copied out of an older document failing for a reason the reader can
+ * act on, instead of looking like a typo.
+ */
+const REMOVED_ARCHETYPES = new Map<string, string>([
+  ["science", "use `study` for evidence work, or declare a custom archetype"],
+  ["evaluation", "use `study` and record the choice with `assay capability add adr`"],
+  ["library", "use `study`, or declare a custom archetype for a bare core"],
+]);
+
+/** The current name of an archetype recorded under a previous one. */
+export function archetypeAliasTarget(name: string): ProjectArchetype | null {
+  return ARCHETYPE_ALIASES.get(name.trim()) ?? null;
+}
+
 const BASE_ARCHETYPE: Archetype = {
   name: "base",
   description: "",
@@ -248,6 +273,10 @@ interface ArchetypeLookupLocation {
  * project-local `.assay/archetypes`, user-global `~/.assay/archetypes`,
  * then bundled built-ins. The internal `base` archetype remains reserved and
  * is only available through `extends: base`.
+ *
+ * A name that no longer resolves is retried under its current name, so a
+ * manifest written before an archetype was renamed loads without asking anyone
+ * to migrate it.
  */
 export async function loadArchetype(
   name: string | undefined = DEFAULT_ARCHETYPE,
@@ -258,6 +287,26 @@ export async function loadArchetype(
     throw await archetypeNotFoundError(archetypeName, options);
   }
 
+  const direct = await readArchetypeByName(archetypeName, options);
+  if (direct) {
+    return direct;
+  }
+
+  const alias = ARCHETYPE_ALIASES.get(archetypeName);
+  if (alias) {
+    const aliased = await readArchetypeByName(alias, options);
+    if (aliased) {
+      return aliased;
+    }
+  }
+
+  throw await archetypeNotFoundError(archetypeName, options);
+}
+
+async function readArchetypeByName(
+  archetypeName: ProjectArchetype,
+  options: ArchetypeLookupOptions,
+): Promise<Archetype | null> {
   for (const location of archetypeLookupLocations(options)) {
     const archetypePath = path.join(location.directory, `${archetypeName}.yaml`);
     let raw: string;
@@ -270,8 +319,7 @@ export async function loadArchetype(
     const resolved = await resolveTemplateFileContents(parsed, location.directory);
     return mergeBaseArchetype(resolved);
   }
-
-  throw await archetypeNotFoundError(archetypeName, options);
+  return null;
 }
 
 export async function listAvailableArchetypes(
@@ -716,8 +764,11 @@ async function archetypeNotFoundError(
     available.length === 0
       ? "none"
       : available.map((archetype) => `${archetype.name} (${archetype.source})`).join(", ");
-  return new FrameworkError(
-    `archetype not found: ${name}. Available archetypes: ${availableText}`,
-    { code: "IO_ERROR" },
-  );
+  const removalHint = REMOVED_ARCHETYPES.get(name);
+  const headline = removalHint
+    ? `archetype '${name}' was removed in Assay ${CURRENT_VERSION} (${removalHint})`
+    : `archetype not found: ${name}`;
+  return new FrameworkError(`${headline}. Available archetypes: ${availableText}`, {
+    code: "IO_ERROR",
+  });
 }

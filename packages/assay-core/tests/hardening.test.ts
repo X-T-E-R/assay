@@ -1,6 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
+import {
+  BARE_ARCHETYPE,
+  createTempDirectoryFixture,
+  pathExists as exists,
+  writeBareArchetype,
+} from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -60,6 +65,9 @@ async function gitRepo(name: string, file = "README.md"): Promise<string> {
 
 async function standaloneWorkspace(name: string, archetype?: string): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
+  if (archetype === BARE_ARCHETYPE) {
+    await writeBareArchetype(root);
+  }
   await initFramework({ target: root, name, ...(archetype ? { archetype } : {}) });
   return root;
 }
@@ -214,7 +222,7 @@ function frontmatterOf(markdown: string): Record<string, unknown> {
 
 describe("frontmatter values cannot terminate their own record", () => {
   it("round-trips an intent source carrying a frontmatter terminator", async () => {
-    const root = await standaloneWorkspace("IntentSourceInjection", "library");
+    const root = await standaloneWorkspace("IntentSourceInjection", BARE_ARCHETYPE);
     await addCapability({ root, module: "intent" });
     await mkdir(path.join(root, "systems", "app"), { recursive: true });
     await registerSystem(root, { path: "systems/app", primary: true });
@@ -239,7 +247,7 @@ describe("frontmatter values cannot terminate their own record", () => {
   });
 
   it("round-trips a promoted requirement title carrying a frontmatter terminator", async () => {
-    const root = await standaloneWorkspace("RequirementTitleInjection", "library");
+    const root = await standaloneWorkspace("RequirementTitleInjection", BARE_ARCHETYPE);
     await addCapability({ root, module: "intent" });
     await mkdir(path.join(root, "systems", "app"), { recursive: true });
     await registerSystem(root, { path: "systems/app", primary: true });

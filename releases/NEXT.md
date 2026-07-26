@@ -264,6 +264,72 @@ All appear only under `assay check --advisories` and never fail the check.
   writing a lineage link, so such a system is unreachable from the current
   primary and its intent drops out of `intent list --include-lineage`.
 
+## Three Built-In Archetypes Instead of Six
+
+`science`, `evaluation`, and `library` are gone. They shipped alongside `solve`,
+had the same exposure, and finished it with no workspaces at all while `solve`
+picked up twelve.
+
+- The built-ins are now `study`, `solve`, and `explore`.
+- `--archetype science` fails with a message that names the removal and what to
+  use instead, so a line copied out of an old document does not read as a typo:
+
+  ```text
+  archetype 'science' was removed in Assay 0.4.0 (use `study` for evidence work,
+  or declare a custom archetype). Available archetypes: explore (built-in),
+  solve (built-in), study (built-in)
+  ```
+- **Migration:** there is nothing to migrate — no workspace used any of the
+  three. A workspace whose manifest still records one keeps working: `check` and
+  `status` report the base structure and say in one line why the archetype's own
+  directories are absent from the report. To keep one of these shapes, copy its
+  directories into your own archetype YAML under `.assay/archetypes/` or
+  `~/.assay/archetypes/`; the loader has always preferred your file over a
+  built-in of the same name.
+- The `science.*` and `evaluation.*` template ids are gone with them. Nothing
+  else referenced them.
+
+## `research` Loads as `study`
+
+Renaming `research` to `study` left six workspaces recording a name this build
+could not resolve, which quietly downgraded `check` and `update` to a base-only
+pass.
+
+- The loader resolves `research` to `study`, so those manifests work as they
+  did before the rename. An archetype file you provide under the old name still
+  wins over the alias.
+- `assay update` rewrites the manifest to `study` while it is there, and reports
+  it. Nobody has to run a migration command.
+- When an archetype genuinely cannot be resolved, `status` and `check` now say
+  so in one line — `... — reporting base structure only` — instead of silently
+  reporting a shorter workspace. The `check` row is a warning and does not fail
+  the workspace.
+
+## `Next:` on the Commands People Actually Run
+
+Every write command with real adoption now ends by naming the command that
+continues the loop: `source add`, `analysis new`, `analysis close`,
+`iteration start`, `iteration close`, `system register`, `knowledge add`, and
+`capability add`. The hint is specific to what just happened — closing an
+analysis with `--exit adopt` points at `knowledge add`, with `--exit adr` at
+`adr new`.
+
+`source add` points at `assay status`, which reports upstream movement on its
+own, rather than at a `source sync` that has to be remembered.
+
+## `projects prune` No Longer Forgets Live Workspaces
+
+`prune` removed every record it could not load a manifest for, which included
+workspaces that are still on disk — every unmigrated `.framework/` workspace,
+and any workspace with a damaged manifest.
+
+- `prune` now removes a `missing` record only when the directory it points at is
+  gone. A directory that still exists stays in the registry, listed as missing,
+  where it can still be repaired or migrated. `uninstalled` records are removed
+  as before, since that status is an explicit statement.
+- The registry also reads the legacy `.framework/manifest.json`, so a v3
+  workspace is listed as active rather than missing.
+
 ## Upgrade Notes
 
 ### One-way door: older Assay builds reject the new state files
@@ -303,11 +369,16 @@ keep validating in the other as long as the fields above are absent.
   directory missing `reference.yaml` is reported instead.
 - The `analyzed` and `analysis_required` keys in the `reference.frozen` event,
   and `marked_reference_analyzed` in the `analysis.closed` event.
+- The `science`, `evaluation`, and `library` built-in archetypes, their YAML
+  files, and the `science.*` and `evaluation.*` template ids. No workspace used
+  any of the three; requesting one by name now fails with a message naming the
+  removal.
 
 No command or flag was removed; `status --fetch`, `donor take`, and
 `reference backfill` were added. `Archetype.dirs` (and the learning/absorption
 variants) now hold `{ path, purpose }` objects rather than strings; embedders
 reading them directly should use `dirsForArchetype()` for paths or
 `archetypeDirectories()` for both. `getFrameworkStatus()` takes its own options
-type with an optional `fetch`. Existing workspaces need no action to keep
-working; `intent` does nothing until it is explicitly enabled.
+type with an optional `fetch` and can return an `archetypeNotice`. Existing
+workspaces need no action to keep working; `intent` does nothing until it is
+explicitly enabled.

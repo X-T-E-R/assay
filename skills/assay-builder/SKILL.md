@@ -21,7 +21,7 @@ Build and maintain an Assay evidence workbench — a versioned project layer tha
 evidence in -> structured checks -> decisions -> knowledge growth
 ```
 
-Archetypes instantiate that loop with different workspace structures. `study` uses references and analyses for external systems; `solve` uses objectives, inputs, attempts, and benchmarks; `science`, `evaluation`, `explore`, and `library` keep their own evidence and decision shapes. Open work can be closed explicitly where the CLI provides lifecycle commands, and durable findings can flow into `knowledge/`; Assay records those choices without mechanically judging the prose.
+Archetypes instantiate that loop with different workspace structures. `study` uses references and analyses for external systems; `solve` uses objectives, inputs, attempts, and benchmarks; `explore` uses parallel approaches and trials. A workspace that needs a different shape declares its own archetype YAML. Open work can be closed explicitly where the CLI provides lifecycle commands, and durable findings can flow into `knowledge/`; Assay records those choices without mechanically judging the prose.
 
 ## CLI quick reference
 
@@ -33,7 +33,7 @@ node <skill-root>/scripts/assay.mjs <command>
 
 ```bash
 # Workspace lifecycle
-assay init [target-dir] --name <project-name> [--archetype <name>]  # built-ins: study|solve|science|evaluation|explore|library
+assay init [target-dir] --name <project-name> [--archetype <name>]  # built-ins: study|solve|explore
 assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # structure + persisted-record integrity
@@ -112,11 +112,11 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 
 ## Framework structure
 
-Target projects use an archetype-specific layout over a shared base (`.assay/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), `hypotheses/` + `experiments/` (`science`), `candidates/` + `scorecards/` (`evaluation`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
+Target projects use an archetype-specific layout over a shared base (`.assay/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
 
 ## Capability modules
 
-`adr`, `intent`, and `iteration` are optional capability modules. An archetype enables some of them at init — `study` and `evaluation` ship `adr`, `solve`/`science`/`explore` ship `iteration`, `library` ships neither, and no archetype ships `intent` — and the rest can be enabled at any time.
+`adr`, `intent`, and `iteration` are optional capability modules. An archetype enables some of them at init — `study` ships `adr`, `solve` and `explore` ship `iteration`, and no archetype ships `intent` — and the rest can be enabled at any time.
 
 - When a command reports `capability not enabled`, run `assay capability add <module>` instead of re-initializing the workspace or switching archetypes.
 - `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.

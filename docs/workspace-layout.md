@@ -4,7 +4,7 @@ Assay has two layout modes. Both use `.assay/` as the Assay-owned state director
 
 ## Standalone mode
 
-Use standalone when the Assay workbench is the project: research, evaluation, solve, science, or cross-system learning.
+Use standalone when the Assay workbench is the project: studying external systems, solving a measurable target, exploring directions, or cross-system learning.
 
 ```text
 .assay/     manifest, version, events, migrations, backups, registries, archetypes
@@ -16,11 +16,8 @@ Archetype-specific working directories sit alongside this base.
 
 | Archetype | Adds |
 | --- | --- |
-| `library` | No extra structure; it is the public entrypoint for the base. |
 | `study` | `references/`, `references/frozen/`, `analyses/references/`, `analyses/gaps/`, `analyses/patterns/`, `analyses/templates/`, and `knowledge/decisions/`. |
 | `solve` | `problem/`, `intake/`, `benchmarks/`, `attempts/`, `tools/`, `iterations/`, `iterations/templates/`, `objective.json`, and `systems/current.json`. |
-| `science` | `hypotheses/`, `experiments/`, `datasets/`, `findings/`, `papers/`, `iterations/`, and `iterations/templates/`. |
-| `evaluation` | `candidates/`, `criteria.md`, `scorecards/`, and `knowledge/decisions/`. |
 | `explore` | `approaches/`, `trials/`, `comparison.md`, `iterations/`, and `iterations/templates/`. |
 
 ## Directory purposes

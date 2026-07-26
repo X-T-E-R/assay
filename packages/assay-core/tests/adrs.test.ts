@@ -16,7 +16,7 @@ import {
 } from "../src/index.js";
 
 const tempRoots: string[] = [];
-type TestArchetype = "study" | "solve" | "library" | "science" | "evaluation" | "explore";
+type TestArchetype = "study" | "solve" | "explore";
 
 async function tempDir(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "assay-adrs-"));
@@ -78,33 +78,22 @@ describe("ADR index", () => {
   });
 
   it("rejects ADR mutations when the archetype does not enable the adr capability", async () => {
-    const root = await initWorkspace("AdrDisabled", "library");
+    const root = await initWorkspace("AdrDisabled", "explore");
 
     await expect(createAdr(root, { title: "Should Not Create" })).rejects.toThrow(
-      /capability not enabled in archetype library: adr/,
+      /capability not enabled in archetype explore: adr/,
     );
     await expect(acceptAdr(root, "ADR-0001-anything")).rejects.toThrow(
-      /capability not enabled in archetype library: adr/,
+      /capability not enabled in archetype explore: adr/,
     );
     await expect(deprecateAdr(root, "ADR-0001-anything")).rejects.toThrow(
-      /capability not enabled in archetype library: adr/,
+      /capability not enabled in archetype explore: adr/,
     );
     await expect(supersedeAdr(root, "ADR-0001-a", "ADR-0002-b")).rejects.toThrow(
-      /capability not enabled in archetype library: adr/,
+      /capability not enabled in archetype explore: adr/,
     );
     await expect(listAdrs(root)).rejects.toThrow(
-      /capability not enabled in archetype library: adr/,
-    );
-  });
-
-  it("allows ADR creation in the evaluation archetype", async () => {
-    const root = await initWorkspace("AdrEvaluation", "evaluation");
-
-    const result = await createAdr(root, { title: "Select Evaluation Winner" });
-
-    expect(result.adr.id).toBe("ADR-0001-select-evaluation-winner");
-    expect(await exists(path.join(root, "knowledge", "decisions", `${result.adr.id}.md`))).toBe(
-      true,
+      /capability not enabled in archetype explore: adr/,
     );
   });
 

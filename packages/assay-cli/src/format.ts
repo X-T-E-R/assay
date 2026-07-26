@@ -314,6 +314,7 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
         `Managed files: ${result.managedFiles}`,
       ]
     : ["Manifest: missing", "Managed files: 0"];
+  const archetypeNotice = result.archetypeNotice ? [`Archetype: ${result.archetypeNotice}`] : [];
   const zones = zoneLines(result.zones);
 
   const systems =
@@ -366,6 +367,7 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
   return [
     ...header,
     ...manifest,
+    ...archetypeNotice,
     ...zones,
     ...systems,
     ...livingSources,

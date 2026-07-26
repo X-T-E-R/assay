@@ -60,7 +60,7 @@ assay-workbench/
   systems/
 ```
 
-Standalone exists because the Assay workbench itself is the project. It is the right shape for cross-project research, evaluation, science, and solve-style work that should not live inside one product repo.
+Standalone exists because the Assay workbench itself is the project. It is the right shape for cross-project study, exploration, and solve-style work that should not live inside one product repo.
 
 ### Overlay
 

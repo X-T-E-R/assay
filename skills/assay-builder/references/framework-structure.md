@@ -13,12 +13,10 @@ Every current Assay workspace has a shared base, then the selected archetype add
 │   ├── patterns/     # validated reusable patterns
 │   ├── guides/       # operational guides
 │   └── troubleshooting/  # failure modes and fixes
-├── references/       # study/evaluation learning-mode sources, when enabled
+├── references/       # study learning-mode sources, when enabled
 ├── analyses/         # study analysis cards, when enabled
 ├── problem/          # solve/absorption-mode source materials, when enabled
-├── iterations/       # solve/science/explore iteration plans, when enabled
-├── candidates/       # evaluation candidates, when enabled
-├── hypotheses/       # science claims, when enabled
+├── iterations/       # solve/explore iteration plans, when enabled
 └── approaches/       # explore alternatives, when enabled
 ```
 
@@ -72,8 +70,6 @@ reminders are useful:
 | study others' projects/materials | `references/` |
 | analyze them | `analyses/` |
 | absorb objective inputs | `problem/`, `intake/` |
-| compare external candidates | `candidates/`, `criteria.md`, `scorecards/` |
-| run science work | `hypotheses/`, `experiments/`, `datasets/`, `findings/`, `papers/` |
 | explore local approaches | `approaches/`, `trials/`, `comparison.md` |
 | build local systems | `systems/` |
 | iterate local systems | `iterations/` |

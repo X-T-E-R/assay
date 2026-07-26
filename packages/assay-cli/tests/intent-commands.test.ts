@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  BARE_ARCHETYPE,
   type BuiltCliRunner,
   createBuiltCliRunner,
   createInitializedCliWorkspace,
@@ -35,7 +36,7 @@ async function intentWorkspace(name: string): Promise<string> {
     tempDirs,
     runner: cliRunner,
     directoryName: name,
-    archetype: "library",
+    bare: true,
   });
   expect((await runCli(["capability", "add", "intent", "--root", root])).exitCode).toBe(0);
   await mkdir(path.join(root, "systems", "app"), { recursive: true });
@@ -100,14 +101,16 @@ describe("assay intent CLI", () => {
       tempDirs,
       runner: cliRunner,
       directoryName: "IntentNoCapability",
-      archetype: "library",
+      bare: true,
     });
 
     const result = await runCli(["intent", "capture", "--text", INTENT_TEXT, "--root", root]);
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("capability not enabled in archetype library: intent");
+    expect(result.stderr).toContain(
+      `capability not enabled in archetype ${BARE_ARCHETYPE}: intent`,
+    );
     expect(result.stderr).toContain("assay capability add intent");
   });
 
@@ -212,7 +215,7 @@ describe("assay intent CLI", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("capability not enabled in archetype library: adr");
+    expect(result.stderr).toContain(`capability not enabled in archetype ${BARE_ARCHETYPE}: adr`);
     expect(result.stderr).toContain("assay capability add adr");
 
     // Nothing partial: no index, no ADR markdown, no link from the capture.

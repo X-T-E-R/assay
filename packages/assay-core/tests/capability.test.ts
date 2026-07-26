@@ -1,6 +1,11 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
+import {
+  BARE_ARCHETYPE,
+  createTempDirectoryFixture,
+  pathExists as exists,
+  writeBareArchetype,
+} from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -43,13 +48,19 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
 
 async function standaloneWorkspace(name: string, archetype = "study"): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
+  if (archetype === BARE_ARCHETYPE) {
+    await writeBareArchetype(root);
+  }
   await initFramework({ target: root, name, archetype });
   return root;
 }
 
-async function overlayWorkspace(name: string, archetype = "library"): Promise<string> {
+async function overlayWorkspace(name: string, archetype = BARE_ARCHETYPE): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
   await mkdir(root, { recursive: true });
+  if (archetype === BARE_ARCHETYPE) {
+    await writeBareArchetype(root);
+  }
   await writeFile(path.join(root, "package.json"), '{"name":"product"}\n', "utf8");
   await git(root, ["init"]);
   await git(root, ["config", "user.email", "assay@example.test"]);
@@ -88,11 +99,11 @@ describe("effectiveCapabilities", () => {
 
 describe("addCapability", () => {
   it("scaffolds a module the archetype lacks and keeps the workspace checkable", async () => {
-    const root = await standaloneWorkspace("AddAdr", "library");
+    const root = await standaloneWorkspace("AddAdr", BARE_ARCHETYPE);
 
     expect(await isCapabilityEnabled(root, "adr")).toBe(false);
     await expect(createAdr(root, { title: "Too Early" })).rejects.toThrow(
-      /capability not enabled in archetype library: adr/,
+      `capability not enabled in archetype ${BARE_ARCHETYPE}: adr`,
     );
 
     const result = await addCapability({ root, module: "adr" });
@@ -123,7 +134,7 @@ describe("addCapability", () => {
   });
 
   it("writes a capability.added event", async () => {
-    const root = await standaloneWorkspace("CapabilityEvent", "library");
+    const root = await standaloneWorkspace("CapabilityEvent", BARE_ARCHETYPE);
 
     const result = await addCapability({ root, module: "iteration" });
 
@@ -133,13 +144,13 @@ describe("addCapability", () => {
       expect.objectContaining({
         event: "capability.added",
         module: "iteration",
-        archetype: "library",
+        archetype: BARE_ARCHETYPE,
       }),
     );
   });
 
   it("is a no-op when the module is already enabled", async () => {
-    const root = await standaloneWorkspace("Idempotent", "library");
+    const root = await standaloneWorkspace("Idempotent", BARE_ARCHETYPE);
     await addCapability({ root, module: "iteration" });
     const before = await loadManifest(root);
 
@@ -167,7 +178,7 @@ describe("addCapability", () => {
   });
 
   it("rejects a module this build does not implement", async () => {
-    const root = await standaloneWorkspace("UnknownModule", "library");
+    const root = await standaloneWorkspace("UnknownModule", BARE_ARCHETYPE);
 
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(FrameworkError);
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(
@@ -220,7 +231,7 @@ describe("addCapability", () => {
 
 describe("capability-scaffolded templates stay under update management", () => {
   it("appears in the update analysis and is restored after deletion", async () => {
-    const root = await standaloneWorkspace("UpdateReconcile", "library");
+    const root = await standaloneWorkspace("UpdateReconcile", BARE_ARCHETYPE);
     await addCapability({ root, module: "iteration" });
 
     const clean = await analyzeUpdate({ root });
@@ -236,7 +247,7 @@ describe("capability-scaffolded templates stay under update management", () => {
   });
 
   it("creates capability templates that were never written", async () => {
-    const root = await standaloneWorkspace("UpdateCreate", "library");
+    const root = await standaloneWorkspace("UpdateCreate", BARE_ARCHETYPE);
     const manifest = await loadManifest(root);
     if (!manifest) throw new Error("manifest missing");
     // A manifest that declares the capability without its files on disk: the
@@ -267,7 +278,7 @@ describe("manifests without a capabilities field", () => {
   });
 
   it("ignores a manifest capability this build does not implement", async () => {
-    const root = await standaloneWorkspace("UnknownCapability", "library");
+    const root = await standaloneWorkspace("UnknownCapability", BARE_ARCHETYPE);
     const manifest = await loadManifest(root);
     if (!manifest) throw new Error("manifest missing");
     manifest.project.capabilities = ["telepathy"];
@@ -303,7 +314,7 @@ describe("listCapabilities", () => {
   });
 
   it("marks modules the workspace has not enabled", async () => {
-    const root = await standaloneWorkspace("ListNone", "library");
+    const root = await standaloneWorkspace("ListNone", BARE_ARCHETYPE);
 
     const result = await listCapabilities({ root });
 

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { BARE_ARCHETYPE, writeBareArchetype } from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -10,7 +11,7 @@ const packageRoot = process.cwd();
 const cliPath = path.join(packageRoot, "dist", "cli.js");
 const tempRoots: string[] = [];
 let registryRoot = "";
-type TestArchetype = "study" | "solve" | "library" | "science" | "evaluation" | "explore";
+type TestArchetype = "study" | "solve" | "explore" | typeof BARE_ARCHETYPE;
 
 interface CliResult {
   readonly exitCode: number;
@@ -64,6 +65,9 @@ beforeEach(async () => {
 
 async function initWorkspace(name: string, archetype: TestArchetype = "study"): Promise<string> {
   const root = path.join(await tempDir(), name);
+  if (archetype === BARE_ARCHETYPE) {
+    await writeBareArchetype(root);
+  }
   const init = await runCli(["init", root, "--name", name, "--archetype", archetype]);
   expect(init.exitCode).toBe(0);
   return root;
@@ -125,8 +129,9 @@ describe("assay adr CLI", () => {
     });
   });
 
-  it("creates ADRs in the evaluation archetype", async () => {
-    const root = await initWorkspace("AdrCliEvaluation", "evaluation");
+  it("creates ADRs in a workspace that added the adr capability", async () => {
+    const root = await initWorkspace("AdrCliAdded", BARE_ARCHETYPE);
+    expect((await runCli(["capability", "add", "adr", "--root", root])).exitCode).toBe(0);
 
     const created = await runCli(["adr", "new", "Choose Candidate", "--root", root]);
 
@@ -198,19 +203,19 @@ describe("assay adr CLI", () => {
   });
 
   it("rejects ADR commands when the archetype does not enable the adr capability", async () => {
-    const root = await initWorkspace("AdrCliDisabled", "library");
+    const root = await initWorkspace("AdrCliDisabled", BARE_ARCHETYPE);
 
     const created = await runCli(["adr", "new", "Should Not Create", "--root", root]);
     expect(created.exitCode).toBe(1);
-    expect(created.stderr).toContain("capability not enabled in archetype library: adr");
+    expect(created.stderr).toContain(`capability not enabled in archetype ${BARE_ARCHETYPE}: adr`);
 
     const listed = await runCli(["adr", "list", "--root", root]);
     expect(listed.exitCode).toBe(1);
-    expect(listed.stderr).toContain("capability not enabled in archetype library: adr");
+    expect(listed.stderr).toContain(`capability not enabled in archetype ${BARE_ARCHETYPE}: adr`);
 
     const shown = await runCli(["adr", "show", "1", "--root", root]);
     expect(shown.exitCode).toBe(1);
-    expect(shown.stderr).toContain("capability not enabled in archetype library: adr");
+    expect(shown.stderr).toContain(`capability not enabled in archetype ${BARE_ARCHETYPE}: adr`);
   });
 
   it("warns without blocking ADR creation when trellis is present", async () => {

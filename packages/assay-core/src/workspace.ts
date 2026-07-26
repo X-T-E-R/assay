@@ -259,6 +259,12 @@ export interface FrameworkStatusResult {
   readonly archetype?: ProjectArchetype;
   /** The archetype's one-line description; omitted when it declares none. */
   readonly archetypeDescription?: string;
+  /**
+   * Why the installed archetype could not be resolved, when it could not be.
+   * Zones fall back to the layout's work areas in that case, and this line is
+   * what says so instead of leaving the shorter list unexplained.
+   */
+  readonly archetypeNotice?: string;
   readonly mode?: ProjectMode;
   readonly managedFiles: number;
   readonly zones: FrameworkZoneCount[];
@@ -1003,6 +1009,7 @@ export async function checkFramework(
   // top-level dirs (intake/, problem/, references/, analyses/, iterations/,
   // benchmarks/, attempts/...). Default to a permissive check when the
   // manifest/archetype cannot be read.
+  const archetypeDegradations: CheckRow[] = [];
   try {
     const installedArchetype = await readInstalledArchetype(root);
     const archetypeDefinition = await loadArchetype(installedArchetype ?? "study", { root });
@@ -1017,8 +1024,15 @@ export async function checkFramework(
     for (const dir of topLevels) {
       checkTargets.push([`${dir} directory`, layoutDirectoryPath(layout, dir)]);
     }
-  } catch {
-    // unreadable manifest/archetype; fall back to base targets only
+  } catch (error) {
+    // The archetype is what tells check which directories this workspace is
+    // supposed to have. Falling back to the base set silently made a workspace
+    // whose archetype no longer resolves look fully checked, so say so.
+    archetypeDegradations.push({
+      path: MANIFEST_FILE,
+      status: "warning",
+      message: describeArchetypeDegradation(error),
+    });
   }
 
   // Directories owned by capability modules the workspace added after init.
@@ -1036,7 +1050,7 @@ export async function checkFramework(
       }
     }
   }
-  const rows: CheckRow[] = [];
+  const rows: CheckRow[] = [...archetypeDegradations];
 
   for (const [label, target] of checkTargets) {
     rows.push({
@@ -1913,16 +1927,28 @@ const WORK_AREA_ZONE_PURPOSES: ReadonlyArray<readonly [WorkspaceArea, string]> =
 async function readArchetypeForStatus(
   root: string,
   manifest: FrameworkManifest | null,
-): Promise<Archetype | null> {
+): Promise<{ readonly archetype: Archetype | null; readonly degradation?: string }> {
   if (!manifest) {
-    return null;
+    return { archetype: null };
   }
   try {
-    return await loadArchetype(manifest.project.archetype, { root });
-  } catch {
-    // an unreadable archetype degrades to work-area zones rather than failing
-    return null;
+    return { archetype: await loadArchetype(manifest.project.archetype, { root }) };
+  } catch (error) {
+    // An unresolvable archetype degrades to work-area zones rather than
+    // failing, but the degradation is stated: the zone list is otherwise
+    // indistinguishable from a workspace that simply has little in it.
+    return { archetype: null, degradation: describeArchetypeDegradation(error) };
   }
+}
+
+/**
+ * One line explaining that the archetype could not be resolved and what the
+ * command did instead. Shared by `status` and `check` so both name the same
+ * cause, which for a removed or renamed archetype is the actionable part.
+ */
+function describeArchetypeDegradation(error: unknown): string {
+  const reason = error instanceof Error ? error.message : "archetype could not be loaded";
+  return `${reason} — reporting base structure only`;
 }
 
 /**
@@ -2012,7 +2038,8 @@ export async function getFrameworkStatus(
   // actually enabled, so a solve workspace stops being told about study's
   // directories and an intent-less workspace gains no permanently empty rows.
   const capabilities = await enabledCapabilities(root, manifest);
-  const archetypeDefinition = await readArchetypeForStatus(root, manifest);
+  const { archetype: archetypeDefinition, degradation: archetypeNotice } =
+    await readArchetypeForStatus(root, manifest);
   const zones = await resolveStatusZones(
     root,
     layout,
@@ -2125,6 +2152,7 @@ export async function getFrameworkStatus(
     ...(archetypeDefinition && archetypeDefinition.description !== ""
       ? { archetypeDescription: archetypeDefinition.description }
       : {}),
+    ...(archetypeNotice ? { archetypeNotice } : {}),
     mode: manifest.project.mode,
     managedFiles: Object.keys(manifest.managed_files).length,
     zones,
