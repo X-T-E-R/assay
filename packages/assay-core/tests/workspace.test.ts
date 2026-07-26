@@ -252,6 +252,117 @@ describe("checkFramework and getFrameworkStatus", () => {
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);
   });
+
+  it("derives status zones from the installed archetype, with purposes", async () => {
+    const solveRoot = path.join(await tempDir(), "solve");
+    await initFramework({ target: solveRoot, name: "Solve", archetype: "solve" });
+
+    const solve = await getFrameworkStatus({ root: solveRoot });
+
+    expect(solve.archetypeDescription).toContain("measurable success criterion");
+    expect(solve.zones.map((zone) => zone.path)).toEqual([
+      "problem",
+      "intake",
+      "benchmarks",
+      "attempts",
+      "tools",
+      "iterations",
+      "systems",
+      "knowledge",
+    ]);
+    expect(solve.zones.find((zone) => zone.path === "problem")?.purpose).toBe(
+      "Task statement, official rules, scoring definition",
+    );
+    // Study's directories are dead zones for a solve workspace.
+    expect(solve.zones.some((zone) => zone.path.startsWith("analyses"))).toBe(false);
+
+    const studyRoot = path.join(await tempDir(), "study");
+    await initFramework({ target: studyRoot, name: "Study" });
+
+    const study = await getFrameworkStatus({ root: studyRoot });
+    const studyZones = study.zones.map((zone) => zone.path);
+
+    expect(studyZones).toEqual(
+      expect.arrayContaining([
+        "analyses/references",
+        "analyses/patterns",
+        "references/frozen",
+        "knowledge",
+      ]),
+    );
+    expect(studyZones.some((zone) => zone.startsWith("problem"))).toBe(false);
+    expect(study.zones.every((zone) => zone.purpose !== "")).toBe(true);
+  });
+
+  it("still reports a work area that holds content the archetype never declared", async () => {
+    const root = path.join(await tempDir(), "legacy-iterations");
+    await initFramework({ target: root, name: "Legacy" });
+
+    expect(
+      (await getFrameworkStatus({ root })).zones.some((zone) => zone.path === "iterations"),
+    ).toBe(false);
+
+    await mkdir(path.join(root, "iterations", "2026-07-01-topic"), { recursive: true });
+    await writeFile(
+      path.join(root, "iterations", "2026-07-01-topic", "plan.md"),
+      "# Topic\n\n- Status: open\n",
+      "utf8",
+    );
+
+    const iterations = (await getFrameworkStatus({ root })).zones.find(
+      (zone) => zone.path === "iterations",
+    );
+    expect(iterations?.files).toBe(1);
+    expect(iterations?.purpose).not.toBe("");
+  });
+});
+
+describe("checkFramework placement advisories", () => {
+  it("reports undeclared top-level directories and statusless analyses without failing", async () => {
+    const root = path.join(await tempDir(), "placement");
+    await initFramework({ target: root, name: "Placement" });
+
+    expect((await checkFramework({ root, includeAdvisories: true })).rows).not.toContainEqual(
+      expect.objectContaining({ status: "warning", path: "scratch" }),
+    );
+
+    await mkdir(path.join(root, "scratch"), { recursive: true });
+    await writeFile(path.join(root, "scratch", "note.md"), "# note\n", "utf8");
+    await writeFile(
+      path.join(root, "analyses", "references", "hand-written.md"),
+      "# Hand written\n\nSome observations.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "analyses", "references", "proper.md"),
+      "# Proper\n\n- Date: 2026-07-26\n- Status: draft\n\n## Key observations\n\nSomething.\n",
+      "utf8",
+    );
+
+    const result = await checkFramework({ root, includeAdvisories: true });
+
+    expect(result.ok).toBe(true);
+    expect(result.rows).toContainEqual(
+      expect.objectContaining({
+        path: "scratch",
+        status: "warning",
+        message: expect.stringContaining("is not declared by archetype study"),
+      }),
+    );
+    expect(result.rows).toContainEqual(
+      expect.objectContaining({
+        path: "analyses/references/hand-written.md",
+        status: "warning",
+        message: expect.stringContaining("no `Status:` header"),
+      }),
+    );
+    expect(result.rows.some((row) => row.path === "analyses/references/proper.md")).toBe(false);
+
+    // Placement rows are advisory-only: the default check never sees them.
+    const withoutAdvisories = await checkFramework({ root });
+    expect(withoutAdvisories.ok).toBe(true);
+    expect(withoutAdvisories.rows.some((row) => row.path === "scratch")).toBe(false);
+  });
 });
 
 describe("checkFramework semantic validation", () => {
@@ -1166,10 +1277,32 @@ describe("workspace operations", () => {
     expect(currentAttempt).not.toHaveProperty("q2");
     expect(currentAttempt.schema_version).toBe(1);
 
-    // runs.jsonl + tools/README explain contract
-    expect(await readFile(path.join(root, "runs.jsonl"), "utf8")).toBe("");
+    // Assay ships no runs.jsonl: the observed fill rate of the template file
+    // was zero. The append convention is documented instead, so a harness that
+    // wants a run log knows the shape without a command to remember.
+    expect(await exists(path.join(root, "runs.jsonl"))).toBe(false);
+    const readme = await readFile(path.join(root, "README.md"), "utf8");
+    expect(readme).toContain("## Run records");
+    expect(readme).toContain("one JSON object per line");
+    expect(readme).toContain("runs.jsonl");
+
     const toolsReadme = await readFile(path.join(root, "tools", "README.md"), "utf8");
     expect(toolsReadme).toContain("tools/evaluate/");
+  });
+
+  it("counts an externally appended runs.jsonl in status", async () => {
+    const root = path.join(await tempDir(), "solve-runs");
+    await initFramework({ target: root, name: "Solve Runs", archetype: "solve" });
+
+    expect((await getFrameworkStatus({ root })).runRecords).toBeUndefined();
+
+    await writeFile(
+      path.join(root, "runs.jsonl"),
+      '{"run_id":"a","score":0.1}\n{"run_id":"b","score":0.2}\n\n',
+      "utf8",
+    );
+
+    expect((await getFrameworkStatus({ root })).runRecords).toBe(2);
   });
 
   it("science archetype creates evidence research structure and passes check", async () => {

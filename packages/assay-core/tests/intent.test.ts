@@ -431,7 +431,11 @@ describe("intent in an overlay workspace", () => {
     await initFramework({ target: withoutRoot, name: "StatusWithoutIntent", archetype: "library" });
 
     const withZones = (await getFrameworkStatus({ root: withIntent })).zones;
-    expect(withZones).toContainEqual({ path: "intent/original", files: 2 });
+    expect(withZones).toContainEqual({
+      path: "intent/original",
+      files: 2,
+      purpose: "Verbatim intent captures, append-only",
+    });
     expect(withZones.some((zone) => zone.path === "intent/requirements")).toBe(true);
 
     const withoutZones = (await getFrameworkStatus({ root: withoutRoot })).zones;

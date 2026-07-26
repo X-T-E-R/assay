@@ -5,10 +5,12 @@ import { parse as parseYaml, parseDocument as parseYamlDocument } from "yaml";
 
 import { defaultAdrIndex, loadAdrIndex, saveAdrIndex } from "./adrs.js";
 import {
+  ASSAY_AGENTS_FILE,
   ASSAY_AGENTS_MALFORMED_REASON,
   type AssayAgentsBlockResult,
   applyAssayAgentsBlock,
   describeAssayAgentsBlockAction,
+  planAssayAgentsBlock,
 } from "./agents.js";
 import {
   ADRS_FILE,
@@ -25,7 +27,6 @@ import {
   type WorkspaceArea,
   defaultStandaloneLayout,
   intentRootPath,
-  intentSubpath,
   resolveWorkspaceLayout,
   workspacePath,
   workspaceRelativePath,
@@ -42,10 +43,11 @@ import {
 } from "./manifest.js";
 import { isContainedPath, relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
 import {
+  type Archetype,
   type CapabilityModule,
-  MODULE_SCAFFOLDS,
   SUPPORTED_CAPABILITY_MODULES,
   archetypeHasCapability,
+  capabilityDirectories,
   declaredCapabilities,
   dirsForArchetype,
   effectiveCapabilities,
@@ -74,6 +76,7 @@ import {
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
 import { archetypeTemplates, capabilityTemplates, mergeTemplateFiles } from "./templates.js";
 import { nowIso } from "./time.js";
+import { archetypeZones } from "./zones.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
   ".venv",
@@ -203,6 +206,8 @@ export interface CheckFrameworkResult {
 export interface FrameworkZoneCount {
   readonly path: string;
   readonly files: number;
+  /** What belongs in this zone; empty when the archetype does not declare it. */
+  readonly purpose: string;
 }
 
 export interface FrameworkStatusSystem {
@@ -236,6 +241,8 @@ export interface FrameworkStatusResult {
   readonly manifestFormat?: string;
   readonly project?: string;
   readonly archetype?: ProjectArchetype;
+  /** The archetype's one-line description; omitted when it declares none. */
+  readonly archetypeDescription?: string;
   readonly mode?: ProjectMode;
   readonly managedFiles: number;
   readonly zones: FrameworkZoneCount[];
@@ -244,6 +251,8 @@ export interface FrameworkStatusResult {
   readonly donors?: FrameworkStatusDonors;
   readonly openIterations?: number;
   readonly knowledgeEntries?: number;
+  /** Records in a workspace-root `runs.jsonl`; omitted when there is no file. */
+  readonly runRecords?: number;
 }
 
 export interface AddReferenceOptions {
@@ -475,7 +484,7 @@ function layoutDirectoryPath(layout: WorkspaceLayout, directory: string): string
 
 /** Workspace-root-relative directories owned by the given capability modules. */
 function capabilityDirs(capabilities: readonly CapabilityModule[]): string[] {
-  return [...new Set(capabilities.flatMap((capability) => MODULE_SCAFFOLDS[capability].dirs))];
+  return capabilityDirectories(capabilities).map((directory) => directory.path);
 }
 
 /**
@@ -1400,6 +1409,36 @@ export async function checkFramework(
     }
   }
 
+  // Advisory check 7: placement. `check` has always validated that declared
+  // directories exist; these three report the opposite — content sitting where
+  // the archetype never said it should. They are advisories on purpose:
+  // writing straight into a directory instead of going through a command is
+  // normal usage, and the goal is to make misplacement visible and fixable
+  // rather than to fail the workspace over it.
+  if (includeAdvisories) {
+    rows.push(...(await collectPlacementAdvisories(root, layout, manifestForLayout)));
+  }
+
+  // Advisory check 8: the AGENTS.md managed block no longer matches the
+  // archetype. The block is generated, so an archetype whose directories or
+  // description changed leaves stale layout guidance in the one channel that
+  // reaches an agent before it does anything.
+  if (includeAdvisories) {
+    try {
+      const agentsPlan = await planAssayAgentsBlock({ root, mode: "refresh-existing" });
+      if (agentsPlan.changed && agentsPlan.action === "replace") {
+        rows.push({
+          path: ASSAY_AGENTS_FILE,
+          status: "warning",
+          message:
+            "Assay managed block in AGENTS.md does not match the current archetype. Run `assay update --agents` to refresh the workspace layout table.",
+        });
+      }
+    } catch {
+      // AGENTS.md problems are reported by update; never fail check over them
+    }
+  }
+
   // Semantic check 6: living source observation integrity. Major-change
   // revalidation is an opt-in advisory; missing referenced records remain
   // visible in the default structural check.
@@ -1448,6 +1487,146 @@ export async function checkFramework(
       ? { systems: { primary: primaryName, total: systemCount, openIterations } }
       : {}),
   };
+}
+
+/**
+ * Directories under a work root that belong to Assay's own machinery rather
+ * than to an archetype. In an overlay workspace the work root and the state
+ * root are the same directory, so these sit next to the work folders and must
+ * not be reported as stray placement.
+ */
+const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["donors", "archetypes", "node_modules"]);
+
+/**
+ * Name of the work-root entry a workspace-root-relative path sits under, or
+ * null when the path lies outside the work root.
+ */
+function workRootEntryName(layout: WorkspaceLayout, rootRelativePath: string): string | null {
+  const normalized = rootRelativePath.replace(/\\/g, "/");
+  if (layout.work_root === ".") {
+    return normalized.split("/")[0] ?? null;
+  }
+  const prefix = `${layout.work_root.replace(/\\/g, "/")}/`;
+  if (!normalized.startsWith(prefix)) {
+    return null;
+  }
+  return normalized.slice(prefix.length).split("/")[0] ?? null;
+}
+
+/**
+ * Placement advisories: content that exists where the archetype never declared
+ * a home for it. Every row is a warning, never an error.
+ */
+async function collectPlacementAdvisories(
+  root: string,
+  layout: WorkspaceLayout,
+  manifest: FrameworkManifest | null,
+): Promise<CheckRow[]> {
+  const rows: CheckRow[] = [];
+  rows.push(...(await collectUndeclaredDirectoryRows(root, layout, manifest)));
+  rows.push(...(await collectStatuslessAnalysisRows(root, layout)));
+  return rows;
+}
+
+/**
+ * Top-level directories in the workspace's work root that neither the
+ * archetype nor the layout accounts for. This is the Loreal case: material
+ * piling up somewhere the workspace has no semantics for.
+ */
+async function collectUndeclaredDirectoryRows(
+  root: string,
+  layout: WorkspaceLayout,
+  manifest: FrameworkManifest | null,
+): Promise<CheckRow[]> {
+  if (!manifest) {
+    return [];
+  }
+  let archetype: Archetype;
+  try {
+    archetype = await loadArchetype(manifest.project.archetype, { root });
+  } catch {
+    return [];
+  }
+
+  const capabilities = effectiveCapabilities(archetype, manifest.project.capabilities);
+  const declared = new Set<string>(NON_ZONE_WORK_ROOT_ENTRIES);
+  for (const directory of [
+    ...dirsForArchetype(archetype, manifest.project.mode),
+    ...capabilityDirs(capabilities),
+  ]) {
+    const name = workRootEntryName(layout, workspaceTemplateRelativePath(layout, directory));
+    if (name) {
+      declared.add(name);
+    }
+  }
+  // Work areas and state files the layout itself owns. In an overlay these are
+  // children of the work root, so they are compared by the same rule.
+  for (const declaredPath of Object.values(layout.paths)) {
+    const name = workRootEntryName(layout, declaredPath);
+    if (name) {
+      declared.add(name);
+    }
+  }
+
+  const workRootPath = path.join(root, layout.work_root);
+  let names: string[];
+  try {
+    const entries = await readdir(workRootPath, { withFileTypes: true });
+    names = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+
+  const rows: CheckRow[] = [];
+  for (const name of names) {
+    if (name.startsWith(".") || declared.has(name)) continue;
+    rows.push({
+      path: workspaceWorkRelativePath(layout, name),
+      status: "warning",
+      message: `directory '${name}/' is not declared by archetype ${archetype.name}. Move its contents into a declared directory (\`assay status\` lists them) or add it to the archetype.`,
+    });
+  }
+  return rows;
+}
+
+/**
+ * Analysis files written straight into `analyses/references/` without the
+ * `Status:` header every analysis carries. These are hand-written notes that
+ * never entered the analysis lifecycle, so nothing can tell whether they are
+ * open or closed.
+ */
+async function collectStatuslessAnalysisRows(
+  root: string,
+  layout: WorkspaceLayout,
+): Promise<CheckRow[]> {
+  const referencesRoot = path.join(workspacePath(root, layout, "analyses"), "references");
+  if (!(await exists(referencesRoot))) {
+    return [];
+  }
+  const files: string[] = [];
+  try {
+    await collectMarkdownFiles(referencesRoot, files);
+  } catch {
+    return [];
+  }
+  const rows: CheckRow[] = [];
+  for (const file of files) {
+    if (path.basename(file) === "README.md") continue;
+    let content: string;
+    try {
+      content = await readFile(file, "utf8");
+    } catch {
+      continue;
+    }
+    if (readHeaderField(content, "Status") !== null) continue;
+    rows.push({
+      path: relativeDisplayPath(file, root),
+      status: "warning",
+      message:
+        "analysis file has no `Status:` header, so it is outside the analysis lifecycle. Add `- Status: draft` or create it with `assay analysis new`.",
+    });
+  }
+  return rows;
 }
 
 interface FrozenReference {
@@ -1735,26 +1914,130 @@ function countPendingQueueEntries(parsed: unknown): number {
   }).length;
 }
 
+/**
+ * Work areas every layout defines, with the purpose to show when one of them
+ * holds content the archetype never declared. A workspace whose archetype
+ * predates a directory still has real work in it — study workspaces created
+ * before `iteration` became a capability module are the concrete case — and
+ * status must not hide that.
+ */
+const WORK_AREA_ZONE_PURPOSES: ReadonlyArray<readonly [WorkspaceArea, string]> = [
+  ["references", "External systems captured as evidence"],
+  ["analyses", "Conversion layer from references to decisions"],
+  ["iterations", "Controlled changes to your own systems, one folder each"],
+  ["knowledge", "Accepted, reusable knowledge"],
+  ["systemsContracts", "Registered systems and local implementations"],
+];
+
+async function readArchetypeForStatus(
+  root: string,
+  manifest: FrameworkManifest | null,
+): Promise<Archetype | null> {
+  if (!manifest) {
+    return null;
+  }
+  try {
+    return await loadArchetype(manifest.project.archetype, { root });
+  } catch {
+    // an unreadable archetype degrades to work-area zones rather than failing
+    return null;
+  }
+}
+
+/**
+ * Zones for `assay status`: every zone the archetype declares, plus any layout
+ * work area that exists on disk and no declared zone already covers. Paths are
+ * resolved through the layout, so an overlay workspace reports the `.assay/`
+ * locations it actually uses.
+ */
+async function resolveStatusZones(
+  root: string,
+  layout: WorkspaceLayout,
+  archetype: Archetype | null,
+  mode: ProjectMode,
+  capabilities: readonly CapabilityModule[],
+): Promise<FrameworkZoneCount[]> {
+  const declared = archetype ? archetypeZones(archetype, mode, capabilities) : [];
+  const resolved = new Map<string, string>();
+  for (const zone of declared) {
+    const zonePath = workspaceTemplateRelativePath(layout, zone.path);
+    if (!resolved.has(zonePath)) {
+      resolved.set(zonePath, zone.purpose);
+    }
+  }
+
+  for (const [area, purpose] of WORK_AREA_ZONE_PURPOSES) {
+    const areaPath = workspaceRelativePath(layout, area);
+    const covered = [...resolved.keys()].some(
+      (zonePath) => zonePath === areaPath || zonePath.startsWith(`${areaPath}/`),
+    );
+    if (covered || !(await exists(path.join(root, areaPath)))) {
+      continue;
+    }
+    resolved.set(areaPath, purpose);
+  }
+
+  return Promise.all(
+    [...resolved].map(async ([zonePath, purpose]) => ({
+      path: zonePath,
+      files: await countFiles(path.join(root, zonePath)),
+      purpose,
+    })),
+  );
+}
+
+/**
+ * Count records in a workspace-root `runs.jsonl`. Assay does not create the
+ * file and no command writes to it; external harnesses append one JSON object
+ * per line. Counting it keeps those records visible without asking anyone to
+ * run a command they would have to remember.
+ */
+async function countRunRecords(root: string, layout: WorkspaceLayout): Promise<number | undefined> {
+  const runsPath = path.join(root, workspaceWorkRelativePath(layout, "runs.jsonl"));
+  let size: number;
+  try {
+    const stats = await stat(runsPath);
+    if (!stats.isFile()) {
+      return undefined;
+    }
+    size = stats.size;
+  } catch {
+    return undefined;
+  }
+  if (size === 0) {
+    return 0;
+  }
+  if (size > MAX_RUN_LOG_BYTES) {
+    return undefined;
+  }
+  try {
+    const content = await readFile(runsPath, "utf8");
+    return content.split("\n").filter((line) => line.trim().length > 0).length;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Guard against reading an unbounded append-only log into memory for a count. */
+const MAX_RUN_LOG_BYTES = 16 * 1024 * 1024;
+
 export async function getFrameworkStatus(
   options: CheckFrameworkOptions,
 ): Promise<FrameworkStatusResult> {
   const root = path.resolve(options.root);
   const manifest = await loadManifest(root);
   const layout = layoutForManifest(manifest);
-  // Intent zones are reported only where the module exists, so workspaces
-  // without it do not gain two permanently empty rows.
+  // Zones come from the installed archetype plus the modules the workspace has
+  // actually enabled, so a solve workspace stops being told about study's
+  // directories and an intent-less workspace gains no permanently empty rows.
   const capabilities = await enabledCapabilities(root, manifest);
-  const zones = await Promise.all(
-    [
-      workspaceSubpath(layout, "references", "frozen"),
-      workspaceSubpath(layout, "analyses", "references"),
-      workspaceSubpath(layout, "analyses", "patterns"),
-      workspaceRelativePath(layout, "iterations"),
-      workspaceRelativePath(layout, "knowledge"),
-      ...(capabilities.includes("intent")
-        ? [intentSubpath(layout, "original"), intentSubpath(layout, "requirements")]
-        : []),
-    ].map(async (zone) => ({ path: zone, files: await countFiles(path.join(root, zone)) })),
+  const archetypeDefinition = await readArchetypeForStatus(root, manifest);
+  const zones = await resolveStatusZones(
+    root,
+    layout,
+    archetypeDefinition,
+    manifest?.project.mode ?? archetypeDefinition?.mode ?? "learning",
+    capabilities,
   );
 
   // Systems section from registry
@@ -1816,6 +2099,7 @@ export async function getFrameworkStatus(
   }
 
   const knowledgeCount = await countKnowledgeEntries(root, layout);
+  const runRecords = await countRunRecords(root, layout);
 
   if (!manifest) {
     return {
@@ -1828,6 +2112,7 @@ export async function getFrameworkStatus(
       ...(donors ? { donors } : {}),
       ...(openIterations !== undefined ? { openIterations } : {}),
       knowledgeEntries: knowledgeCount,
+      ...(runRecords !== undefined ? { runRecords } : {}),
     };
   }
 
@@ -1839,6 +2124,9 @@ export async function getFrameworkStatus(
     manifestFormat: `schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
     project: manifest.project.name,
     archetype: manifest.project.archetype,
+    ...(archetypeDefinition && archetypeDefinition.description !== ""
+      ? { archetypeDescription: archetypeDefinition.description }
+      : {}),
     mode: manifest.project.mode,
     managedFiles: Object.keys(manifest.managed_files).length,
     zones,
@@ -1847,6 +2135,7 @@ export async function getFrameworkStatus(
     ...(donors ? { donors } : {}),
     ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
+    ...(runRecords !== undefined ? { runRecords } : {}),
   };
 }
 

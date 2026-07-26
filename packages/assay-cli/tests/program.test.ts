@@ -192,6 +192,41 @@ describe("assay CLI subprocess behavior", () => {
     });
   });
 
+  it("prints archetype-derived zones with purposes and emits the same data as JSON", async () => {
+    const root = path.join(await tempDir(), "solve");
+    const init = await runCli(["init", root, "--name", "Solve Smoke", "--archetype", "solve"]);
+    expect(init.exitCode).toBe(0);
+
+    const status = await runCli(["status", "--root", root]);
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout).toContain(
+      "Archetype: solve - Attack one goal that has a measurable success criterion",
+    );
+    expect(status.stdout).toMatch(/- problem\/\s+\d+\s+Task statement, official rules/);
+    expect(status.stdout).toContain("Goal-attack loops");
+    expect(status.stdout).not.toContain("analyses/references/");
+    expect(status.stderr).toBe("");
+
+    await writeFile(path.join(root, "runs.jsonl"), '{"run_id":"a"}\n', "utf8");
+
+    const json = await runCli(["status", "--root", root, "--json"]);
+    expect(json.exitCode).toBe(0);
+    const payload = JSON.parse(json.stdout);
+    expect(payload).toMatchObject({
+      archetype: "solve",
+      mode: "absorption",
+      runRecords: 1,
+    });
+    expect(payload.archetypeDescription).toContain("measurable success criterion");
+    expect(payload.zones).toContainEqual(
+      expect.objectContaining({
+        path: "problem",
+        purpose: "Task statement, official rules, scoring definition",
+      }),
+    );
+    expect(json.stderr).toBe("");
+  });
+
   it("does not create or mutate project registry records for update dry-run", async () => {
     const untrackedRoot = path.join(await tempDir(), "untracked-dry-run");
     const untrackedInit = await runCli([

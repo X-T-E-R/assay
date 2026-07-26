@@ -38,24 +38,50 @@ export interface ArchetypeLookupOptions {
   readonly builtinArchetypesDir?: string;
 }
 
+/**
+ * One directory an archetype declares, with the one-line statement of what
+ * belongs in it.
+ *
+ * `purpose` is what makes a directory self-explaining wherever it is shown —
+ * the AGENTS.md layout table, `assay status` zones, and placement advisories
+ * all read it from here. It is empty for archetypes that declare a directory
+ * as a bare string, which stays valid.
+ */
+export interface ArchetypeDirectory {
+  /** Workspace-root-relative directory path with POSIX separators. */
+  readonly path: string;
+  /** What belongs in this directory; empty when the archetype does not say. */
+  readonly purpose: string;
+}
+
 export interface Archetype {
   readonly name: ProjectArchetype;
+  /** One line stating what this archetype is for; empty when not declared. */
+  readonly description: string;
   readonly mode: ProjectMode;
   readonly modules: readonly CapabilityModule[];
   /** Directories created in all modes. */
-  readonly dirs: readonly string[];
+  readonly dirs: readonly ArchetypeDirectory[];
   /** Directories created only in learning mode. */
-  readonly dirsLearning: readonly string[];
+  readonly dirsLearning: readonly ArchetypeDirectory[];
   /** Directories created only in absorption mode. */
-  readonly dirsAbsorption: readonly string[];
+  readonly dirsAbsorption: readonly ArchetypeDirectory[];
   readonly templates: readonly ArchetypeTemplateEntry[];
 }
 
-export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): readonly string[] {
+/** Directories an archetype declares for the given mode, with their purposes. */
+export function archetypeDirectories(
+  archetype: Pick<Archetype, "dirs" | "dirsLearning" | "dirsAbsorption">,
+  mode: ProjectMode,
+): readonly ArchetypeDirectory[] {
   return [
     ...archetype.dirs,
     ...(mode === "absorption" ? archetype.dirsAbsorption : archetype.dirsLearning),
   ];
+}
+
+export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): readonly string[] {
+  return archetypeDirectories(archetype, mode).map((directory) => directory.path);
 }
 
 export type ProfileTemplateEntry = ArchetypeTemplateEntry;
@@ -68,7 +94,7 @@ const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
 
 /** Directories and templates one capability module owns. */
 export interface ModuleScaffold {
-  readonly dirs: readonly string[];
+  readonly dirs: readonly ArchetypeDirectory[];
   readonly templates: readonly ArchetypeTemplateEntry[];
 }
 
@@ -84,7 +110,7 @@ export interface ModuleScaffold {
  */
 export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>> = {
   adr: {
-    dirs: ["knowledge/decisions"],
+    dirs: [{ path: "knowledge/decisions", purpose: "Accepted decisions and ADRs" }],
     templates: [
       { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" },
       {
@@ -94,7 +120,10 @@ export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>
     ],
   },
   intent: {
-    dirs: ["intent/original", "intent/requirements"],
+    dirs: [
+      { path: "intent/original", purpose: "Verbatim intent captures, append-only" },
+      { path: "intent/requirements", purpose: "Requirements derived from a capture" },
+    ],
     templates: [
       { path: "intent/README.md", templateId: "intent.readme" },
       { path: "intent/original/README.md", templateId: "intent.original.readme" },
@@ -102,13 +131,23 @@ export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>
     ],
   },
   iteration: {
-    dirs: ["iterations/templates"],
+    dirs: [
+      { path: "iterations", purpose: "Controlled changes to your own systems, one folder each" },
+      { path: "iterations/templates", purpose: "Blank iteration plans" },
+    ],
     templates: [
       { path: "iterations/README.md", templateId: "iterations.readme" },
       { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" },
     ],
   },
 };
+
+/** Directories the given capability modules own, deduplicated by path. */
+export function capabilityDirectories(
+  capabilities: readonly CapabilityModule[],
+): ArchetypeDirectory[] {
+  return mergeDirectories(...capabilities.map((capability) => MODULE_SCAFFOLDS[capability].dirs));
+}
 
 export function isCapabilityModule(value: string): value is CapabilityModule {
   return SUPPORTED_CAPABILITY_SET.has(value);
@@ -166,9 +205,15 @@ const BUILTIN_ARCHETYPES_DIR = path.resolve(fileURLToPath(import.meta.url), ".."
 
 const BASE_ARCHETYPE: Archetype = {
   name: "base",
+  description: "",
   mode: "learning",
   modules: [],
-  dirs: [`${MANAGED_DIR}/backups`, `${MANAGED_DIR}/migrations`, "systems", "knowledge"],
+  dirs: [
+    { path: `${MANAGED_DIR}/backups`, purpose: "" },
+    { path: `${MANAGED_DIR}/migrations`, purpose: "" },
+    { path: "systems", purpose: "Registered systems and local implementations" },
+    { path: "knowledge", purpose: "Accepted, reusable knowledge" },
+  ],
   dirsLearning: [],
   dirsAbsorption: [],
   templates: [
@@ -262,9 +307,10 @@ function parseArchetypeYaml(raw: string, name: ProjectArchetype): ParsedArchetyp
 
   const mode = parseProjectMode(record.mode, name);
   const modules = parseModuleList(record.modules, name);
-  const dirs = parseStringList(record.dirs, "dirs", name);
-  const dirsLearning = parseStringList(record.dirs_learning, "dirs_learning", name);
-  const dirsAbsorption = parseStringList(record.dirs_absorption, "dirs_absorption", name);
+  const description = parseOptionalString(record.description, "description", name) ?? "";
+  const dirs = parseDirectoryList(record.dirs, "dirs", name);
+  const dirsLearning = parseDirectoryList(record.dirs_learning, "dirs_learning", name);
+  const dirsAbsorption = parseDirectoryList(record.dirs_absorption, "dirs_absorption", name);
   const templates = parseTemplateList(record.templates, name);
 
   if (!extendsName && dirs.length === 0) {
@@ -273,6 +319,7 @@ function parseArchetypeYaml(raw: string, name: ProjectArchetype): ParsedArchetyp
 
   return {
     name,
+    description: collapseWhitespace(description),
     extendsName,
     mode,
     modules,
@@ -322,6 +369,64 @@ function parseStringList(value: unknown, field: string, archetypeName: string): 
     }
     return item.trim();
   });
+}
+
+/**
+ * Parse a directory list that accepts both shapes an archetype may use:
+ * a bare string (no declared purpose) or `{ path, purpose }`. The string form
+ * is the original format and stays valid, so archetypes written before
+ * purposes existed keep loading unchanged.
+ */
+function parseDirectoryList(
+  value: unknown,
+  field: string,
+  archetypeName: string,
+): ArchetypeDirectory[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new FrameworkError(`invalid ${field} in archetype ${archetypeName}: expected list`, {
+      code: "IO_ERROR",
+    });
+  }
+  return value.map((item) => {
+    if (typeof item === "string") {
+      if (item.trim() === "") {
+        throw new FrameworkError(`invalid ${field} entry in archetype ${archetypeName}`, {
+          code: "IO_ERROR",
+        });
+      }
+      return { path: item.trim(), purpose: "" };
+    }
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new FrameworkError(`invalid ${field} entry in archetype ${archetypeName}`, {
+        code: "IO_ERROR",
+      });
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.path !== "string" || record.path.trim() === "") {
+      throw new FrameworkError(`invalid ${field} path in archetype ${archetypeName}`, {
+        code: "IO_ERROR",
+      });
+    }
+    if (
+      record.purpose !== undefined &&
+      record.purpose !== null &&
+      typeof record.purpose !== "string"
+    ) {
+      throw new FrameworkError(`invalid ${field} purpose in archetype ${archetypeName}`, {
+        code: "IO_ERROR",
+      });
+    }
+    return {
+      path: record.path.trim(),
+      purpose: collapseWhitespace(typeof record.purpose === "string" ? record.purpose : ""),
+    };
+  });
+}
+
+/** Purposes and descriptions are rendered on one line wherever they appear. */
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function parseTemplateList(value: unknown, archetypeName: string): ParsedTemplateEntry[] {
@@ -444,11 +549,35 @@ function mergeBaseArchetype(archetype: ParsedArchetype): Archetype {
   }
   return {
     ...definition,
-    dirs: unique([...BASE_ARCHETYPE.dirs, ...archetype.dirs]),
-    dirsLearning: unique([...BASE_ARCHETYPE.dirsLearning, ...archetype.dirsLearning]),
-    dirsAbsorption: unique([...BASE_ARCHETYPE.dirsAbsorption, ...archetype.dirsAbsorption]),
+    dirs: mergeDirectories(archetype.dirs, BASE_ARCHETYPE.dirs),
+    dirsLearning: mergeDirectories(archetype.dirsLearning, BASE_ARCHETYPE.dirsLearning),
+    dirsAbsorption: mergeDirectories(archetype.dirsAbsorption, BASE_ARCHETYPE.dirsAbsorption),
     templates: mergeTemplatesByPath(BASE_ARCHETYPE.templates, archetype.templates),
   };
+}
+
+/**
+ * Merge directory lists by path. The first list to declare a path owns its
+ * position and its wording; later lists only fill in a purpose the earlier one
+ * left empty. Callers order the lists by authority — an archetype's own
+ * declaration comes before the base and capability-module defaults, so an
+ * archetype can name a shared directory in its own terms.
+ */
+export function mergeDirectories(
+  ...lists: readonly (readonly ArchetypeDirectory[])[]
+): ArchetypeDirectory[] {
+  const merged = new Map<string, ArchetypeDirectory>();
+  for (const list of lists) {
+    for (const directory of list) {
+      const existing = merged.get(directory.path);
+      if (!existing) {
+        merged.set(directory.path, directory);
+      } else if (existing.purpose === "" && directory.purpose !== "") {
+        merged.set(directory.path, { ...existing, purpose: directory.purpose });
+      }
+    }
+  }
+  return [...merged.values()];
 }
 
 /** Later entries win, so an archetype can override base templates such as README.md. */
@@ -591,8 +720,4 @@ async function archetypeNotFoundError(
     `archetype not found: ${name}. Available archetypes: ${availableText}`,
     { code: "IO_ERROR" },
   );
-}
-
-function unique(values: readonly string[]): string[] {
-  return [...new Set(values)];
 }

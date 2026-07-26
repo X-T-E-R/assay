@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   SUPPORTED_CAPABILITY_MODULES,
+  archetypeDirectories,
+  archetypeZones,
   desiredTemplates,
   dirsForArchetype,
   listAvailableArchetypes,
@@ -214,6 +216,135 @@ describe("archetype loader", () => {
     await expect(loadArchetype("badmode", { userArchetypesDir })).rejects.toThrow(
       /supported modes: learning, absorption/,
     );
+  });
+});
+
+describe("archetype directory purposes", () => {
+  it("accepts bare-string dirs, which stay valid and carry no purpose", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeCustomArchetype(path.join(userArchetypesDir, "legacy.yaml"), {
+      dirs: ["zone", "zone/deep"],
+    });
+
+    const archetype = await loadArchetype("legacy", { userArchetypesDir });
+
+    expect(dirsForArchetype(archetype, archetype.mode)).toEqual(
+      expect.arrayContaining(["zone", "zone/deep", "systems", "knowledge"]),
+    );
+    expect(archetype.description).toBe("");
+    expect(archetypeDirectories(archetype, archetype.mode)).toEqual(
+      expect.arrayContaining([
+        { path: "zone", purpose: "" },
+        { path: "zone/deep", purpose: "" },
+      ]),
+    );
+    expect(archetypeZones(archetype, archetype.mode)).toEqual(
+      expect.arrayContaining([{ path: "zone", purpose: "" }]),
+    );
+  });
+
+  it("reads path/purpose objects and mixes them with bare strings", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await mkdir(userArchetypesDir, { recursive: true });
+    await writeFile(
+      path.join(userArchetypesDir, "mixed.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "description: A mixed declaration.",
+        "dirs:",
+        "  - plain",
+        "  - path: described",
+        "    purpose: What belongs in described",
+        "templates: []",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const archetype = await loadArchetype("mixed", { userArchetypesDir });
+
+    expect(archetype.description).toBe("A mixed declaration.");
+    expect(archetypeDirectories(archetype, "learning")).toEqual([
+      { path: "plain", purpose: "" },
+      { path: "described", purpose: "What belongs in described" },
+      { path: ".assay/backups", purpose: "" },
+      { path: ".assay/migrations", purpose: "" },
+      { path: "systems", purpose: "Registered systems and local implementations" },
+      { path: "knowledge", purpose: "Accepted, reusable knowledge" },
+    ]);
+  });
+
+  it("lets an archetype restate a shared directory in its own words", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await mkdir(userArchetypesDir, { recursive: true });
+    await writeFile(
+      path.join(userArchetypesDir, "restated.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - path: knowledge",
+        "    purpose: Team playbooks only",
+        "templates: []",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const archetype = await loadArchetype("restated", { userArchetypesDir });
+
+    expect(archetypeZones(archetype, "learning")).toContainEqual({
+      path: "knowledge",
+      purpose: "Team playbooks only",
+    });
+  });
+
+  it("rejects a directory entry with no usable path", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await mkdir(userArchetypesDir, { recursive: true });
+    await writeFile(
+      path.join(userArchetypesDir, "broken.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - purpose: no path here",
+        "templates: []",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await expect(loadArchetype("broken", { userArchetypesDir })).rejects.toThrow(
+      /invalid dirs path in archetype broken/,
+    );
+  });
+
+  it("every built-in archetype describes itself and its own directories", async () => {
+    for (const archetypeName of USER_FACING_BUILT_INS) {
+      const archetype = await loadArchetype(archetypeName);
+      expect(archetype.description).not.toBe("");
+      for (const zone of archetypeZones(archetype, archetype.mode, archetype.modules)) {
+        expect(zone.purpose, `${archetypeName}:${zone.path}`).not.toBe("");
+      }
+    }
+  });
+
+  it("leaves runtime state and template folders out of the zone list", async () => {
+    const solve = await loadArchetype("solve");
+    const zones = archetypeZones(solve, solve.mode, solve.modules).map((zone) => zone.path);
+
+    expect(zones).toEqual([
+      "problem",
+      "intake",
+      "benchmarks",
+      "attempts",
+      "tools",
+      "iterations",
+      "systems",
+      "knowledge",
+    ]);
   });
 });
 

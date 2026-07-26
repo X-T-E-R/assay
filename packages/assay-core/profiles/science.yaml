@@ -7,13 +7,23 @@ mode: absorption
 modules:
   - iteration
 
+description: Run evidence-driven research where hypotheses, experiments, findings, and drafts stay in one loop.
+
 dirs:
-  - hypotheses
-  - experiments
-  - datasets
-  - findings
-  - papers
-  - iterations/templates
+  - path: hypotheses
+    purpose: Claims stated before evidence is collected
+  - path: experiments
+    purpose: Experiment plans and execution notes
+  - path: datasets
+    purpose: Dataset cards, provenance, and quality notes
+  - path: findings
+    purpose: Evidence-backed findings with their limitations
+  - path: papers
+    purpose: Drafts, outlines, figures, and publication notes
+  - path: iterations
+    purpose: Research loops
+  - path: iterations/templates
+    purpose: Blank iteration plans
 
 dirs_learning: []
 dirs_absorption: []

@@ -5,6 +5,8 @@ extends: base
 mode: learning
 modules: []
 
+description: Keep the shared core only, with systems and knowledge but no absorption or governance scaffolding.
+
 dirs: []
 dirs_learning: []
 dirs_absorption: []

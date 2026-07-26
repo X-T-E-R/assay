@@ -22,6 +22,20 @@ Assay preserves all content outside:
 <!-- ASSAY:END -->
 ```
 
+## What the block contains
+
+Beyond the standing rules, the block carries a workspace layout section
+generated from the installed archetype: its one-line description and a table of
+every directory the archetype declares with what belongs in it. This is the
+only channel that reaches a coding agent before it does anything, so directory
+semantics live here rather than only in per-directory READMEs.
+
+The table is generated, never hand-maintained. After an archetype's directories
+or purposes change, run `assay update --agents` to regenerate it;
+`assay check --advisories` reports a block that no longer matches the
+archetype. A workspace with no readable manifest or archetype keeps the standing
+rules and gets no table.
+
 Do not add `AGENTS.md` to archetype templates or manifest managed-file tracking.
 The block is intentionally marker-based so local repository instructions remain
 owned by the workspace.

@@ -25,3 +25,4 @@ export * from "./templates.js";
 export * from "./time.js";
 export * from "./update.js";
 export * from "./workspace.js";
+export * from "./zones.js";

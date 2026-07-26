@@ -28,6 +28,19 @@ A workspace records `project.archetype` and `project.mode` in `.assay/manifest.j
 
 Custom archetypes are YAML files resolved in order: project-local `.assay/archetypes/<name>.yaml`, user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. Template entries may reuse built-in templateIds, carry inline `content` (with `{{project}}` substitution), or reference a `file` relative to the archetype directory — so third-party archetype packs can ship their own README/template content. Unresolvable template entries fail loudly at init/update time.
 
+An archetype should also say what it is for and what each directory holds:
+
+```yaml
+description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+
+dirs:
+  - path: problem
+    purpose: Task statement, official rules, scoring definition
+  - plain-directory-with-no-purpose
+```
+
+`assay status`, the `AGENTS.md` managed block, and the placement advisories in `assay check --advisories` all read those declarations, so a custom archetype explains itself everywhere without any change to Assay. Directories under `.assay/` and `<zone>/templates` folders are treated as machinery rather than places to put work and stay out of all three; declare the parent directory when you want it listed. After changing an archetype, run `assay update --agents` so the `AGENTS.md` table matches it again.
+
 - **learning** (default): the project learns from external systems. Living external sources are added under `references/<alias>/` with `source.yaml`, current `checkout/`, bounded `materials/`, `history.md`, and a flat observation ledger (`observations/`, `manifests/`, `comparisons/`, `captures/`). Use this when the external thing is something you study, not something you are.
 - **absorption**: the project exists to absorb a specific external thing (a benchmark target, a paper, a repo you are rebuilding). Its official/source materials land under `problem/<name>/` with a `source.yaml` case file, because they ARE the project, not external references. `references/frozen/` is still available for genuine third-party side evidence.
 

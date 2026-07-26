@@ -433,9 +433,15 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("status")
     .description("Print workspace status")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      writeLine(output, "stdout", formatStatusResult(await getFrameworkStatus({ root })));
+      const result = await getFrameworkStatus({ root });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", formatStatusResult(result));
     });
 
   program

@@ -219,12 +219,14 @@ function templateContentById(
       return dataReadme();
     case "releases.readme":
       return releasesReadme();
+    case "solve.readme":
+      return solveReadme(project);
     case "solve.objective":
       return solveObjective(project);
     case "solve.current_attempt":
       return solveCurrentAttempt();
-    case "solve.runs.jsonl":
-      return solveRunsJsonl();
+    case "solve.problem.readme":
+      return solveProblemReadme();
     case "solve.intake.readme":
       return solveIntakeReadme();
     case "solve.benchmarks.readme":
@@ -679,8 +681,49 @@ export function solveCurrentAttempt(): string {
   `);
 }
 
-export function solveRunsJsonl(): string {
-  return "";
+export function solveReadme(project: string): string {
+  return `${rootReadme(project)}${solveRunRecordsSection()}`;
+}
+
+/**
+ * Run-record convention for solve workspaces.
+ *
+ * Assay does not create `runs.jsonl` and no command writes to it. The format is
+ * documented here because harnesses that already exist — an evaluator, a judge
+ * script, a packaging step — can append to it in one line, which is the only
+ * way run logs have ever actually been filled.
+ */
+function solveRunRecordsSection(): string {
+  return dedent(`
+    ## Run records
+
+    Nothing in Assay writes a run log, and there is no command to run. If a
+    harness in \`tools/\` should keep one, append one JSON object per line to
+    \`runs.jsonl\` at the workspace root:
+
+    \`\`\`text
+    {"run_id": "2026-07-26-01", "benchmark": "local-v3", "attempt": "att-014", "score": 0.813, "started_at": "2026-07-26T09:12:00Z"}
+    \`\`\`
+
+    Suggested fields: \`run_id\`, \`started_at\`, \`benchmark\`, \`attempt\`,
+    \`score\`, \`params\`, \`artifact\`, \`notes\`. Nothing validates the shape, so
+    add whatever the harness already knows. Once the file exists,
+    \`assay status\` reports how many records it holds.
+    `);
+}
+
+export function solveProblemReadme(): string {
+  return dedent(`
+    # problem/
+
+    The objective exactly as it was handed to you: task statement, official
+    rules, scoring definition, data dictionaries, deadlines.
+
+    Keep this directory faithful to the source. Restatements, interpretations,
+    and plans derived from the rules belong in an iteration or an analysis, so
+    that when the rules change a clean copy of the new statement is the only
+    edit here.
+  `);
 }
 
 export function solveIntakeReadme(): string {

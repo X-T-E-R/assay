@@ -7,10 +7,17 @@ mode: absorption
 modules:
   - iteration
 
+description: Incubate several local approaches in parallel and converge on one using trial evidence.
+
 dirs:
-  - approaches
-  - trials
-  - iterations/templates
+  - path: approaches
+    purpose: Parallel candidate approaches, one premise each
+  - path: trials
+    purpose: Trial notes covering setup, observed behavior, and cost
+  - path: iterations
+    purpose: Convergence loops
+  - path: iterations/templates
+    purpose: Blank iteration plans
 
 dirs_learning: []
 dirs_absorption: []

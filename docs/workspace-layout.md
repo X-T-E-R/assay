@@ -18,10 +18,53 @@ Archetype-specific working directories sit alongside this base.
 | --- | --- |
 | `library` | No extra structure; it is the public entrypoint for the base. |
 | `study` | `references/`, `references/frozen/`, `analyses/references/`, `analyses/gaps/`, `analyses/patterns/`, `analyses/templates/`, and `knowledge/decisions/`. |
-| `solve` | `problem/`, `intake/`, `benchmarks/`, `attempts/`, `tools/`, `iterations/templates/`, `objective.json`, `systems/current.json`, and `runs.jsonl`. |
-| `science` | `hypotheses/`, `experiments/`, `datasets/`, `findings/`, `papers/`, and `iterations/templates/`. |
+| `solve` | `problem/`, `intake/`, `benchmarks/`, `attempts/`, `tools/`, `iterations/`, `iterations/templates/`, `objective.json`, and `systems/current.json`. |
+| `science` | `hypotheses/`, `experiments/`, `datasets/`, `findings/`, `papers/`, `iterations/`, and `iterations/templates/`. |
 | `evaluation` | `candidates/`, `criteria.md`, `scorecards/`, and `knowledge/decisions/`. |
-| `explore` | `approaches/`, `trials/`, `comparison.md`, and `iterations/templates/`. |
+| `explore` | `approaches/`, `trials/`, `comparison.md`, `iterations/`, and `iterations/templates/`. |
+
+## Directory purposes
+
+An archetype states what each directory is for, next to the directory itself:
+
+```yaml
+description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+
+dirs:
+  - path: problem
+    purpose: Task statement, official rules, scoring definition
+  - path: intake
+    purpose: Raw deliveries that have not been normalized yet
+```
+
+A bare string entry (`- problem`) remains valid and declares no purpose.
+
+Three surfaces read these declarations, so a custom archetype gets all three
+without any code change:
+
+- the Assay managed block in `AGENTS.md` renders them as a directory table, which puts the layout in context at the start of a session;
+- `assay status` lists each directory with its file count and purpose, under a header naming the archetype and its `description`;
+- `assay check --advisories` reports top-level directories the archetype never declared.
+
+Directories are omitted from all three where they are not places to put work:
+anything under `.assay/`, and `<zone>/templates` folders that hold blank forms
+for their parent. An archetype that wants the parent listed declares the parent
+itself, which is why `solve` declares both `iterations` and
+`iterations/templates`.
+
+Changing an archetype's directories or purposes leaves the `AGENTS.md` table
+stale until `assay update --agents` regenerates it; `assay check --advisories`
+reports that mismatch.
+
+## Run records in solve workspaces
+
+Assay does not create `runs.jsonl` and no command writes to it. Where a run log
+is useful, an existing harness — an evaluator, a judge script, a packaging step
+— appends one JSON object per line to `runs.jsonl` at the workspace root.
+Suggested fields are `run_id`, `started_at`, `benchmark`, `attempt`, `score`,
+`params`, `artifact`, and `notes`; nothing validates the shape. `assay status`
+reports the record count once the file exists. The solve `README.md` carries
+the same convention.
 
 Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
 

@@ -6,10 +6,15 @@ mode: learning
 modules:
   - adr
 
+description: Compare external candidates against explicit criteria and record the choice as a decision.
+
 dirs:
-  - candidates
-  - scorecards
-  - knowledge/decisions
+  - path: candidates
+    purpose: External candidates under review, with scope and constraints
+  - path: scorecards
+    purpose: The decision matrix applied to each candidate
+  - path: knowledge/decisions
+    purpose: Accepted decisions and ADRs
 
 dirs_learning: []
 dirs_absorption: []

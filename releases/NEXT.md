@@ -81,10 +81,80 @@ moved. Without this, converting an overlay that had captured intent would leave
 the records behind in the source `.assay/` and report every one of them as
 missing in the new workspace.
 
+## Directories That Explain Themselves
+
+An archetype can now state what each of its directories is for, and that
+statement reaches every surface that shows the directory.
+
+```yaml
+description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+
+dirs:
+  - path: problem
+    purpose: Task statement, official rules, scoring definition
+  - path: intake
+    purpose: Raw deliveries that have not been normalized yet
+```
+
+- `dirs` entries accept `{ path, purpose }` alongside the original bare string,
+  which stays valid and declares no purpose. Archetypes written before this
+  release load unchanged.
+- An archetype gains a one-line `description`.
+- Every built-in archetype now carries real purposes and a description.
+- `solve` ships the `problem/README.md` it was missing.
+
+Three surfaces read the declarations, so a custom archetype gets all three
+without touching Assay:
+
+- **`AGENTS.md`**: the managed block appends a workspace layout section — the
+  archetype's description and a table of its directories — generated from the
+  archetype rather than hardcoded. `assay update --agents` regenerates it, and
+  `assay check --advisories` reports a block that no longer matches.
+- **`assay status`**: zones are derived from the installed archetype and its
+  enabled capability modules instead of a fixed list of `study` directories. A
+  solve workspace no longer sees five directories it does not have; every zone
+  shows its file count and purpose; the header names the archetype and its
+  description. A layout directory the archetype does not declare is still listed
+  when it holds files, so nothing with content becomes invisible.
+- **`assay check --advisories`**: placement reminders, described below.
+
+Directories that are not places to put work are left out of all three: anything
+under `.assay/`, and `<zone>/templates` folders holding blank forms for their
+parent.
+
+## `assay status --json`
+
+The most-run command now has machine-readable output. `--json` emits the full
+status structure: zones with their paths, file counts, and purposes; the
+archetype and its description; systems, living sources, donors, and counts.
+
+## Solve Workspaces No Longer Ship `runs.jsonl`
+
+The template shipped an empty file that nothing filled: across existing
+workspaces the observed fill rate for template-created `runs.jsonl` was zero,
+and every non-empty one was written by a project's own harness.
+
+- `solve` no longer creates `runs.jsonl`. There is no new command to write one.
+- The append convention is documented in the solve `README.md` instead: one JSON
+  object per line at the workspace root, with `run_id`, `started_at`,
+  `benchmark`, `attempt`, `score`, `params`, `artifact`, and `notes` as
+  suggested fields. An evaluator or judge script needs one appended line.
+- `assay status` reports `Run records (runs.jsonl): <n>` once the file exists,
+  so an existing log stays visible and a workspace that has one keeps its count.
+
+Existing workspaces keep their `runs.jsonl`; nothing deletes it.
+
 ## New Advisories
 
-Both appear only under `assay check --advisories` and never fail the check.
+All appear only under `assay check --advisories` and never fail the check.
 
+- A top-level directory the archetype does not declare. Writing straight into a
+  directory instead of going through a command is normal usage, so this makes
+  misplaced material visible and fixable rather than turning it into an error.
+- A file under `analyses/references/` with no `Status:` header, which is a
+  hand-written note that never entered the analysis lifecycle.
+- An `AGENTS.md` managed block whose directory table no longer matches the
+  current archetype, with the `assay update --agents` command to refresh it.
 - Intent enabled in a `privacy: private` overlay: `.assay/` is excluded from the
   product repository and has no history of its own, which is a poor home for the
   least reproducible records in the workspace. The advisory recommends
@@ -121,8 +191,14 @@ additive and optional: the intent work folder is resolved through the work root
 rather than the strict `layout.paths` map, so manifests written by either build
 keep validating in the other as long as the fields above are absent.
 
-### Nothing removed
+### Removed
 
-No command, flag, or exported type was removed in this release. Existing
-workspaces need no action to keep working; `intent` does nothing until it is
-explicitly enabled.
+- The `solve` archetype's `runs.jsonl` template. Existing files are untouched
+  and `assay status` still counts them; new solve workspaces do not get one.
+- The `solve.runs.jsonl` template id, which nothing else referenced.
+
+No command or flag was removed. `Archetype.dirs` (and the learning/absorption
+variants) now hold `{ path, purpose }` objects rather than strings; embedders
+reading them directly should use `dirsForArchetype()` for paths or
+`archetypeDirectories()` for both. Existing workspaces need no action to keep
+working; `intent` does nothing until it is explicitly enabled.

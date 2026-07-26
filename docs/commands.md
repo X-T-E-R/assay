@@ -9,7 +9,7 @@ assay init [target-dir] --name <project> --archetype <name> [--git] [--force] [-
 assay attach [--root <dir>] --name <project> --archetype <name> [--privacy private|private-git|tracked] [--no-track] [--no-agents]
 assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overlay]
 assay check [--advisories] [--root <dir>]
-assay status [--root <dir>]
+assay status [--root <dir>] [--json]
 assay update [--root <dir>] [--dry-run] [--agents] [--force | --skip-all | --create-new] [--no-track]
 assay migrate-layout [--root <dir>] [--dry-run | --apply] [--backup]
 assay archetype [--root <dir>] [--json]
@@ -31,6 +31,19 @@ only for missing required structure or invalid persisted state. Add
 iterations, unfinished draft analyses, pending queue entries, lingering
 adoption archives, unanalyzed frozen references, and major source changes that
 have not been re-reviewed.
+
+`--advisories` also reports placement: a top-level directory the archetype does
+not declare, an `analyses/references/` file with no `Status:` header, and an
+`AGENTS.md` managed block whose directory table no longer matches the
+archetype. Writing straight into a directory instead of going through a command
+is normal usage, so these are reminders and never failures.
+
+`assay status` prints the workspace's zones — the directories its archetype
+declares — each with a file count and the archetype's own statement of what
+belongs there, under a header naming the archetype and its description. A
+directory Assay's layout defines but the archetype does not declare is listed
+too when it holds files, so nothing with content becomes invisible. `--json`
+emits the same data, zones and purposes included.
 
 ## Attach an existing repository
 

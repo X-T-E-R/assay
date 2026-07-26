@@ -38,7 +38,7 @@ assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # structure + persisted-record integrity
 assay check --advisories                     # opt-in workflow/content reminders
-assay status                                 # systems + living source summary + open iterations + knowledge counts
+assay status [--json]                        # archetype zones with purposes + systems + sources + open iterations + counts
 assay update --dry-run                       # always dry-run first
 assay migrate-layout --dry-run               # always dry-run first; legacy layouts are migration input only
 
@@ -250,13 +250,13 @@ Run `assay check --advisories` separately when workflow reminders are useful.
 `check` reports four severity levels:
 
 - `[ok]` — directory or managed file present and unchanged.
-- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, or independent-git system without `.git`. With `--advisories`, also includes open iterations, unanalyzed frozen references, major source observations that may need revalidation, empty draft analyses, stale `.old/` adoption archives, pending queue entries, intent enabled in an unversioned private overlay, and superseded systems that no supersedes chain points at. Warnings never fail the check.
+- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, or independent-git system without `.git`. With `--advisories`, also includes open iterations, unanalyzed frozen references, major source observations that may need revalidation, empty draft analyses, stale `.old/` adoption archives, pending queue entries, intent enabled in an unversioned private overlay, superseded systems that no supersedes chain points at, top-level directories the archetype does not declare, `analyses/references/` files with no `Status:` header, and an `AGENTS.md` managed block that no longer matches the archetype. Warnings never fail the check.
 - `[missing]` — required directory or manifest absent.
 - `[error]` — managed file missing from disk, registered system path missing, source observation records missing required fingerprint/manifest state, two primary systems, inconsistent ADR supersede links, or invalid donor persistence. **Exits non-zero.**
 
 Workflow/content reminders are opt-in because they describe work state, not corruption. Structure, registry/index consistency, managed-record integrity, and donor persistence remain in the default check.
 
-`status` shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, a compact `Donor adoptions` summary when donor records exist, `Open iterations`, `Knowledge entries`, and `intent/original` plus `intent/requirements` zone counts once the intent module is enabled. For update and migrate, always run `--dry-run` first and review the plan before `--apply`. Dry-run commands must not create project files or project-registry records.
+`status` opens with the archetype and its one-line description, then `Zones`: the directories that archetype declares, each with a file count and what belongs in it. Read the zones before placing a file — they are the workspace's own statement of where work goes, and they differ per archetype. After that it shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, a compact `Donor adoptions` summary when donor records exist, `Open iterations`, `Knowledge entries`, and `Run records (runs.jsonl)` where that file exists. Use `--json` for the same data machine-readably. For update and migrate, always run `--dry-run` first and review the plan before `--apply`. Dry-run commands must not create project files or project-registry records.
 
 ## Final response checklist
 

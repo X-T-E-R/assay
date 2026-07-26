@@ -45,12 +45,16 @@ function countLine(label: string, count: number): string {
 
 type OptionalManifestSemantics = {
   readonly archetype?: string;
+  readonly archetypeDescription?: string;
   readonly mode?: string;
 };
 
 function manifestSemanticsLines(value: OptionalManifestSemantics): string[] {
+  const archetype = value.archetypeDescription
+    ? `${value.archetype} - ${value.archetypeDescription}`
+    : value.archetype;
   return [
-    ...(value.archetype ? [`Archetype: ${value.archetype}`] : []),
+    ...(value.archetype ? [`Archetype: ${archetype}`] : []),
     ...(value.mode ? [`Mode: ${value.mode}`] : []),
   ];
 }
@@ -228,6 +232,28 @@ export function formatCheckResult(result: CheckFrameworkResult): string {
   ].join("\n");
 }
 
+/**
+ * Zone lines carry the archetype's purpose text next to the count. An agent
+ * entering a workspace has no history, so what a directory is for is directed
+ * information rather than noise, and it is the only placement signal that
+ * reaches the command agents actually run.
+ */
+function zoneLines(zones: FrameworkStatusResult["zones"]): string[] {
+  if (zones.length === 0) {
+    return ["Zones", "  (none declared)"];
+  }
+  const pathWidth = Math.max(...zones.map((zone) => zone.path.length + 1));
+  const countWidth = Math.max(...zones.map((zone) => String(zone.files).length));
+  return [
+    "Zones",
+    ...zones.map((zone) => {
+      const label = `${zone.path}/`.padEnd(pathWidth);
+      const count = String(zone.files).padStart(countWidth);
+      return `  - ${label}  ${count}  ${zone.purpose}`.trimEnd();
+    }),
+  ];
+}
+
 export function formatStatusResult(result: FrameworkStatusResult): string {
   const header = ["Framework status", `Root: ${result.root}`];
   const semantics = manifestSemanticsLines(
@@ -242,7 +268,7 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
         `Managed files: ${result.managedFiles}`,
       ]
     : ["Manifest: missing", "Managed files: 0"];
-  const zones = ["Zones", ...result.zones.map((zone) => `  - ${zone.path}: ${zone.files} files`)];
+  const zones = zoneLines(result.zones);
 
   const systems =
     result.systems && result.systems.length > 0
@@ -286,6 +312,9 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
   }
   if (result.knowledgeEntries !== undefined) {
     summary.push(`Knowledge entries: ${result.knowledgeEntries}`);
+  }
+  if (result.runRecords !== undefined) {
+    summary.push(`Run records (runs.jsonl): ${result.runRecords}`);
   }
 
   return [
