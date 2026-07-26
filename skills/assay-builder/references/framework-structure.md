@@ -53,15 +53,16 @@ file existing does not prove content quality, so Assay does not turn prose
 heuristics into mandatory gates. Use `assay check --advisories` when workflow
 reminders are useful:
 
-- A frozen reference that is not cited by an analysis and is not marked
-  `analyzed: true` is listed as an `unanalyzed reference` advisory.
+- A frozen reference directory with no `reference.yaml` is listed with the
+  `assay reference backfill <path>` command that writes one. Provenance is
+  checkable; whether someone read the material is not.
 - A living source observation must always retain provenance, fingerprint, and
   manifest metadata. A `major` observation can additionally be listed as a
   revalidation advisory until a bound analysis closes.
 - An analysis at `Status: draft` with empty `## Key observations` is listed as
   an unfinished-draft advisory.
-- `analysis close --exit …` records the explicit decision and flips a bound
-  `reference.yaml` to `analyzed: true`; it does not judge section prose.
+- `analysis close --exit …` records the explicit decision and marks a bound
+  source observation closed; it does not judge section prose.
 
 
 ## Intent-to-directory mapping

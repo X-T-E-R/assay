@@ -235,6 +235,85 @@ describe("assay donor CLI", () => {
   );
 
   it(
+    "takes a single mapping without a definition file and parses colons safely",
+    async () => {
+      const fixture = await createFixture("DonorTakeCli");
+
+      const taken = await cliRunner.runCli([
+        "donor",
+        "take",
+        "upstream:src/alpha.txt",
+        "--into",
+        "product:integrations/alpha.txt",
+        "--mode",
+        "adapt",
+        "--root",
+        fixture.root,
+        "--json",
+      ]);
+      expect(taken.exitCode).toBe(0);
+      const payload = JSON.parse(taken.stdout);
+      expect(payload.adoptionId).toBe("upstream-product-src-alpha-txt");
+      expect(payload.definition.mappings[0]).toMatchObject({
+        mode: "adapt",
+        source: { path: "src/alpha.txt", match: "exact" },
+        target: { target_id: "product", path: "integrations/alpha.txt", match: "exact" },
+      });
+
+      // The adoption is a first-class one: the ordinary verbs read it.
+      const shown = await cliRunner.runCli([
+        "donor",
+        "show",
+        payload.adoptionId,
+        "--root",
+        fixture.root,
+      ]);
+      expect(shown.exitCode).toBe(0);
+      expect(shown.stdout).toContain("src/alpha.txt -> product:integrations/alpha.txt");
+
+      // A Windows-style absolute path is refused by name, never split at its
+      // drive colon into a different alias and path.
+      const windowsTarget = await cliRunner.runCli([
+        "donor",
+        "take",
+        "upstream:src/alpha.txt",
+        "--into",
+        "product:C:/absolute/alpha.txt",
+        "--root",
+        fixture.root,
+      ]);
+      expect(windowsTarget.exitCode).not.toBe(0);
+      expect(windowsTarget.stderr).toContain("target path must be a contained relative path");
+      expect(windowsTarget.stderr).toContain("C:/absolute/alpha.txt");
+
+      const windowsSource = await cliRunner.runCli([
+        "donor",
+        "take",
+        "C:\\repo\\src\\alpha.txt",
+        "--into",
+        "product:integrations/alpha.txt",
+        "--root",
+        fixture.root,
+      ]);
+      expect(windowsSource.exitCode).not.toBe(0);
+      expect(windowsSource.stderr).toContain("looks like a Windows absolute path");
+
+      const missingSeparator = await cliRunner.runCli([
+        "donor",
+        "take",
+        "upstream/src/alpha.txt",
+        "--into",
+        "product:integrations/alpha.txt",
+        "--root",
+        fixture.root,
+      ]);
+      expect(missingSeparator.exitCode).not.toBe(0);
+      expect(missingSeparator.stderr).toContain("donor source must be <name>:<path>");
+    },
+    DONOR_CLI_TIMEOUT_MS,
+  );
+
+  it(
     "exposes donor commands in help",
     async () => {
       const root = await createInitializedCliWorkspace({
@@ -249,6 +328,7 @@ describe("assay donor CLI", () => {
       expect(root).toBeTruthy();
       const donorHelp = await cliRunner.runCli(["donor", "--help"]);
       expect(donorHelp.exitCode).toBe(0);
+      expect(donorHelp.stdout).toContain("take");
       expect(donorHelp.stdout).toContain("inspect");
       expect(donorHelp.stdout).toContain("decide");
       expect(donorHelp.stdout).toContain("evidence");

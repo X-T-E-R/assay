@@ -129,6 +129,210 @@ export async function assertGitCheckoutSafeForRefresh(
   }
 }
 
+/**
+ * Paths named by `git status --porcelain` output. Rename entries carry
+ * `old -> new`; the new path is the one that exists on disk. Git quotes paths
+ * that contain unusual characters, so a quoted value is unquoted before use.
+ */
+function porcelainPaths(stdout: string): string[] {
+  const paths: string[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line.trim() === "") continue;
+    const raw = line.length > 3 ? line.slice(3) : line.trim();
+    const arrow = raw.indexOf(" -> ");
+    const value = (arrow >= 0 ? raw.slice(arrow + 4) : raw).trim();
+    paths.push(unquoteGitPath(value));
+  }
+  return paths;
+}
+
+function unquoteGitPath(value: string): string {
+  if (!value.startsWith('"') || !value.endsWith('"') || value.length < 2) {
+    return value;
+  }
+  try {
+    return JSON.parse(value) as string;
+  } catch {
+    return value.slice(1, -1);
+  }
+}
+
+/**
+ * Cheap local facts about a managed checkout: where its HEAD is and whether
+ * anything in it is uncommitted. This is the zero-network half of upstream
+ * drift detection, so it runs on every `assay status` and must stay to a
+ * couple of local `git` calls — no fetch, no tree hashing.
+ *
+ * Returns null when the path is not a Git checkout, which is the signal
+ * callers use to report "not checked" instead of inventing a comparison.
+ */
+export interface CheckoutLocalSignals {
+  readonly head: string;
+  readonly branch: string | null;
+  readonly dirtyPaths: readonly string[];
+}
+
+export async function readCheckoutLocalSignals(
+  checkout: string,
+): Promise<CheckoutLocalSignals | null> {
+  if (!(await isGitCheckout(checkout))) {
+    return null;
+  }
+  const head = await resolveCommit(checkout, "HEAD");
+  if (head === null) {
+    return null;
+  }
+  const status = await tryGit(checkout, ["status", "--porcelain"]);
+  return {
+    head,
+    branch: await currentCheckoutBranch(checkout),
+    dirtyPaths: status.exitCode === 0 ? porcelainPaths(status.stdout) : [],
+  };
+}
+
+/**
+ * Repository-relative paths that differ between two commits, or null when the
+ * comparison cannot be made (an unknown commit, a shallow clone that lacks the
+ * older object). Null means "unknown", never "nothing changed".
+ */
+export async function diffPathsBetween(
+  checkout: string,
+  from: string,
+  to: string,
+): Promise<string[] | null> {
+  try {
+    assertGitArgumentValue("diff base", from);
+    assertGitArgumentValue("diff target", to);
+  } catch {
+    return null;
+  }
+  const result = await tryGit(checkout, [
+    "diff",
+    "--name-only",
+    "--end-of-options",
+    from,
+    to,
+    "--",
+  ]);
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .map(unquoteGitPath);
+}
+
+/** Number of commits `to` has that `from` does not, or null when unknown. */
+export async function countCommitsBetween(
+  checkout: string,
+  from: string,
+  to: string,
+): Promise<number | null> {
+  try {
+    assertGitArgumentValue("range base", from);
+    assertGitArgumentValue("range target", to);
+  } catch {
+    return null;
+  }
+  const result = await tryGit(checkout, [
+    "rev-list",
+    "--count",
+    "--end-of-options",
+    `${from}..${to}`,
+  ]);
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  const value = Number.parseInt(result.stdout.trim(), 10);
+  return Number.isFinite(value) ? value : null;
+}
+
+export interface RemoteHeadResult {
+  readonly commit: string | null;
+  readonly ref: string | null;
+  /** Why the remote could not be read this run; null on success. */
+  readonly reason: string | null;
+}
+
+/** Milliseconds a status-time fetch may take before it is treated as a failure. */
+const FETCH_TIMEOUT_MS = 20_000;
+
+/**
+ * Fetch and report the remote tip for a managed checkout's current branch.
+ *
+ * Everything about this call is non-interactive and bounded: credential
+ * prompts are disabled and the fetch is given a timeout, because it runs from
+ * `assay status --fetch` where a hung network call would be worse than an
+ * unanswered question. Every failure is returned as a reason string; callers
+ * annotate the source and carry on rather than failing the command.
+ */
+export async function fetchRemoteHead(checkout: string): Promise<RemoteHeadResult> {
+  if (!(await isGitCheckout(checkout))) {
+    return { commit: null, ref: null, reason: "not a Git checkout" };
+  }
+  const remote = await gitRemoteOrigin(checkout);
+  if (!remote) {
+    return { commit: null, ref: null, reason: "no 'origin' remote configured" };
+  }
+
+  const fetched = await execa("git", ["fetch", "--prune", "--quiet", "origin"], {
+    cwd: checkout,
+    reject: false,
+    timeout: FETCH_TIMEOUT_MS,
+    env: {
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "echo",
+      GIT_SSH_COMMAND: "ssh -oBatchMode=yes",
+    },
+  });
+  if ((fetched.exitCode ?? 1) !== 0) {
+    return {
+      commit: null,
+      ref: null,
+      reason: `git fetch failed: ${firstLine(fetched.stderr || fetched.stdout) || "no output"}`,
+    };
+  }
+
+  const branch = await currentCheckoutBranch(checkout);
+  const candidates = branch
+    ? [`refs/remotes/origin/${branch}`, "refs/remotes/origin/HEAD"]
+    : ["refs/remotes/origin/HEAD"];
+  for (const candidate of candidates) {
+    const commit = await resolveCommit(checkout, candidate);
+    if (commit) {
+      return { commit, ref: candidate, reason: null };
+    }
+  }
+  return { commit: null, ref: null, reason: "no matching remote branch to compare" };
+}
+
+/**
+ * Commit a ref points at, or null when it does not resolve.
+ *
+ * `rev-parse` does not accept `--end-of-options` — it echoes the marker back as
+ * an unrecognized argument — so an option-like ref is rejected up front
+ * instead, and the output is required to be a bare object name. Returning
+ * anything else would put a junk revision into a later `diff` or `rev-list`,
+ * where it fails silently and reads as "nothing changed".
+ */
+async function resolveCommit(checkout: string, ref: string): Promise<string | null> {
+  try {
+    assertGitArgumentValue("git ref", ref);
+  } catch {
+    return null;
+  }
+  const resolved = await tryGit(checkout, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+  const value = resolved.stdout.trim();
+  return resolved.exitCode === 0 && /^[0-9a-f]{40}$/.test(value) ? value : null;
+}
+
+function firstLine(value: string): string {
+  const line = value.split(/\r?\n/).find((candidate) => candidate.trim() !== "") ?? "";
+  return line.trim().slice(0, 160);
+}
+
 async function currentCheckoutBranch(checkout: string): Promise<string | null> {
   if (!(await isGitCheckout(checkout))) {
     return null;

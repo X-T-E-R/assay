@@ -38,7 +38,7 @@ assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # structure + persisted-record integrity
 assay check --advisories                     # opt-in workflow/content reminders
-assay status [--json]                        # archetype zones with purposes + systems + sources + open iterations + counts
+assay status [--json] [--fetch]              # archetype zones with purposes + systems + sources + upstream drift + counts
 assay update --dry-run                       # always dry-run first
 assay migrate-layout --dry-run               # always dry-run first; legacy layouts are migration input only
 
@@ -60,6 +60,7 @@ assay source diff <alias> [--since <observation>]
 assay source log <alias>
 
 # Donor relationships / evidence / decisions
+assay donor take <alias>:<source-path> --into <system>:<target-path> [--mode adapt|copy] [--to <observation>] [--id <adoption-id>]
 assay donor register --file <definition.json|yaml>
 assay donor update <adoption> --file <definition.json|yaml>
 assay donor list
@@ -73,7 +74,8 @@ assay donor history <adoption> [--target <id>]
 assay donor rollback record <adoption> --to-decision <id> [--reason <text>]
 
 assay absorb <source-dir> [--name <name>]        # legacy freeze + open a pre-filled analysis in ONE step
-assay reference add <source-dir> <name>           # legacy/full-capture freeze only (writes reference.yaml, analyzed: false)
+assay reference add <source-dir> <name>           # legacy/full-capture freeze only (writes reference.yaml provenance)
+assay reference backfill <path> [--source <origin>]  # write the missing reference.yaml for an older frozen directory
 assay analysis new "Title" [--for-source <alias>] [--observation <id>] [--for-reference <path>]
 assay analysis close <path> --exit adopt|reject|experiment|adr
 assay iteration start "Title"
@@ -192,21 +194,22 @@ The study-style pipeline `references → analyses → systems → iterations →
 ```
 absorb <source>                      # freeze + write case file + OPEN a pre-filled analysis (one command)
   → fill ## Key observations / Adopt / Reject in the analysis   # content, not just a file
-  → analysis close <path> --exit …   # flips reference.yaml analyzed:true, closes the loop
+  → analysis close <path> --exit …   # records the decision exit, closes the loop
   → (adr | knowledge | iteration against systems/)              # the decision lands somewhere durable
 ```
 
 4. **Add a living external source with `source add <repo-or-dir> [alias]`** when the source may change over time. The preferred human entrance is `references/<alias>/` with `source.yaml`, current `checkout/`, selected `materials/`, `history.md`, and the flat observation ledger (`observations/`, `manifests/`, `comparisons/`, `captures/`). For Git-backed sources, `checkout/` itself is the repository root (`checkout/.git`), not `checkout/<repo-name>/`.
-5. **Sync living sources with `source sync [alias]`** when the external system changes. For Git-backed sources, sync refreshes the managed checkout before observing, and refuses to run when that checkout holds unrecorded work (modified or untracked files, an unrecorded local commit, or directory bytes differing from the latest observation) — preserve or discard the work in `references/<alias>/checkout/` first. Change classes record workflow meaning rather than imposing a universal gate: `same` writes an event only, `patch`/`normal` suggest delta analysis, `major` can be surfaced as a revalidation advisory, and `replacement` should usually become a new lineage instead of pretending it is a refresh.
-6. **Register a donor relationship** when selected source material is carried into a registered system and should remain traceable across later updates. `donor inspect` reports direct source/target changes but is not mandatory before `donor decide`; evidence is advisory unless the definition explicitly marks it `required`. Assay records the relationship and decision while target edits, tests, commits, and restoration remain target-side actions. The definition schema, baseline model, and integrity boundary are documented in the repo's `docs/donor-adoption.md`.
-7. **Use `absorb <source> [--name <name>]`** when you intentionally want the old freeze-and-open-analysis flow. This freezes the source, writes a case file (`reference.yaml` in learning mode, `source.yaml` in absorption mode), AND opens a pre-filled analysis in one step. Prefer `absorb` over `reference add` followed by a separate `analysis new`, because `absorb` guarantees the analysis is opened in the same step and cannot be forgotten.
-8. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]` for living source observations, or `analysis new "Title" --for-reference <path>` for frozen references. When `--observation` is omitted, the latest observation for that source is used.
-9. **Fill the analysis body when the decision needs durable rationale**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next iteration`) with real content drawn from the source. `check --advisories` can list empty drafts; `analysis close` trusts the caller's explicit exit and does not block on section-content heuristics.
-10. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This flips the bound frozen reference's `analyzed` flag to `true` or marks the bound source observation `analysis_status: closed`, then writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
-11. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
-12. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered system's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, contract file, supersedes, or primary status.
-13. Close started iterations with `iteration close --result ...` when a result is known. `check --advisories` can list plans that still have `Status: open`.
-14. Run `update --dry-run` before applying framework upgrades.
+5. **Read upstream drift out of `status`, not out of a maintenance command.** The `Upstream` section compares each managed checkout against the commit its latest observation recorded, with no network, and names the donor mappings a change reaches. `status --fetch` adds a remote comparison; a source it cannot reach is annotated and the command still exits 0. Run `source sync` when that section reports new upstream commits — and never as a routine habit.
+6. **Sync living sources with `source sync [alias]`** when the external system changes. For Git-backed sources, sync refreshes the managed checkout before observing, and refuses to run when that checkout holds unrecorded work (modified or untracked files, an unrecorded local commit, or directory bytes differing from the latest observation) — preserve or discard the work in `references/<alias>/checkout/` first. Change classes record workflow meaning rather than imposing a universal gate: `same` writes an event only, `patch`/`normal` suggest delta analysis, `major` can be surfaced as a revalidation advisory, and `replacement` should usually become a new lineage instead of pretending it is a refresh.
+7. **Register a donor relationship** when selected source material is carried into a registered system and should remain traceable across later updates. For one source path into one system path, `donor take <alias>:<path> --into <system>:<path>` records it in a single command; `donor register --file` covers several mappings, several targets, or required evidence. Afterwards `status` answers "did the source change, and does it reach this adoption"; `donor inspect` remains the explicit verb for writing an immutable inspection record, and is not required before `donor decide`. Evidence is advisory unless the definition explicitly marks it `required`. Assay records the relationship and decision while target edits, tests, commits, and restoration remain target-side actions. The definition schema, baseline model, and integrity boundary are documented in the repo's `docs/donor-adoption.md`.
+8. **Use `absorb <source> [--name <name>]`** when you intentionally want the old freeze-and-open-analysis flow. This freezes the source, writes a case file (`reference.yaml` in learning mode, `source.yaml` in absorption mode), AND opens a pre-filled analysis in one step. Prefer `absorb` over `reference add` followed by a separate `analysis new`, because `absorb` guarantees the analysis is opened in the same step and cannot be forgotten.
+9. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]` for living source observations, or `analysis new "Title" --for-reference <path>` for frozen references. When `--observation` is omitted, the latest observation for that source is used.
+10. **Fill the analysis body when the decision needs durable rationale**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next iteration`) with real content drawn from the source. `check --advisories` can list empty drafts; `analysis close` trusts the caller's explicit exit and does not block on section-content heuristics.
+11. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This marks a bound source observation `analysis_status: closed` and writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
+12. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
+13. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered system's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, contract file, supersedes, or primary status.
+14. Close started iterations with `iteration close --result ...` when a result is known. `check --advisories` can list plans that still have `Status: open`.
+15. Run `update --dry-run` before applying framework upgrades.
 
 ### Adoption with direction
 
@@ -227,14 +230,16 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 - Do not silently rename or delete legacy folders.
 - Do not copy AGPL or incompatible upstream source into our skill; extract patterns and document decisions instead.
 - Do not leave an external reference without an analysis exit: adopt, reject, experiment, or ADR.
-- Do not treat a frozen source as analyzed merely because it was copied. `check --advisories` can list frozen references without a cited analysis.
+- Do not treat a frozen source as absorbed merely because it was copied; a freeze without an analysis exit is unfinished work.
+- Do not run `source sync` as a routine sweep. Read the `Upstream` section of `status` and sync the sources it reports as moved.
 
 ## Positive rules (what "absorbed" actually means)
 
 - When a frozen reference is meant to inform a decision, follow it with an analysis containing the observations needed by that decision. `absorb` opens a bound draft automatically; `reference add` deliberately does not.
 - A living source MUST keep provenance and observation metadata. Use `source status`, `source log`, `source diff`, and `analysis new --for-source` instead of browsing `.assay/` manually; `major` source changes require revalidation before old conclusions are treated as fresh.
 - A file existing does not prove analysis quality. Use `## Key observations` and `## Adopt`/`## Reject` when durable rationale matters; Assay records explicit close decisions instead of pretending a mechanical text check can establish quality.
-- Closing an analysis (`analysis close --exit …`) is the action that marks a frozen reference `analyzed: true` or a living source observation `analysis_status: closed`. Until then the source/referenced material is open work.
+- Closing an analysis (`analysis close --exit …`) is the action that records the decision and marks a bound living source observation `analysis_status: closed`. Until then the source material is open work.
+- A frozen reference keeps a `reference.yaml` recording where it came from. `check --advisories` lists frozen directories that have none, with the `reference backfill` command to write one.
 - In absorption mode, the source IS the project — do not treat official materials as external references. Land them in `problem/`.
 - For adoption and absorption, propose the concrete destination first, then apply on confirmation. Do not stop after archiving.
 
@@ -251,13 +256,13 @@ Run `assay check --advisories` separately when workflow reminders are useful.
 `check` reports four severity levels:
 
 - `[ok]` — directory or managed file present and unchanged.
-- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, or independent-git system without `.git`. With `--advisories`, also includes open iterations, unanalyzed frozen references, major source observations that may need revalidation, empty draft analyses, stale `.old/` adoption archives, pending queue entries, intent enabled in an unversioned private overlay, superseded systems that no supersedes chain points at, top-level directories the archetype does not declare, `analyses/references/` files with no `Status:` header, and an `AGENTS.md` managed block that no longer matches the archetype. Warnings never fail the check.
+- `[warning]` — managed file modified by user, ADR frontmatter missing, contract file missing, or independent-git system without `.git`. With `--advisories`, also includes open iterations, frozen references with no `reference.yaml`, major source observations that may need revalidation, empty draft analyses, stale `.old/` adoption archives, pending queue entries, intent enabled in an unversioned private overlay, superseded systems that no supersedes chain points at, top-level directories the archetype does not declare, `analyses/references/` files with no `Status:` header, and an `AGENTS.md` managed block that no longer matches the archetype. Warnings never fail the check.
 - `[missing]` — required directory or manifest absent.
 - `[error]` — managed file missing from disk, registered system path missing, source observation records missing required fingerprint/manifest state, two primary systems, inconsistent ADR supersede links, or invalid donor persistence. **Exits non-zero.**
 
 Workflow/content reminders are opt-in because they describe work state, not corruption. Structure, registry/index consistency, managed-record integrity, and donor persistence remain in the default check.
 
-`status` opens with the archetype and its one-line description, then `Zones`: the directories that archetype declares, each with a file count and what belongs in it. Read the zones before placing a file — they are the workspace's own statement of where work goes, and they differ per archetype. After that it shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, a compact `Donor adoptions` summary when donor records exist, `Open iterations`, `Knowledge entries`, and `Run records (runs.jsonl)` where that file exists. Use `--json` for the same data machine-readably. For update and migrate, always run `--dry-run` first and review the plan before `--apply`. Dry-run commands must not create project files or project-registry records.
+`status` opens with the archetype and its one-line description, then `Zones`: the directories that archetype declares, each with a file count and what belongs in it. Read the zones before placing a file — they are the workspace's own statement of where work goes, and they differ per archetype. After that it shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Living sources` summary, an `Upstream` block naming each source that drifted and how many donor mappings the change reaches (add `--fetch` to compare remotes as well), `Decision records` suggestions for sources whose last change was graded `major` or `replacement`, a compact `Donor adoptions` summary when donor records exist, `Open iterations`, `Knowledge entries`, and `Run records (runs.jsonl)` where that file exists. Use `--json` for the same data machine-readably. For update and migrate, always run `--dry-run` first and review the plan before `--apply`. Dry-run commands must not create project files or project-registry records.
 
 ## Final response checklist
 
@@ -271,6 +276,6 @@ Report:
 - Which ADRs were created, accepted, superseded, deprecated, or left proposed.
 - Which intent captures were recorded (with their systems), which were promoted into requirements or ADRs, and which are still unconverted requests.
 - Registered systems and the current `primary`.
-- **Content-completeness**: count of living sources and whether latest observations have provenance/fingerprints/manifests; count of frozen references analyzed vs unanalyzed; count of open draft analyses and whether their `Key observations` are non-empty; whether `.old/` still contains un-migrated stamps. This is what distinguishes "files were created" from "content was actually absorbed".
+- **Content-completeness**: count of living sources and whether latest observations have provenance/fingerprints/manifests; count of frozen references carrying a `reference.yaml` vs missing one; count of open draft analyses and whether their `Key observations` are non-empty; whether `.old/` still contains un-migrated stamps. This is what distinguishes "files were created" from "content was actually absorbed".
 - Any open iterations or unresolved reminders reported by `check --advisories`, when that audit was requested.
 - Next recommended absorption, analysis close, iteration, or close step.

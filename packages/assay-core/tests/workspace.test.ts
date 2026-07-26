@@ -12,6 +12,7 @@ import {
   addReference,
   addSource,
   attachExistingRepo,
+  backfillReferenceCaseFile,
   captureEvent,
   checkFramework,
   closeAnalysis,
@@ -630,56 +631,27 @@ describe("checkFramework semantic validation", () => {
     ).toBe(true);
   });
 
-  it("warns on a frozen reference that no analysis cites", async () => {
+  it("reports a frozen reference only for missing provenance, not for missing citations", async () => {
     const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
 
-    // Freeze a reference directory with no analysis mentioning it.
-    await mkdir(path.join(root, "references", "frozen", "202606", "lonely-ref"), {
+    // A properly frozen reference no analysis mentions. Nothing to report:
+    // whether a reference was read is not something the tool can observe.
+    const frozen = await addReference({ root, source, name: "Lonely Ref" });
+    // A hand-made freeze with no case file: real, checkable, and reported.
+    await mkdir(path.join(root, "references", "frozen", "202606", "handmade"), {
       recursive: true,
     });
-    await writeFile(
-      path.join(root, "references", "frozen", "202606", "lonely-ref", "README.md"),
-      "# lonely\n",
-      "utf8",
-    );
 
     const result = await checkFramework({ root, includeAdvisories: true });
 
+    expect(result.rows.filter((row) => row.path === frozen.path)).toEqual([]);
     expect(
-      result.rows.some(
-        (row) =>
-          row.path === "references/frozen/202606/lonely-ref" &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
-      ),
-    ).toBe(true);
-  });
-
-  it("does not warn on a frozen reference that an analysis cites", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-
-    await mkdir(path.join(root, "references", "frozen", "202606", "cited-ref"), {
-      recursive: true,
-    });
-    // An analysis that mentions the reference name.
-    await writeFile(
-      path.join(root, "analyses", "references", "2026-06-20-cited-ref.md"),
-      "# Cited ref\n\n- Status: applied\n\n## Reference\n\ncited-ref\n\n## Key observations\n\nsomething\n",
-      "utf8",
-    );
-
-    const result = await checkFramework({ root, includeAdvisories: true });
-
-    expect(
-      result.rows.some(
-        (row) =>
-          row.path === "references/frozen/202606/cited-ref" &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
-      ),
-    ).toBe(false);
+      result.rows.find((row) => row.path === "references/frozen/202606/handmade"),
+    ).toMatchObject({ status: "warning" });
   });
 
   it("warns on a draft analysis with empty Key observations", async () => {
@@ -951,7 +923,7 @@ describe("workspace operations", () => {
     expect(await readFile(path.join(root, result.eventFile), "utf8")).toContain("reference.frozen");
   });
 
-  it("writes a reference.yaml case file with analyzed: false on freeze", async () => {
+  it("writes a reference.yaml case file recording provenance on freeze", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo" });
@@ -969,12 +941,13 @@ describe("workspace operations", () => {
     expect(await exists(yamlPath)).toBe(true);
     const yaml = await readFile(yamlPath, "utf8");
     expect(yaml).toContain("name: Source Project");
-    expect(yaml).toContain("analyzed: false");
     expect(yaml).toContain("freeze_path: references/frozen/202606/source-project");
+    // The removed gate must not come back as a field nothing reads.
+    expect(yaml).not.toContain("analyzed:");
 
-    // The freeze event should record analysis_required.
     const event = await readFile(path.join(root, result.eventFile), "utf8");
-    expect(event).toContain('"analysis_required":true');
+    expect(event).toContain('"reference.frozen"');
+    expect(event).not.toContain('"analyzed"');
   });
 
   it("createAnalysis --forReference pre-fills provenance from reference.yaml", async () => {
@@ -1003,7 +976,7 @@ describe("workspace operations", () => {
     expect(content).toContain("- Freeze path: references/frozen/202606/source-project");
   });
 
-  it("closeAnalysis flips the bound reference.yaml analyzed flag to true", async () => {
+  it("closeAnalysis leaves a bound reference case file untouched", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo" });
@@ -1016,6 +989,8 @@ describe("workspace operations", () => {
       name: "Source Project",
       now: new Date("2026-06-14T10:00:00"),
     });
+    const yamlPath = path.join(ref.absolutePath, "reference.yaml");
+    const before = await readFile(yamlPath, "utf8");
     const analysis = await createAnalysis({
       root,
       title: "Review Source Project",
@@ -1027,29 +1002,77 @@ describe("workspace operations", () => {
       adopt: "- Adopt the pattern.",
     });
 
-    await closeAnalysis({
+    const closed = await closeAnalysis({
       root,
       path: analysis.path,
       exit: "adopt",
       now: new Date("2026-06-16T10:00:00"),
     });
 
-    const yaml = await readFile(path.join(ref.absolutePath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: true");
+    expect(await readFile(yamlPath, "utf8")).toBe(before);
     const content = await readFile(analysis.absolutePath, "utf8");
     expect(content).toContain("- Status: applied");
     expect(content).not.toContain("- Source analysis status:");
+    expect(await readFile(path.join(root, closed.eventFile), "utf8")).not.toContain(
+      "marked_reference_analyzed",
+    );
+  });
 
-    // check should no longer warn about this reference being unanalyzed.
+  it("reads a legacy reference.yaml that still carries the removed analyzed flag", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
+
+    const ref = await addReference({
+      root,
+      source,
+      name: "Legacy Ref",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+    const yamlPath = path.join(ref.absolutePath, "reference.yaml");
+    await writeFile(yamlPath, `${await readFile(yamlPath, "utf8")}analyzed: false\n`, "utf8");
+
+    const analysis = await createAnalysis({
+      root,
+      title: "Review Legacy Ref",
+      forReference: ref.path,
+      now: new Date("2026-06-15T10:00:00"),
+    });
+    const content = await readFile(analysis.absolutePath, "utf8");
+    expect(content).toContain("- Reference: Legacy Ref");
+    expect(content).toContain(`- Freeze path: ${ref.path}`);
+
     const check = await checkFramework({ root, includeAdvisories: true });
-    expect(
-      check.rows.some(
-        (row) =>
-          row.path === ref.path &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
-      ),
-    ).toBe(false);
+    expect(check.ok).toBe(true);
+    expect(check.rows.some((row) => row.message?.includes("analyzed"))).toBe(false);
+  });
+
+  it("reports a frozen reference with no case file and names the backfill command", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const legacyPath = "references/frozen/202512/hand-frozen";
+    await mkdir(path.join(root, legacyPath), { recursive: true });
+    await writeFile(path.join(root, legacyPath, "README.md"), "# Hand frozen\n", "utf8");
+
+    const check = await checkFramework({ root, includeAdvisories: true });
+    const row = check.rows.find((candidate) => candidate.path === legacyPath);
+    expect(row?.status).toBe("warning");
+    expect(row?.message).toContain(`assay reference backfill ${legacyPath}`);
+    // Advisories never fail the check.
+    expect(check.ok).toBe(true);
+
+    const backfilled = await backfillReferenceCaseFile({ root, path: legacyPath });
+    expect(backfilled.created).toBe(true);
+    const yaml = await readFile(path.join(root, backfilled.referenceFile), "utf8");
+    expect(yaml).toContain("name: hand-frozen");
+    expect(yaml).toContain(`freeze_path: ${legacyPath}`);
+
+    const after = await checkFramework({ root, includeAdvisories: true });
+    expect(after.rows.some((candidate) => candidate.path === legacyPath)).toBe(false);
+    // Re-running never overwrites recorded provenance.
+    expect((await backfillReferenceCaseFile({ root, path: legacyPath })).created).toBe(false);
   });
 
   it("absorbReference freezes, opens a bound analysis, and pre-fills it", async () => {
@@ -1075,7 +1098,7 @@ describe("workspace operations", () => {
     // Reference frozen with a case file.
     expect(result.referencePath).toBe("references/frozen/202606/source-project");
     const yaml = await readFile(path.join(root, result.referencePath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: false");
+    expect(yaml).toContain("freeze_path: references/frozen/202606/source-project");
 
     // An analysis was opened and bound.
     expect(result.analysisPath).toBe("analyses/references/2026-06-14-absorb-source-project.md");
@@ -1088,17 +1111,13 @@ describe("workspace operations", () => {
     expect(analysis).toContain("src/");
     expect(analysis).toContain("README.md");
 
-    // Status is draft (open work), so check flags it as an open analysis — not
-    // silently "done". The reference is unanalyzed until the analysis closes.
+    // The freeze wrote a case file, so no provenance advisory fires for it.
     const check = await checkFramework({ root, includeAdvisories: true });
     expect(
       check.rows.some(
-        (row) =>
-          row.path === result.referencePath &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
+        (row) => row.path === result.referencePath && row.message?.includes("no reference.yaml"),
       ),
-    ).toBe(false); // cited by its own bound analysis
+    ).toBe(false);
   });
 
   it("absorbReference rejects a file source (expects a directory)", async () => {

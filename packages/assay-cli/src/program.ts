@@ -5,7 +5,9 @@ import {
   type AnalysisExit,
   type AssayProjectRegistryStatus,
   CURRENT_VERSION,
+  DONOR_TAKE_MODES,
   type DonorDecisionOutcome,
+  type DonorTakeMode,
   type IntentPromotionTarget,
   type IterationResult,
   type KnowledgeType,
@@ -28,6 +30,7 @@ import {
   applyUpdate,
   archiveSystem,
   attachExistingRepo,
+  backfillReferenceCaseFile,
   captureEvent,
   captureIntent,
   checkFramework,
@@ -75,6 +78,7 @@ import {
   supersedeAdr,
   switchSource,
   syncSource,
+  takeDonorMaterial,
   updateDonorAdoptionFromFile,
   updateSystem,
   verifyDonorInspection,
@@ -242,6 +246,33 @@ function parseIntentAuthority(
     mode: mode as SystemIntentAuthorityMode,
     ...(pointer === undefined ? {} : { pointer }),
   };
+}
+
+/**
+ * Split a `<name>:<path>` pair.
+ *
+ * The name is everything before the **first** colon, so the remainder keeps a
+ * Windows-style path intact instead of being cut at its drive colon. A path
+ * like that is not a valid donor locator — locators are relative to the source
+ * observation or the registered system — and it is refused by name below or by
+ * the path schema, rather than being silently rewritten into something else.
+ */
+function splitDonorLocatorArgument(
+  value: string,
+  label: string,
+): { readonly name: string; readonly path: string } {
+  const separator = value.indexOf(":");
+  const name = separator < 0 ? "" : value.slice(0, separator);
+  const locatorPath = separator < 0 ? "" : value.slice(separator + 1);
+  if (name === "" || locatorPath === "") {
+    throw new Error(`${label} must be <name>:<path>; got '${value}'`);
+  }
+  if (/^[a-zA-Z]$/.test(name) && /^[\\/]/.test(locatorPath)) {
+    throw new Error(
+      `${label} must be <name>:<path> with a path relative to the source or system root; '${value}' looks like a Windows absolute path`,
+    );
+  }
+  return { name, path: locatorPath };
 }
 
 function splitList(value: string | undefined): string[] | undefined {
@@ -434,9 +465,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Print workspace status")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
+    .option("--fetch", "also compare Git-backed sources against their remotes (network)")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await getFrameworkStatus({ root });
+      const result = await getFrameworkStatus({ root, fetch: commandOptions.fetch === true });
       if (commandOptions.json) {
         writeJson(output, result);
         return;
@@ -685,6 +717,29 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
     });
 
+  reference
+    .command("backfill")
+    .description("Write the missing reference.yaml for an existing frozen reference")
+    .argument("<path>", "frozen reference directory, relative to the workspace root")
+    .option("--source <origin>", "where the material came from, when it is known")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (referencePath, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await backfillReferenceCaseFile({
+        root,
+        path: referencePath,
+        ...(commandOptions.source === undefined ? {} : { source: commandOptions.source }),
+      });
+      if (!result.created) {
+        writeLine(output, "stdout", `Reference already has a case file: ${result.referenceFile}`);
+        return;
+      }
+      writeLine(output, "stdout", `Wrote reference case file: ${result.referenceFile}`);
+      if (result.eventFile) {
+        writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      }
+    });
+
   const source = program.command("source").description("Living external source operations");
   source
     .command("add")
@@ -844,6 +899,66 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       if (result.eventFile) {
         writeLine(output, "stdout", `Event: ${result.eventFile}`);
       }
+    });
+
+  donor
+    .command("take")
+    .description("Register a single-source, single-target adoption without a definition file")
+    .argument("<source>", "<source-alias>:<path-in-source>")
+    .requiredOption("--into <target>", "<target-system>:<path-in-system>")
+    .addOption(
+      new Option("--mode <mode>", "how the material was carried over")
+        .choices([...DONOR_TAKE_MODES])
+        .default("adapt"),
+    )
+    .addOption(
+      new Option("--match <match>", "locator shape; inferred from the observation by default")
+        .choices(["exact", "prefix"])
+        .hideHelp(),
+    )
+    .option("--to <observation>", "source observation id; defaults to latest")
+    .option("--id <adoption-id>", "adoption id; derived from source, system, and path by default")
+    .option("--title <title>", "human-readable adoption title")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (sourceArgument, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const from = splitDonorLocatorArgument(sourceArgument, "donor source");
+      const into = splitDonorLocatorArgument(commandOptions.into, "--into");
+      const result = await takeDonorMaterial({
+        root,
+        sourceAlias: from.name,
+        sourcePath: from.path,
+        targetSystem: into.name,
+        targetPath: into.path,
+        mode: commandOptions.mode as DonorTakeMode,
+        ...(commandOptions.match === undefined
+          ? {}
+          : { match: commandOptions.match as "exact" | "prefix" }),
+        ...(commandOptions.to === undefined ? {} : { observation: commandOptions.to }),
+        ...(commandOptions.id === undefined ? {} : { adoptionId: commandOptions.id }),
+        ...(commandOptions.title === undefined ? {} : { title: commandOptions.title }),
+      });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", `Registered donor adoption: ${result.adoptionId}`);
+      writeLine(output, "stdout", `Definition: ${result.definitionDigest}`);
+      writeLine(
+        output,
+        "stdout",
+        `Mapping: ${from.name}:${from.path} -> ${result.targetId}:${into.path} (${commandOptions.mode}, match ${result.match})`,
+      );
+      writeLine(output, "stdout", `Observation: ${result.observation}`);
+      if (result.eventFile) {
+        writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      }
+      writeLine(
+        output,
+        "stdout",
+        `Next: assay status reports when ${from.name} changes under this mapping.`,
+      );
     });
 
   donor

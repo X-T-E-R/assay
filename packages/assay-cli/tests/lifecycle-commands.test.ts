@@ -291,7 +291,7 @@ describe("assay analysis close CLI", () => {
     expect(close.exitCode).not.toBe(0);
   });
 
-  it("binds analysis to a frozen reference and marks it analyzed on close", async () => {
+  it("binds analysis to a frozen reference and leaves its case file untouched on close", async () => {
     const root = await initWorkspace("AnalForRef");
     // Create a source directory and freeze it as a reference.
     const source = path.join(root, "..", "anal-for-ref-source");
@@ -327,7 +327,7 @@ describe("assay analysis close CLI", () => {
       adopt: "- Adopt the useful reference detail.",
     });
 
-    // Closing the analysis must flip reference.yaml analyzed to true.
+    const yamlBefore = await readFile(path.join(root, refPath, "reference.yaml"), "utf8");
     const close = await runCli([
       "analysis",
       "close",
@@ -339,8 +339,11 @@ describe("assay analysis close CLI", () => {
     ]);
     expect(close.exitCode).toBe(0);
 
+    // The frozen case file records provenance only; closing an analysis no
+    // longer writes a gate flag into it.
     const yaml = await readFile(path.join(root, refPath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: true");
+    expect(yaml).toBe(yamlBefore);
+    expect(yaml).not.toContain("analyzed:");
   });
 
   it("keeps major revalidation optional and clears the requested advisory on close", async () => {
@@ -427,9 +430,9 @@ describe("assay absorb CLI", () => {
     expect(res.stdout).toContain(`Absorbed source: ${referencePath}`);
     expect(res.stdout).toContain("Opened analysis: analyses/references/");
 
-    // reference.yaml case file present and unanalyzed.
+    // reference.yaml case file present with provenance.
     const yaml = await readFile(path.join(root, referencePath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: false");
+    expect(yaml).toContain(`freeze_path: ${referencePath}`);
 
     // The opened analysis is pre-filled with the README lead.
     const match = res.stdout.match(/analyses\/references\/[^\s]+\.md/);

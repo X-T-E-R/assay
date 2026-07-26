@@ -158,10 +158,96 @@ and every non-empty one was written by a project's own harness.
 
 Existing workspaces keep their `runs.jsonl`; nothing deletes it.
 
+## Upstream Drift Is Reported by `status`
+
+Adding a living source was popular; syncing one almost never happened. The
+answer a source exists to provide — did it move, and does that reach anything
+we adopted from it — is now part of the command that gets run anyway.
+
+```text
+Upstream
+  - qwen-agent   3 new upstream commits   affects 2 donor mappings
+  - langgraph    local checkout modified (1 uncommitted file); not recorded — preserve or discard it before the next sync
+  - autogen      no change
+Next: assay source sync qwen-agent
+```
+
+- **Local, always on, no network.** Each Git-backed checkout's `HEAD` and
+  working tree are compared against the commit its latest observation recorded.
+  A hand-edited managed checkout becomes visible here for the first time:
+  previously only `source sync` noticed, by refusing to run.
+- **A checkout that is not a Git repository reports `not checked (no cheap
+  signal)`** instead of being content-hashed. Full fingerprint comparison stays
+  in `sync`, where that cost is already being paid.
+- **`assay status --fetch` adds the remote comparison.** It is never implicit.
+  Offline, expired credentials, or a deleted remote annotate that one source
+  with `upstream not checked this run` and leave the exit code at 0.
+- **Donor impact.** Changed paths are intersected with the source locators of
+  the workspace's donor adoptions, so a moved source says how many adopted
+  mappings it reaches. `donor inspect` remains the explicit verb for writing an
+  immutable inspection record; you no longer have to run it to learn that
+  something changed.
+- **`Next:`** names a command only for an upstream move, which is the case
+  `source sync` resolves. A drifted or dirty checkout is reported instead,
+  because `sync` deliberately refuses those.
+- All of it is in `assay status --json` under `upstream`.
+
+## Change Grading Suggests a Decision Record
+
+A source graded `major` or `replacement` now prompts for an ADR — in the `source
+sync` output that produced the grade, and in `status` for as long as it is the
+source's latest change. Deciding whether a change deserves a decision record is
+the step people report as the hard one; the grade already existed and nothing
+consumed it. It is advisory text and blocks nothing.
+
+## `assay donor take`
+
+Registering an adoption no longer requires writing a definition file first:
+
+```bash
+assay donor take readseek:packages/pi-readseek/src/hashline.ts \
+  --into pipi:packages/pipi-readseek/src/anchor.ts --mode adapt
+```
+
+- Synthesizes and registers the single-source, single-target definition
+  `--file` would have contained, with the same schema and validation. The result
+  is an ordinary adoption that `donor show`, `donor inspect`, `donor decide`,
+  and the `Upstream` section all read.
+- Both arguments are `<name>:<path>`, split at the **first** colon, with paths
+  relative to the source observation and to the registered system. A
+  drive-prefixed or absolute path is refused by name rather than split
+  somewhere else.
+- The locator shape is read off the observation: a path naming one recorded file
+  becomes `exact`, a path with files beneath it becomes `prefix`.
+- `--mode adapt|copy` records how the material was carried over. `--id`,
+  `--title`, and `--to <observation>` override the defaults.
+- `donor register --file` is unchanged and remains the way to declare several
+  mappings, several targets, or required evidence.
+
+## The Frozen-Reference `analyzed` Gate Is Gone
+
+`analyzed: false` was written into every `reference.yaml` and flipped by
+`analysis close`. It gated nothing, and across existing workspaces it was false
+everywhere.
+
+- `reference add` and `absorb` no longer write the field, `analysis close` no
+  longer rewrites the case file, and the `reference.frozen` event drops
+  `analyzed` / `analysis_required`.
+- The "frozen reference with no analysis citing it" advisory is removed with it.
+- Case files that still carry `analyzed` keep loading; the field is ignored.
+- What replaces it is a gap that is actually checkable: **a frozen directory
+  with no `reference.yaml` at all**, which is how references frozen by hand or
+  by older builds carry no provenance. `check --advisories` reports each one
+  with the command that fixes it, and `assay reference backfill <path>
+  [--source <origin>]` writes the missing case file. Existing provenance is
+  never overwritten.
+
 ## New Advisories
 
 All appear only under `assay check --advisories` and never fail the check.
 
+- A frozen reference directory with no `reference.yaml`, with the
+  `assay reference backfill` command that writes one.
 - A top-level directory the archetype does not declare. Writing straight into a
   directory instead of going through a command is normal usage, so this makes
   misplaced material visible and fixable rather than turning it into an error.
@@ -210,9 +296,18 @@ keep validating in the other as long as the fields above are absent.
 - The `solve` archetype's `runs.jsonl` template. Existing files are untouched
   and `assay status` still counts them; new solve workspaces do not get one.
 - The `solve.runs.jsonl` template id, which nothing else referenced.
+- The frozen-reference `analyzed` flag: no longer written by `reference add` or
+  `absorb`, no longer set by `analysis close`, and no longer read by anything.
+  Existing case files keep loading with the field present. The advisory that
+  depended on it — a frozen reference no analysis cites — is gone; a frozen
+  directory missing `reference.yaml` is reported instead.
+- The `analyzed` and `analysis_required` keys in the `reference.frozen` event,
+  and `marked_reference_analyzed` in the `analysis.closed` event.
 
-No command or flag was removed. `Archetype.dirs` (and the learning/absorption
+No command or flag was removed; `status --fetch`, `donor take`, and
+`reference backfill` were added. `Archetype.dirs` (and the learning/absorption
 variants) now hold `{ path, purpose }` objects rather than strings; embedders
 reading them directly should use `dirsForArchetype()` for paths or
-`archetypeDirectories()` for both. Existing workspaces need no action to keep
+`archetypeDirectories()` for both. `getFrameworkStatus()` takes its own options
+type with an optional `fetch`. Existing workspaces need no action to keep
 working; `intent` does nothing until it is explicitly enabled.

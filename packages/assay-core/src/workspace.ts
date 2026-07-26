@@ -1,7 +1,7 @@
 import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
-import { parse as parseYaml, parseDocument as parseYamlDocument } from "yaml";
+import { parse as parseYaml } from "yaml";
 
 import { defaultAdrIndex, loadAdrIndex, saveAdrIndex } from "./adrs.js";
 import {
@@ -41,7 +41,7 @@ import {
   recordTemplate,
   saveManifest,
 } from "./manifest.js";
-import { isContainedPath, relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
+import { relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
 import {
   type Archetype,
   type CapabilityModule,
@@ -76,6 +76,12 @@ import {
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
 import { archetypeTemplates, capabilityTemplates, mergeTemplateFiles } from "./templates.js";
 import { nowIso } from "./time.js";
+import {
+  type SourceAdrSuggestion,
+  type UpstreamStatus,
+  adrSuggestionsForSources,
+  collectUpstreamStatus,
+} from "./upstream.js";
 import { archetypeZones } from "./zones.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
@@ -233,6 +239,16 @@ export interface FrameworkStatusDonors {
   readonly draftTargets: number;
 }
 
+export interface GetFrameworkStatusOptions {
+  readonly root: string;
+  /**
+   * Also compare each Git-backed source against its remote. Off by default:
+   * `status` is a local-first command, and a failed fetch annotates the source
+   * instead of failing the command.
+   */
+  readonly fetch?: boolean;
+}
+
 export interface FrameworkStatusResult {
   readonly root: string;
   readonly hasManifest: boolean;
@@ -248,6 +264,10 @@ export interface FrameworkStatusResult {
   readonly zones: FrameworkZoneCount[];
   readonly systems?: readonly FrameworkStatusSystem[];
   readonly livingSources?: FrameworkStatusLivingSources;
+  /** Drift of each living source's checkout; omitted when there are none. */
+  readonly upstream?: UpstreamStatus;
+  /** Sources whose latest change grade suggests recording a decision. */
+  readonly adrSuggestions?: readonly SourceAdrSuggestion[];
   readonly donors?: FrameworkStatusDonors;
   readonly openIterations?: number;
   readonly knowledgeEntries?: number;
@@ -1255,42 +1275,23 @@ export async function checkFramework(
     // knowledge dir may not exist; skip
   }
 
-  // Advisory check 1: unanalyzed frozen references
-  // The core loop is references → analyses → .... A frozen reference that no
-  // analysis cites can be useful to review, but it is workflow state rather
-  // than persisted-record corruption. Report it only when explicitly asked.
+  // Advisory check 1: frozen references with no case file.
+  //
+  // This replaces the old `analyzed` gate, which was true nowhere and blocked
+  // nothing. The real gap it hid is a frozen directory with no
+  // `reference.yaml`: v3-era freezes carry no provenance at all, so nothing
+  // downstream can say where the material came from or when it was captured.
   if (includeAdvisories) {
     try {
       const frozenRoot = path.join(workspacePath(root, layout, "references"), "frozen");
       if (await exists(frozenRoot)) {
-        const references = await collectFrozenReferences(root, frozenRoot);
-        if (references.length > 0) {
-          const analysisText = await readAllAnalysisText(root, layout);
-          for (const ref of references) {
-            // Authoritative signal: reference.yaml.analyzed === true means an
-            // analysis was closed against this reference (see closeAnalysis).
-            const yamlPath = path.join(root, ref.relativePath, "reference.yaml");
-            let explicitlyAnalyzed = false;
-            try {
-              if (await exists(yamlPath)) {
-                const parsed = parseReferenceYaml(await readFile(yamlPath, "utf8"));
-                explicitlyAnalyzed = parsed.analyzed === true;
-              }
-            } catch {
-              // unreadable yaml; fall back to citation check
-            }
-            if (explicitlyAnalyzed) continue;
-            const cited = analysisText.some(
-              (text) => text.includes(ref.name) || text.includes(ref.relativePath),
-            );
-            if (!cited) {
-              rows.push({
-                path: ref.relativePath,
-                status: "warning",
-                message: `frozen reference '${ref.name}' has no analysis citing it (references → analyses loop is incomplete)`,
-              });
-            }
-          }
+        for (const ref of await collectFrozenReferences(root, frozenRoot)) {
+          if (await exists(path.join(root, ref.relativePath, "reference.yaml"))) continue;
+          rows.push({
+            path: ref.relativePath,
+            status: "warning",
+            message: `frozen reference '${ref.name}' has no reference.yaml, so its provenance is not recorded. Write one with \`assay reference backfill ${ref.relativePath}\`.`,
+          });
         }
       }
     } catch {
@@ -1660,26 +1661,6 @@ async function collectFrozenReferences(
   return references;
 }
 
-/**
- * Read the concatenated text of every markdown file under analyses/. Used to
- * test whether a frozen reference is cited by any analysis.
- */
-async function readAllAnalysisText(root: string, layout: WorkspaceLayout): Promise<string[]> {
-  const analysesRoot = workspacePath(root, layout, "analyses");
-  if (!(await exists(analysesRoot))) return [];
-  const files: string[] = [];
-  await collectMarkdownFiles(analysesRoot, files);
-  const texts: string[] = [];
-  for (const file of files) {
-    try {
-      texts.push(await readFile(file, "utf8"));
-    } catch {
-      // skip unreadable
-    }
-  }
-  return texts;
-}
-
 async function collectMarkdownFiles(dir: string, out: string[]): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -2022,7 +2003,7 @@ async function countRunRecords(root: string, layout: WorkspaceLayout): Promise<n
 const MAX_RUN_LOG_BYTES = 16 * 1024 * 1024;
 
 export async function getFrameworkStatus(
-  options: CheckFrameworkOptions,
+  options: GetFrameworkStatusOptions,
 ): Promise<FrameworkStatusResult> {
   const root = path.resolve(options.root);
   const manifest = await loadManifest(root);
@@ -2075,6 +2056,7 @@ export async function getFrameworkStatus(
   }
 
   let livingSources: FrameworkStatusLivingSources | undefined;
+  let adrSuggestions: readonly SourceAdrSuggestion[] | undefined;
   try {
     const status = await getSourceStatus({ root });
     const sources = status.sources;
@@ -2087,8 +2069,22 @@ export async function getFrameworkStatus(
         (source) => source.latestChangeClass === "major" && source.analysisStatus !== "closed",
       ).length,
     };
+    const suggestions = adrSuggestionsForSources(sources);
+    adrSuggestions = suggestions.length > 0 ? suggestions : undefined;
   } catch {
     // sources may not exist or may be mid-migration; status omits the summary
+  }
+
+  // Upstream drift is the answer users would otherwise have to go and fetch
+  // with a command nobody runs. It is computed here, in the command they do
+  // run, and it never fails status: a broken checkout or an unreachable remote
+  // annotates its own line.
+  let upstream: UpstreamStatus | undefined;
+  try {
+    const collected = await collectUpstreamStatus({ root, fetch: options.fetch === true });
+    upstream = collected.total > 0 ? collected : undefined;
+  } catch {
+    // source ledger problems are reported by check; status stays usable
   }
 
   let donors: FrameworkStatusDonors | undefined;
@@ -2109,6 +2105,8 @@ export async function getFrameworkStatus(
       zones,
       ...(systems ? { systems } : {}),
       ...(livingSources ? { livingSources } : {}),
+      ...(upstream ? { upstream } : {}),
+      ...(adrSuggestions ? { adrSuggestions } : {}),
       ...(donors ? { donors } : {}),
       ...(openIterations !== undefined ? { openIterations } : {}),
       knowledgeEntries: knowledgeCount,
@@ -2132,6 +2130,8 @@ export async function getFrameworkStatus(
     zones,
     ...(systems ? { systems } : {}),
     ...(livingSources ? { livingSources } : {}),
+    ...(upstream ? { upstream } : {}),
+    ...(adrSuggestions ? { adrSuggestions } : {}),
     ...(donors ? { donors } : {}),
     ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
@@ -2172,10 +2172,9 @@ export async function addReference(options: AddReferenceOptions): Promise<AddRef
     filter: (_source, dest) => shouldCopyReference(destination, dest),
   });
 
-  // Freeze = open a case file, not just copy files. Write a reference.yaml that
-  // records provenance and an `analyzed: false` flag so the framework can track
-  // whether this reference ever received an analysis. Without this, a frozen
-  // reference is indistinguishable from "done" and tends to be forgotten.
+  // Freeze = open a case file, not just copy files. The reference.yaml records
+  // where the material came from and when it was captured; without it a frozen
+  // directory is a pile of files with no provenance.
   const referenceYamlPath = path.join(destination, "reference.yaml");
   await writeFile(
     referenceYamlPath,
@@ -2195,8 +2194,7 @@ export async function addReference(options: AddReferenceOptions): Promise<AddRef
       name: options.name,
       path: relativePath,
       source,
-      analyzed: false,
-      analysis_required: true,
+      reference_file: `${relativePath}/reference.yaml`,
     },
     now,
   );
@@ -2221,17 +2219,104 @@ function referenceYaml(input: {
   readonly frozenOn: string;
 }): string {
   return [
-    "# Reference case file. Managed by `assay`. Edit provenance fields",
-    "# freely; the `analyzed` flag is flipped by `analysis close`.",
+    "# Reference case file. Managed by `assay`. Edit provenance fields freely.",
     `name: ${yamlScalar(input.name)}`,
     `source: ${yamlScalar(input.source)}`,
     `freeze_path: ${yamlScalar(input.freezePath)}`,
     `frozen_on: ${input.frozenOn}`,
-    "analyzed: false",
     "# analysis_points: fill with concrete questions this reference should answer",
     "analysis_points: []",
     "",
   ].join("\n");
+}
+
+export interface BackfillReferenceOptions {
+  readonly root: string;
+  /** Workspace-relative path of the frozen reference directory. */
+  readonly path: string;
+  /** Where the material originally came from, when it is known. */
+  readonly source?: string;
+  readonly now?: Date;
+}
+
+export interface BackfillReferenceResult {
+  readonly root: string;
+  readonly path: string;
+  readonly referenceFile: string;
+  /** False when the directory already had a case file; nothing was written. */
+  readonly created: boolean;
+  readonly eventFile?: string;
+}
+
+/**
+ * Write the missing `reference.yaml` for a frozen reference that predates the
+ * case file, or was created by hand.
+ *
+ * `check --advisories` names this command with the path already filled in, so
+ * the fix is one line away from the report instead of being a documented
+ * procedure. An existing case file is never overwritten: provenance already
+ * recorded is the thing worth protecting here.
+ */
+export async function backfillReferenceCaseFile(
+  options: BackfillReferenceOptions,
+): Promise<BackfillReferenceResult> {
+  const root = path.resolve(options.root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = layoutForManifest(manifest);
+  const now = options.now ?? new Date();
+  const target = resolveContainedPath(root, options.path, "reference path");
+  const frozenPrefix = `${workspaceSubpath(layout, "references", "frozen")}/`;
+  if (!target.relativePath.startsWith(frozenPrefix)) {
+    throw new FrameworkError(
+      `not a frozen reference path: ${target.relativePath} (expected a directory under ${frozenPrefix})`,
+    );
+  }
+
+  let info: Awaited<ReturnType<typeof stat>>;
+  try {
+    info = await stat(target.absolutePath);
+  } catch {
+    throw new FrameworkNotFoundError(`reference not found: ${target.relativePath}`);
+  }
+  if (!info.isDirectory()) {
+    throw new FrameworkError(`reference path is not a directory: ${target.relativePath}`);
+  }
+
+  const referenceFile = `${target.relativePath}/reference.yaml`;
+  const yamlPath = path.join(target.absolutePath, "reference.yaml");
+  if (await exists(yamlPath)) {
+    return { root, path: target.relativePath, referenceFile, created: false };
+  }
+
+  await writeFile(
+    yamlPath,
+    referenceYaml({
+      name: path.basename(target.relativePath),
+      source: options.source ?? "unknown",
+      freezePath: target.relativePath,
+      // The freeze happened when the directory was written, not now.
+      frozenOn: nowIso(info.mtime),
+    }),
+    "utf8",
+  );
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "reference.backfilled",
+      path: target.relativePath,
+      reference_file: referenceFile,
+      source: options.source ?? null,
+    },
+    now,
+  );
+
+  return {
+    root,
+    path: target.relativePath,
+    referenceFile,
+    created: true,
+    eventFile: relativeDisplayPath(eventFile, root),
+  };
 }
 
 /** Quote a YAML scalar only when it contains characters that need quoting. */
@@ -2244,14 +2329,14 @@ function yamlScalar(value: string): string {
 
 /**
  * Read the scalar fields of a reference.yaml case file. Parsing goes through
- * the YAML library so the reader accepts exactly what the writer can update:
- * a file this returns values for is a file `markReferenceAnalyzed` can rewrite.
+ * the YAML library, and unknown keys are ignored, so a case file written by an
+ * older build — including one that still carries the removed `analyzed` flag —
+ * keeps resolving its provenance.
  */
 function parseReferenceYaml(content: string): {
   name?: string;
   source?: string;
   freezePath?: string;
-  analyzed?: boolean;
 } {
   let parsed: unknown;
   try {
@@ -2266,54 +2351,11 @@ function parseReferenceYaml(content: string): {
     return {};
   }
   const record = parsed as Record<string, unknown>;
-  const result: { name?: string; source?: string; freezePath?: string; analyzed?: boolean } = {};
+  const result: { name?: string; source?: string; freezePath?: string } = {};
   if (typeof record.name === "string") result.name = record.name;
   if (typeof record.source === "string") result.source = record.source;
   if (typeof record.freeze_path === "string") result.freezePath = record.freeze_path;
-  if (typeof record.analyzed === "boolean") result.analyzed = record.analyzed;
   return result;
-}
-
-/**
- * Set `analyzed: true` in a reference.yaml, preserving comments and every other
- * field. Returns false when there is no case file to update (a legacy or
- * hand-made freeze) or when the flag is already true. Raises when the file
- * exists but its `analyzed` flag cannot be read or written, because a close
- * that silently fails to mark the reference leaves `check` and the case file
- * disagreeing.
- */
-async function markReferenceAnalyzed(yamlPath: string): Promise<boolean> {
-  if (!(await exists(yamlPath))) return false;
-  const content = await readFile(yamlPath, "utf8");
-  let document: ReturnType<typeof parseYamlDocument>;
-  try {
-    document = parseYamlDocument(content);
-    if (document.errors.length > 0) {
-      throw new Error(document.errors[0]?.message ?? "invalid YAML");
-    }
-  } catch (error) {
-    throw new FrameworkError(`reference case file cannot be parsed: ${yamlPath}`, {
-      code: "IO_ERROR",
-      cause: error,
-    });
-  }
-  const current = document.get("analyzed");
-  if (current === true) return false;
-  if (typeof current !== "boolean") {
-    throw new FrameworkError(
-      `reference case file has no boolean 'analyzed' flag to update: ${yamlPath}`,
-      { code: "IO_ERROR" },
-    );
-  }
-  document.set("analyzed", true);
-  const updated = document.toString();
-  if (parseReferenceYaml(updated).analyzed !== true) {
-    throw new FrameworkError(`reference case file 'analyzed' flag could not be set: ${yamlPath}`, {
-      code: "IO_ERROR",
-    });
-  }
-  await writeFile(yamlPath, updated, "utf8");
-  return true;
 }
 
 /**
@@ -2932,24 +2974,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
     throw error;
   }
 
-  // If this analysis was bound to a frozen reference, flip that reference's
-  // `analyzed` flag to true so `check` stops warning about it. This closes the
-  // references → analyses loop: freezing opens the case, closing the analysis
-  // marks it resolved.
-  const freezePath = readHeaderToken(content, "Freeze path");
-  let analyzedReference: string | null = null;
-  if (freezePath) {
-    // The freeze path is read back out of the analysis header, so it is treated
-    // as untrusted: a path that leaves the workspace is ignored rather than
-    // followed into a write.
-    if (isContainedPath(root, toPosixPath(freezePath))) {
-      const yamlPath = path.join(root, freezePath, "reference.yaml");
-      if (await markReferenceAnalyzed(yamlPath)) {
-        analyzedReference = freezePath;
-      }
-    }
-  }
-
   const eventFile = await appendEvent(
     root,
     {
@@ -2957,7 +2981,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
       path: analysisPath,
       exit: options.exit,
       note: options.note ?? null,
-      ...(analyzedReference ? { marked_reference_analyzed: analyzedReference } : {}),
       ...(closedSourceObservation
         ? { marked_source_observation_closed: closedSourceObservation }
         : {}),

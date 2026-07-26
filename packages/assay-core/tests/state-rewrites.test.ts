@@ -290,59 +290,31 @@ describe("reference case files are read and written through one YAML parser", ()
     return frozen.path;
   }
 
-  it("refuses to report success when the case file indents the analyzed flag", async () => {
+  it("refuses to bind an analysis to a case file that no longer parses", async () => {
     const root = await workspace("ReferenceIndented");
     const referencePath = await frozenReference(root, "Indented Ref");
     const yamlPath = path.join(root, referencePath, "reference.yaml");
     const original = await readFile(yamlPath, "utf8");
-    // A hand edit that indents the flag. The previous hand-rolled reader
-    // trimmed leading whitespace and reported the value while the anchored
-    // rewrite could not see it, so `analysis close` exited 0 without marking
-    // anything. One parser for both sides makes the file's real state visible.
-    await writeFile(yamlPath, original.replace("analyzed: false", "  analyzed: false"), "utf8");
+    // A hand edit that indents a field. Reading provenance through the YAML
+    // parser is what makes this visible: a hand-rolled reader trimmed leading
+    // whitespace and reported a value the file does not actually define.
+    await writeFile(yamlPath, original.replace("freeze_path:", "  freeze_path:"), "utf8");
 
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Indented Ref",
-      forReference: referencePath,
-      now: new Date("2026-06-15T10:00:00"),
-    }).catch(async (error: unknown) => {
-      expect(String(error)).toMatch(/reference case file cannot be parsed as YAML/);
-      return null;
-    });
-
-    if (analysis) {
-      await expect(closeAnalysis({ root, path: analysis.path, exit: "adopt" })).rejects.toThrow(
-        /reference case file/,
-      );
-    }
-
-    // Either way the flag was never silently reported as set.
-    expect(await readFile(yamlPath, "utf8")).toMatch(/analyzed:\s*false/);
+    await expect(
+      createAnalysis({
+        root,
+        title: "Review Indented Ref",
+        forReference: referencePath,
+        now: new Date("2026-06-15T10:00:00"),
+      }),
+    ).rejects.toThrow(/reference case file cannot be parsed as YAML/);
   });
 
-  it("refuses to close when the case file cannot record the analyzed flag", async () => {
-    const root = await workspace("ReferenceUnmarkable");
-    const referencePath = await frozenReference(root, "Unmarkable Ref");
-    const yamlPath = path.join(root, referencePath, "reference.yaml");
-    const original = await readFile(yamlPath, "utf8");
-    await writeFile(yamlPath, original.replace(/^analyzed: false$/m, 'analyzed: "no"'), "utf8");
-
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Unmarkable Ref",
-      forReference: referencePath,
-      now: new Date("2026-06-15T10:00:00"),
-    });
-
-    await expect(closeAnalysis({ root, path: analysis.path, exit: "adopt" })).rejects.toThrow(
-      /no boolean 'analyzed' flag/,
-    );
-  });
-
-  it("preserves the case file comments when marking it analyzed", async () => {
+  it("leaves the case file exactly as written when the analysis closes", async () => {
     const root = await workspace("ReferenceComments");
     const referencePath = await frozenReference(root, "Comment Ref");
+    const yamlPath = path.join(root, referencePath, "reference.yaml");
+    const before = await readFile(yamlPath, "utf8");
     const analysis = await createAnalysis({
       root,
       title: "Review Comment Ref",
@@ -351,10 +323,11 @@ describe("reference case files are read and written through one YAML parser", ()
     });
     await closeAnalysis({ root, path: analysis.path, exit: "adopt" });
 
-    const updated = await readFile(path.join(root, referencePath, "reference.yaml"), "utf8");
+    const updated = await readFile(yamlPath, "utf8");
+    expect(updated).toBe(before);
     expect(updated).toContain("# Reference case file.");
     expect(updated).toContain("analysis_points: []");
-    expect(updated).toMatch(/analyzed:\s*true/);
+    expect(updated).not.toContain("analyzed:");
   });
 });
 

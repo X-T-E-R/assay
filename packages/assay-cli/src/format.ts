@@ -266,6 +266,40 @@ function zoneLines(zones: FrameworkStatusResult["zones"]): string[] {
   ];
 }
 
+/**
+ * The Upstream block answers the question a living source exists to raise —
+ * did it move, and does that reach anything we adopted — in the command that
+ * actually gets run. The `Next:` line names the command that resolves it, and
+ * appears only when one exists.
+ */
+function upstreamLines(upstream: FrameworkStatusResult["upstream"]): string[] {
+  if (!upstream || upstream.sources.length === 0) {
+    return [];
+  }
+  const aliasWidth = Math.max(...upstream.sources.map((source) => source.alias.length));
+  const lines = [
+    "Upstream",
+    ...upstream.sources.map((source) => {
+      const impact =
+        source.impact && source.impact.mappings > 0
+          ? `   affects ${source.impact.mappings} donor mapping${source.impact.mappings === 1 ? "" : "s"}`
+          : "";
+      return `  - ${source.alias.padEnd(aliasWidth)}   ${source.summary}${impact}`;
+    }),
+  ];
+  if (upstream.nextCommand) {
+    lines.push(`Next: ${upstream.nextCommand}`);
+  }
+  return lines;
+}
+
+function adrSuggestionLines(suggestions: FrameworkStatusResult["adrSuggestions"]): string[] {
+  if (!suggestions || suggestions.length === 0) {
+    return [];
+  }
+  return ["Decision records", ...suggestions.map((suggestion) => `  - ${suggestion.message}`)];
+}
+
 export function formatStatusResult(result: FrameworkStatusResult): string {
   const header = ["Framework status", `Root: ${result.root}`];
   const semantics = manifestSemanticsLines(
@@ -335,6 +369,8 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     ...zones,
     ...systems,
     ...livingSources,
+    ...upstreamLines(result.upstream),
+    ...adrSuggestionLines(result.adrSuggestions),
     ...donors,
     ...summary,
   ].join("\n");
@@ -369,6 +405,21 @@ export function formatSourceLogResult(result: SourceLogResult): string {
   ].join("\n");
 }
 
+/**
+ * A `major` or `replacement` grade is Assay's only signal that an upstream
+ * change may have invalidated an architectural assumption. Deciding whether a
+ * change deserves a decision record is the step people report as the hard one,
+ * so the grade is offered as that prompt. It blocks nothing.
+ */
+function adrSuggestionForChange(changeClass: SourceSyncResult["changeClass"]): string[] {
+  if (changeClass !== "major" && changeClass !== "replacement") {
+    return [];
+  }
+  return [
+    `Advisory: graded '${changeClass}'. If that changed an architectural assumption, record it: assay adr new "<decision>"`,
+  ];
+}
+
 export function formatSourceSyncResult(result: SourceSyncResult): string {
   if (!result.observation) {
     return [
@@ -377,6 +428,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
       `Change: ${result.changeClass}`,
       "Observation: unchanged",
       `Event: ${result.eventFile}`,
+      ...adrSuggestionForChange(result.changeClass),
     ].join("\n");
   }
   return [
@@ -386,6 +438,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
     `Observation: ${result.observationFile ?? result.observation.observation_id}`,
     `Manifest: ${result.manifestFile ?? result.observation.manifest}`,
     `Event: ${result.eventFile}`,
+    ...adrSuggestionForChange(result.changeClass),
   ].join("\n");
 }
 

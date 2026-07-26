@@ -9,7 +9,7 @@ assay init [target-dir] --name <project> --archetype <name> [--git] [--force] [-
 assay attach [--root <dir>] --name <project> --archetype <name> [--privacy private|private-git|tracked] [--no-track] [--no-agents]
 assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overlay]
 assay check [--advisories] [--root <dir>]
-assay status [--root <dir>] [--json]
+assay status [--root <dir>] [--json] [--fetch]
 assay update [--root <dir>] [--dry-run] [--agents] [--force | --skip-all | --create-new] [--no-track]
 assay migrate-layout [--root <dir>] [--dry-run | --apply] [--backup]
 assay archetype [--root <dir>] [--json]
@@ -29,8 +29,8 @@ state, source observation integrity, and donor persistence. It exits non-zero
 only for missing required structure or invalid persisted state. Add
 `--advisories` to request non-blocking workflow reminders such as open
 iterations, unfinished draft analyses, pending queue entries, lingering
-adoption archives, unanalyzed frozen references, and major source changes that
-have not been re-reviewed.
+adoption archives, frozen references with no `reference.yaml`, and major source
+changes that have not been re-reviewed.
 
 `--advisories` also reports placement: a top-level directory the archetype does
 not declare, an `analyses/references/` file with no `Status:` header, and an
@@ -44,6 +44,39 @@ belongs there, under a header naming the archetype and its description. A
 directory Assay's layout defines but the archetype does not declare is listed
 too when it holds files, so nothing with content becomes invisible. `--json`
 emits the same data, zones and purposes included.
+
+### Upstream drift in `status`
+
+When the workspace has living sources, `status` adds an `Upstream` section
+answering the two questions a source exists to raise — did it move, and does
+that reach anything adopted from it:
+
+```text
+Upstream
+  - qwen-agent   3 new upstream commits   affects 2 donor mappings
+  - langgraph    local checkout modified (1 uncommitted file); not recorded — preserve or discard it before the next sync
+  - autogen      no change
+Next: assay source sync qwen-agent
+```
+
+- Without `--fetch` the comparison is local and free: the managed checkout's
+  `HEAD` and working tree against the commit the latest observation recorded.
+  This is what makes a hand-edited checkout visible; previously only
+  `source sync` noticed, and it noticed by refusing.
+- A checkout that is not a Git repository reports `not checked (no cheap
+  signal)`. Full content fingerprinting stays in `sync`.
+- `--fetch` also compares the remote tip. Failures — offline, expired
+  credentials, a deleted remote — annotate that source with `upstream not
+  checked this run` and leave the exit code at 0.
+- When donor adoptions exist, the changed paths are intersected with their
+  source locators, so the line says how many adopted mappings the change
+  reaches.
+- `Next:` appears only for an upstream move, which is the case `source sync`
+  resolves. A drifted or modified checkout is deliberately refused by `sync`, so
+  it is reported rather than pointed at a command that would fail.
+
+`status` also prints a `Decision records` line for a source whose latest change
+was graded `major` or `replacement`, suggesting an ADR. Nothing is blocked.
 
 ## Attach an existing repository
 
@@ -82,6 +115,7 @@ assay source diff <alias> [--root <dir>] [--since <observation>]
 assay source log <alias> [--root <dir>]
 assay absorb <source-dir> [--name <name>] [--root <dir>] [--as problem|intake]
 assay reference add <source-dir> <name> [--root <dir>]
+assay reference backfill <path> [--source <origin>] [--root <dir>]
 assay analysis new <title> [--root <dir>] [--for-source <alias>] [--observation <id-or-path>] [--for-reference <path>]
 assay analysis close <path> --exit adopt|reject|experiment|adr [--note <note>] [--root <dir>]
 assay iteration start <title> [--root <dir>]
@@ -92,10 +126,17 @@ assay knowledge add <type> <title> [--from-analysis <path>] [--from-iteration <p
 
 Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
 
-`analysis close` records the caller's explicit exit, updates bound reference or
-source metadata, and writes an event. It does not block on section-content
-heuristics. Use `assay check --advisories` before closing when unfinished-draft
-reminders are useful.
+`analysis close` records the caller's explicit exit, updates bound source
+metadata, and writes an event. It does not block on section-content heuristics.
+Use `assay check --advisories` before closing when unfinished-draft reminders
+are useful.
+
+`reference add` writes a `reference.yaml` recording where the frozen material
+came from and when. `reference backfill` writes that file for a frozen
+directory that has none — a freeze made by hand, or by a version of Assay that
+predates the case file. It never overwrites provenance that is already there,
+and `check --advisories` prints the exact command for each directory missing
+one.
 
 ## Donor adoption
 
@@ -103,6 +144,7 @@ Use donor commands when selected material from a living source has been
 implemented, adapted, or otherwise carried into a registered target system:
 
 ```bash
+assay donor take <alias>:<source-path> --into <system>:<target-path> [--mode adapt|copy] [--to <observation>] [--id <adoption-id>] [--title <title>] [--root <dir>] [--json]
 assay donor register --file <definition.json|yaml> [--root <dir>] [--json]
 assay donor update <adoption> --file <definition.json|yaml> [--root <dir>] [--json]
 assay donor list [--root <dir>] [--json]
@@ -116,10 +158,18 @@ assay donor history <adoption> [--target <id>] [--root <dir>] [--json]
 assay donor rollback record <adoption> --to-decision <id> [--reason <text>] [--root <dir>] [--json]
 ```
 
+`take` covers the common case — one source path carried into one system path —
+by synthesizing and registering the definition `--file` would have contained.
+Both arguments are `<name>:<path>` split at the first colon, with paths relative
+to the source observation and the registered system. Use `--file` for several
+mappings, several targets, or required evidence.
+
 `inspect` captures source and target direct-change facts. It is optional:
 `decide` without `--inspection` captures the current snapshots inside the
-decision operation. Evidence is advisory by default and blocks `accept` only
-when the definition explicitly marks it `required`.
+decision operation, and `assay status` answers "did the source change, and does
+it reach this adoption" without any inspection at all. Evidence is advisory by
+default and blocks `accept` only when the definition explicitly marks it
+`required`.
 
 Donor records live under `.assay/donors/`. They do not edit target files,
 execute target tests, create commits, or restore revisions. See
