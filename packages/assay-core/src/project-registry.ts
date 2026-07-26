@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError } from "./errors.js";
-import { loadManifest } from "./manifest.js";
+import { loadLegacyManifest, loadManifest } from "./manifest.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
 
@@ -243,12 +243,29 @@ export async function forgetProject(
   return record;
 }
 
+/**
+ * Drop records whose project is gone. `uninstalled` is an explicit statement
+ * that Assay was removed from a workspace; `missing` covers two very different
+ * situations and only one of them may be deleted here — a path that no longer
+ * exists is dead metadata, while a directory that is still on disk but whose
+ * manifest cannot be read is a workspace someone can still repair or migrate,
+ * and forgetting it would throw away the only index of it. Those stay listed as
+ * missing and are reported rather than removed.
+ */
 export async function pruneProjects(
   options: PruneProjectsOptions = {},
 ): Promise<AssayProjectRecord[]> {
-  const stale = (await listProjectRecords(options)).filter(
-    (record) => record.status === "missing" || record.status === "uninstalled",
-  );
+  const records = await listProjectRecords(options);
+  const stale: AssayProjectRecord[] = [];
+  for (const record of records) {
+    if (record.status === "uninstalled") {
+      stale.push(record);
+      continue;
+    }
+    if (record.status === "missing" && !(await projectDirectoryExists(record))) {
+      stale.push(record);
+    }
+  }
   if (options.dryRun) {
     return stale;
   }
@@ -257,6 +274,17 @@ export async function pruneProjects(
     stale.map((record) => rm(projectRecordPath(record.id, options), { force: true })),
   );
   return stale;
+}
+
+/** Whether the directory a record points at is still on disk, at either path. */
+async function projectDirectoryExists(record: AssayProjectRecord): Promise<boolean> {
+  for (const candidate of new Set([record.path, record.realpath])) {
+    const stats = await safeStat(candidate);
+    if (stats?.isDirectory()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function recordProjectLifecycleBestEffort(
@@ -394,9 +422,24 @@ async function refreshProjectRecordStatus(record: AssayProjectRecord): Promise<A
   };
 }
 
+/**
+ * Read a workspace's manifest for registry purposes, accepting the legacy
+ * `.framework/` location. The registry answers "is Assay still installed
+ * here", and a v3 workspace that has not been migrated yet answers yes; reading
+ * only `.assay/manifest.json` reported every one of them as missing.
+ */
 async function safeLoadManifest(projectPath: string): Promise<FrameworkManifest | null> {
   try {
-    return await loadManifest(projectPath);
+    const manifest = await loadManifest(projectPath);
+    if (manifest) {
+      return manifest;
+    }
+  } catch {
+    // A manifest that fails validation is reported by `check`; fall through to
+    // the legacy location before concluding the workspace is gone.
+  }
+  try {
+    return await loadLegacyManifest(projectPath);
   } catch {
     return null;
   }

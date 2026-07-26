@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { FrameworkError, FrameworkNotFoundError } from "../errors.js";
@@ -7,8 +7,10 @@ import { appendEvent } from "../events.js";
 import { relativeDisplayPath } from "../paths.js";
 import type { CheckRow } from "../results.js";
 import { stringifySortedJson } from "../serialization.js";
+import { resolveSourceObservation } from "../sources.js";
 import { nowIso } from "../time.js";
 import {
+  DONOR_ADOPTION_SCHEMA,
   DONOR_DECISION_SCHEMA,
   DONOR_EVIDENCE_SCHEMA,
   DONOR_INSPECTION_SCHEMA,
@@ -23,6 +25,7 @@ import {
   type DonorInspection,
   type DonorLocatorSnapshot,
   type DonorMappingInspection,
+  type DonorPathLocator,
   type DonorPolicyEvaluation,
   type DonorState,
   donorAdoptionDefinitionSchema,
@@ -30,6 +33,7 @@ import {
   donorEvidenceInputSchema,
   donorEvidenceSchema,
   donorInspectionSchema,
+  donorRelativePathSchema,
   donorStateSchema,
 } from "./schemas.js";
 import {
@@ -67,7 +71,7 @@ import {
 } from "./storage.js";
 
 export * from "./schemas.js";
-export { snapshotManifestLocator } from "./snapshots.js";
+export { donorLocatorMatchesPath, snapshotManifestLocator } from "./snapshots.js";
 export {
   type DonorLockStatus,
   DonorRecordFileError,
@@ -337,6 +341,202 @@ export async function updateDonorAdoptionFromFile(options: {
     definition: await readStructuredFile(path.resolve(options.file)),
     ...(options.now === undefined ? {} : { now: options.now }),
   });
+}
+
+export const DONOR_TAKE_MODES = ["adapt", "copy"] as const;
+export type DonorTakeMode = (typeof DONOR_TAKE_MODES)[number];
+
+export interface TakeDonorMaterialOptions {
+  readonly root: string;
+  /** Living source alias the material came from. */
+  readonly sourceAlias: string;
+  /** Path inside that source's observation. */
+  readonly sourcePath: string;
+  /** Registered system the material landed in. */
+  readonly targetSystem: string;
+  /** Path inside that system. */
+  readonly targetPath: string;
+  readonly mode?: DonorTakeMode;
+  /** Locator shape; inferred from the observation when omitted. */
+  readonly match?: "exact" | "prefix";
+  /** Source observation id or path; defaults to the latest. */
+  readonly observation?: string;
+  /** Adoption id; derived from alias, system, and source path when omitted. */
+  readonly adoptionId?: string;
+  readonly title?: string;
+  readonly now?: Date;
+}
+
+export interface TakeDonorMaterialResult extends DonorDefinitionResult {
+  readonly targetId: string;
+  readonly mappingId: string;
+  readonly match: "exact" | "prefix";
+  readonly observation: string;
+}
+
+/** Identifier fragment accepted by `donorIdSchema`, derived from free text. */
+function donorSlug(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return /^[a-z0-9]/.test(slug) ? slug : `x${slug}`;
+}
+
+/**
+ * Validate one endpoint of a take before it becomes a definition. Doing it
+ * here rather than leaving it to definition validation is what lets the error
+ * name the argument the caller typed — an absolute or drive-prefixed path is
+ * the likely mistake, and "donor adoption definition failed validation" would
+ * not say which half of the command produced it.
+ */
+function normalizeTakePath(value: string, label: string): string {
+  const parsed = donorRelativePathSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new FrameworkError(
+      `${label} must be a contained relative path (no leading '/', drive letter, or '..'): ${value}`,
+      { code: "INVALID_DONOR" },
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * Locator shape for a source path, read off the observation that is being
+ * adopted: a path that names one recorded file is `exact`, a path that has
+ * recorded files beneath it is `prefix`. Without this, taking a directory
+ * would fail validation with "source locator does not resolve" even though the
+ * directory is right there in the observation.
+ */
+async function inferSourceMatch(
+  root: string,
+  manifestFile: string,
+  sourcePath: string,
+): Promise<"exact" | "prefix"> {
+  let files: readonly { readonly path?: unknown }[] = [];
+  try {
+    const parsed = JSON.parse(await readFile(path.resolve(root, manifestFile), "utf8")) as {
+      readonly files?: readonly { readonly path?: unknown }[];
+    };
+    files = parsed.files ?? [];
+  } catch {
+    return "exact";
+  }
+  const paths = files.map((file) => (typeof file.path === "string" ? file.path : ""));
+  if (paths.includes(sourcePath)) {
+    return "exact";
+  }
+  return paths.some((candidate) => candidate.startsWith(`${sourcePath}/`)) ? "prefix" : "exact";
+}
+
+/**
+ * Register a single-source, single-target adoption from its two endpoints.
+ *
+ * `donor register --file` asks for a definition document before the adoption
+ * can be recorded, which puts a preparation step in front of the one thing the
+ * user is trying to say: "I took that from there and put it here." This
+ * synthesizes the same definition — same schema, same validation, same
+ * records — so the common case is one command. `--file` remains for multi-
+ * target, multi-mapping, or evidence-bearing adoptions.
+ */
+export async function takeDonorMaterial(
+  options: TakeDonorMaterialOptions,
+): Promise<TakeDonorMaterialResult> {
+  const root = path.resolve(options.root);
+  const sourcePath = normalizeTakePath(options.sourcePath, "source path");
+  const targetPath = normalizeTakePath(options.targetPath, "target path");
+  const mode = options.mode ?? "adapt";
+
+  const resolved = await resolveSourceObservation({
+    root,
+    alias: options.sourceAlias,
+    ...(options.observation === undefined ? {} : { observation: options.observation }),
+  });
+  const match = options.match ?? (await inferSourceMatch(root, resolved.manifestFile, sourcePath));
+
+  const targetId = donorSlug(options.targetSystem);
+  const mappingId = donorSlug(sourcePath);
+  const adoptionId = (
+    options.adoptionId ?? `${donorSlug(resolved.alias)}-${targetId}-${mappingId}`
+  ).slice(0, 128);
+
+  const definition = {
+    schema: DONOR_ADOPTION_SCHEMA,
+    id: adoptionId,
+    ...(options.title === undefined ? {} : { title: options.title }),
+    source: { alias: resolved.alias, observation: resolved.observation.observation_id },
+    targets: [{ id: targetId, system: options.targetSystem, adapter: "local-system/v1" }],
+    mappings: [
+      {
+        id: mappingId,
+        kind: "artifact",
+        mode,
+        source: { path: sourcePath, match },
+        target: { target_id: targetId, path: targetPath, match },
+        evidence: [],
+      },
+    ],
+    evidence: [],
+  };
+
+  const registered = await registerDonorAdoption({
+    root,
+    definition,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+  return {
+    ...registered,
+    targetId,
+    mappingId,
+    match,
+    observation: resolved.observation.observation_id,
+  };
+}
+
+export interface DonorSourceMapping {
+  readonly adoptionId: string;
+  readonly mappingId: string;
+  readonly sourceAlias: string;
+  readonly locator: DonorPathLocator;
+}
+
+/**
+ * Every declared source locator across the workspace's donor adoptions.
+ *
+ * `assay status` intersects these with the paths an upstream change touched,
+ * so "the source moved" is reported together with "it reaches N adopted
+ * places". A damaged adoption is skipped rather than fatal: `check` is where
+ * record integrity is reported, and status must not stop answering because one
+ * adoption is unreadable.
+ */
+export async function listDonorSourceMappings(
+  root: string,
+): Promise<readonly DonorSourceMapping[]> {
+  const resolvedRoot = path.resolve(root);
+  const mappings: DonorSourceMapping[] = [];
+  for (const adoptionId of await listDonorStateIds(resolvedRoot)) {
+    try {
+      const state = await readDonorState(resolvedRoot, adoptionId);
+      const { definition } = await readDonorDefinition(
+        resolvedRoot,
+        adoptionId,
+        state.current_definition,
+      );
+      for (const mapping of definition.mappings) {
+        mappings.push({
+          adoptionId,
+          mappingId: mapping.id,
+          sourceAlias: definition.source.alias,
+          locator: mapping.source,
+        });
+      }
+    } catch {
+      // unreadable adoption; `check` reports the damaged record
+    }
+  }
+  return mappings;
 }
 
 function sourceChange(

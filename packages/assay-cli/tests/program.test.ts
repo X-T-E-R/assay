@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createProgram } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
-const USER_FACING_BUILT_INS = ["evaluation", "explore", "library", "science", "solve", "study"];
+const USER_FACING_BUILT_INS = ["explore", "solve", "study"];
 const tempDirs = createTempDirectoryFixture("assay-cli");
 let registryRoot = "";
 let cliRunner: BuiltCliRunner;
@@ -190,6 +190,41 @@ describe("assay CLI subprocess behavior", () => {
       lastCommand: "init",
       status: "active",
     });
+  });
+
+  it("prints archetype-derived zones with purposes and emits the same data as JSON", async () => {
+    const root = path.join(await tempDir(), "solve");
+    const init = await runCli(["init", root, "--name", "Solve Smoke", "--archetype", "solve"]);
+    expect(init.exitCode).toBe(0);
+
+    const status = await runCli(["status", "--root", root]);
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout).toContain(
+      "Archetype: solve - Attack one goal that has a measurable success criterion",
+    );
+    expect(status.stdout).toMatch(/- problem\/\s+\d+\s+Task statement, official rules/);
+    expect(status.stdout).toContain("Goal-attack loops");
+    expect(status.stdout).not.toContain("analyses/references/");
+    expect(status.stderr).toBe("");
+
+    await writeFile(path.join(root, "runs.jsonl"), '{"run_id":"a"}\n', "utf8");
+
+    const json = await runCli(["status", "--root", root, "--json"]);
+    expect(json.exitCode).toBe(0);
+    const payload = JSON.parse(json.stdout);
+    expect(payload).toMatchObject({
+      archetype: "solve",
+      mode: "absorption",
+      runRecords: 1,
+    });
+    expect(payload.archetypeDescription).toContain("measurable success criterion");
+    expect(payload.zones).toContainEqual(
+      expect.objectContaining({
+        path: "problem",
+        purpose: "Task statement, official rules, scoring definition",
+      }),
+    );
+    expect(json.stderr).toBe("");
   });
 
   it("does not create or mutate project registry records for update dry-run", async () => {
@@ -375,7 +410,7 @@ describe("assay CLI subprocess behavior", () => {
 
   it("rejects removed archetype names and lists current built-ins", async () => {
     const home = path.join(await tempDir(), "empty-home");
-    for (const removedName of [`re${"search"}`, `con${"test"}`]) {
+    for (const removedName of [`con${"test"}`]) {
       const result = await runCli(
         [
           "init",
@@ -403,14 +438,6 @@ describe("assay CLI subprocess behavior", () => {
 
   it("initializes new built-in archetypes and each passes check", async () => {
     const expectations = {
-      science: {
-        mode: "absorption",
-        paths: ["hypotheses", "experiments", "datasets", "findings", "papers"],
-      },
-      evaluation: {
-        mode: "learning",
-        paths: ["candidates", "scorecards", "criteria.md", path.join("knowledge", "decisions")],
-      },
       explore: {
         mode: "absorption",
         paths: ["approaches", "trials", "comparison.md"],
@@ -564,7 +591,7 @@ describe("assay CLI subprocess behavior", () => {
         expect.objectContaining({ name: "foo", source: "project" }),
         expect.objectContaining({ name: "bar", source: "user" }),
         expect.objectContaining({ name: "study", source: "built-in" }),
-        expect.objectContaining({ name: "science", source: "built-in" }),
+        expect.objectContaining({ name: "explore", source: "built-in" }),
       ]),
     );
     expect(
@@ -934,23 +961,36 @@ describe("assay CLI subprocess behavior", () => {
       scanned.some((candidate: { path?: string }) => candidate.path === path.resolve(root)),
     ).toBe(true);
 
+    // A workspace whose manifest is gone but whose directory is still there is
+    // reported as missing and kept: it can still be repaired or migrated, and
+    // its registry record is the only index of it.
     await rm(path.join(root, ".assay"), { recursive: true, force: true });
-    const dryRunPrune = await runCli(["projects", "prune", "--dry-run", "--json"]);
-    expect(dryRunPrune.exitCode).toBe(0);
-    expect(JSON.parse(dryRunPrune.stdout)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
-    );
+    const keptPrune = await runCli(["projects", "prune", "--dry-run", "--json"]);
+    expect(keptPrune.exitCode).toBe(0);
+    expect(JSON.parse(keptPrune.stdout)).toEqual([]);
 
     const stillListed = await runCli(["projects", "list", "--status", "missing", "--json"]);
     expect(JSON.parse(stillListed.stdout)).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
     );
 
+    await rm(root, { recursive: true, force: true });
+    const dryRunPrune = await runCli(["projects", "prune", "--dry-run", "--json"]);
+    expect(dryRunPrune.exitCode).toBe(0);
+    expect(JSON.parse(dryRunPrune.stdout)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
+    );
+    expect(await pathExists(path.join(siblingRoot, ".assay", "manifest.json"))).toBe(true);
+
     const prune = await runCli(["projects", "prune", "--json"]);
     expect(prune.exitCode).toBe(0);
     expect(JSON.parse(prune.stdout)).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: record.id, status: "missing" })]),
     );
-    expect(await pathExists(path.join(root, "README.md"))).toBe(true);
+
+    const remaining = await runCli(["projects", "list", "--json"]);
+    expect(
+      JSON.parse(remaining.stdout).some((candidate: { id?: string }) => candidate.id === record.id),
+    ).toBe(false);
   });
 });

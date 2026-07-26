@@ -1,14 +1,16 @@
 import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
-import { parse as parseYaml, parseDocument as parseYamlDocument } from "yaml";
+import { parse as parseYaml } from "yaml";
 
 import { defaultAdrIndex, loadAdrIndex, saveAdrIndex } from "./adrs.js";
 import {
+  ASSAY_AGENTS_FILE,
   ASSAY_AGENTS_MALFORMED_REASON,
   type AssayAgentsBlockResult,
   applyAssayAgentsBlock,
   describeAssayAgentsBlockAction,
+  planAssayAgentsBlock,
 } from "./agents.js";
 import {
   ADRS_FILE,
@@ -24,19 +26,36 @@ import { fileHash } from "./hashing.js";
 import {
   type WorkspaceArea,
   defaultStandaloneLayout,
+  intentRootPath,
   resolveWorkspaceLayout,
   workspacePath,
   workspaceRelativePath,
   workspaceSubpath,
+  workspaceTemplateRelativePath,
   workspaceWorkRelativePath,
 } from "./layout.js";
-import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
-import { isContainedPath, relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
 import {
+  defaultManifest,
+  loadManifest,
+  projectFromManifest,
+  recordTemplate,
+  saveManifest,
+} from "./manifest.js";
+import { relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
+import {
+  type Archetype,
+  type CapabilityModule,
+  SUPPORTED_CAPABILITY_MODULES,
+  archetypeHasCapability,
+  capabilityDirectories,
+  declaredCapabilities,
   dirsForArchetype,
+  effectiveCapabilities,
+  isCapabilityModule,
   loadArchetype,
   readInstalledArchetype,
   requireCapability,
+  requireCapabilityModule,
 } from "./profile.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import type {
@@ -55,8 +74,15 @@ import {
   resolveSourceObservation,
 } from "./sources.js";
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
-import { archetypeTemplates } from "./templates.js";
+import { archetypeTemplates, capabilityTemplates, mergeTemplateFiles } from "./templates.js";
 import { nowIso } from "./time.js";
+import {
+  type SourceAdrSuggestion,
+  type UpstreamStatus,
+  adrSuggestionsForSources,
+  collectUpstreamStatus,
+} from "./upstream.js";
+import { archetypeZones } from "./zones.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
   ".venv",
@@ -75,15 +101,28 @@ const GENERATED_REFERENCE_DIRS = new Set([
  * them. Without the layout, `assay update` would create `README.md`,
  * `.gitignore`, `analyses/`, and `knowledge/` in an attached product
  * repository — the files `attach` deliberately leaves alone.
+ *
+ * Capability modules contribute their own templates, so files scaffolded by
+ * `assay capability add` stay under update management instead of drifting
+ * outside it. Callers that hold a manifest pass its `capabilities` list;
+ * without it only the archetype's own modules contribute.
  */
 export async function desiredRuntimeTemplates(
   project: string,
   archetype: ProjectArchetype,
   mode: ProjectMode,
-  options: { readonly root?: string; readonly layout?: WorkspaceLayout } = {},
+  options: {
+    readonly root?: string;
+    readonly layout?: WorkspaceLayout;
+    readonly capabilities?: readonly string[];
+  } = {},
 ) {
   const archetypeDefinition = await loadArchetype(archetype, options);
-  return archetypeTemplates(project, mode, archetypeDefinition, options.layout);
+  const capabilities = effectiveCapabilities(archetypeDefinition, options.capabilities);
+  return mergeTemplateFiles(
+    archetypeTemplates(project, mode, archetypeDefinition, options.layout),
+    capabilityTemplates(project, mode, archetypeDefinition, capabilities, options.layout),
+  );
 }
 
 export interface InitFrameworkOptions {
@@ -103,6 +142,46 @@ export interface InitFrameworkResult {
   readonly archetype: ProjectArchetype;
   readonly mode: ProjectMode;
   readonly report: OperationReport;
+}
+
+/** How a capability module became available to a workspace. */
+export type CapabilitySource = "archetype" | "added";
+
+export interface AddCapabilityOptions {
+  readonly root: string;
+  /** Capability module name; validated against the supported set. */
+  readonly module: string;
+  readonly now?: Date;
+}
+
+export interface AddCapabilityResult {
+  readonly root: string;
+  readonly module: CapabilityModule;
+  /** True when the workspace already had the module; nothing was written. */
+  readonly alreadyEnabled: boolean;
+  readonly source: CapabilitySource;
+  readonly capabilities: readonly CapabilityModule[];
+  readonly report: OperationReport;
+  readonly eventFile?: string;
+}
+
+export interface CapabilityStatus {
+  readonly module: string;
+  readonly enabled: boolean;
+  readonly source: CapabilitySource | null;
+  /** False for a manifest entry this build cannot scaffold or gate. */
+  readonly supported: boolean;
+}
+
+export interface ListCapabilitiesOptions {
+  readonly root: string;
+}
+
+export interface ListCapabilitiesResult {
+  readonly root: string;
+  readonly project: string;
+  readonly archetype: ProjectArchetype;
+  readonly capabilities: readonly CapabilityStatus[];
 }
 
 export interface CheckFrameworkOptions {
@@ -133,6 +212,8 @@ export interface CheckFrameworkResult {
 export interface FrameworkZoneCount {
   readonly path: string;
   readonly files: number;
+  /** What belongs in this zone; empty when the archetype does not declare it. */
+  readonly purpose: string;
 }
 
 export interface FrameworkStatusSystem {
@@ -158,6 +239,16 @@ export interface FrameworkStatusDonors {
   readonly draftTargets: number;
 }
 
+export interface GetFrameworkStatusOptions {
+  readonly root: string;
+  /**
+   * Also compare each Git-backed source against its remote. Off by default:
+   * `status` is a local-first command, and a failed fetch annotates the source
+   * instead of failing the command.
+   */
+  readonly fetch?: boolean;
+}
+
 export interface FrameworkStatusResult {
   readonly root: string;
   readonly hasManifest: boolean;
@@ -166,14 +257,28 @@ export interface FrameworkStatusResult {
   readonly manifestFormat?: string;
   readonly project?: string;
   readonly archetype?: ProjectArchetype;
+  /** The archetype's one-line description; omitted when it declares none. */
+  readonly archetypeDescription?: string;
+  /**
+   * Why the installed archetype could not be resolved, when it could not be.
+   * Zones fall back to the layout's work areas in that case, and this line is
+   * what says so instead of leaving the shorter list unexplained.
+   */
+  readonly archetypeNotice?: string;
   readonly mode?: ProjectMode;
   readonly managedFiles: number;
   readonly zones: FrameworkZoneCount[];
   readonly systems?: readonly FrameworkStatusSystem[];
   readonly livingSources?: FrameworkStatusLivingSources;
+  /** Drift of each living source's checkout; omitted when there are none. */
+  readonly upstream?: UpstreamStatus;
+  /** Sources whose latest change grade suggests recording a decision. */
+  readonly adrSuggestions?: readonly SourceAdrSuggestion[];
   readonly donors?: FrameworkStatusDonors;
   readonly openIterations?: number;
   readonly knowledgeEntries?: number;
+  /** Records in a workspace-root `runs.jsonl`; omitted when there is no file. */
+  readonly runRecords?: number;
 }
 
 export interface AddReferenceOptions {
@@ -403,6 +508,32 @@ function layoutDirectoryPath(layout: WorkspaceLayout, directory: string): string
     : workspaceWorkRelativePath(layout, directory);
 }
 
+/** Workspace-root-relative directories owned by the given capability modules. */
+function capabilityDirs(capabilities: readonly CapabilityModule[]): string[] {
+  return capabilityDirectories(capabilities).map((directory) => directory.path);
+}
+
+/**
+ * Capability modules a workspace actually has, for reporting paths that only
+ * exist when a module is enabled. Falls back to the manifest's own list when
+ * the archetype cannot be loaded, so a broken archetype hides structure rather
+ * than failing the caller.
+ */
+async function enabledCapabilities(
+  root: string,
+  manifest: FrameworkManifest | null,
+): Promise<CapabilityModule[]> {
+  if (!manifest) {
+    return [];
+  }
+  try {
+    const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
+    return effectiveCapabilities(archetypeDefinition, manifest.project.capabilities);
+  } catch {
+    return declaredCapabilities(manifest);
+  }
+}
+
 /**
  * Knowledge subdirectory names the workspace's archetype declares (both the
  * `dirs` and mode-specific lists), e.g. `knowledge/playbooks`. A custom
@@ -614,6 +745,21 @@ async function scaffoldAdrIndex(root: string, report: OperationReport): Promise<
   report.created_files.push(ADRS_FILE);
 }
 
+/**
+ * State a capability module needs beyond its template set. The ADR index is
+ * generated JSON rather than a template, so it is written here instead of
+ * through {@link MODULE_SCAFFOLDS}.
+ */
+async function scaffoldCapabilityState(
+  root: string,
+  capability: CapabilityModule,
+  report: OperationReport,
+): Promise<void> {
+  if (capability === "adr") {
+    await scaffoldAdrIndex(root, report);
+  }
+}
+
 function recordAssayAgentsResult(report: OperationReport, result: AssayAgentsBlockResult): void {
   if (result.action === "skip") {
     if (result.reason === ASSAY_AGENTS_MALFORMED_REASON) {
@@ -643,14 +789,26 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   const mode = archetypeDefinition.mode;
 
   await ensureDir(root, root, report);
-  for (const directory of dirsForArchetype(archetypeDefinition, mode)) {
-    await ensureDir(path.join(root, directory), root, report);
-  }
 
   let manifest = (await loadManifest(root)) ?? defaultManifest(project, { archetype, mode });
   manifest.project.archetype = archetype;
   manifest.project.mode = mode;
-  for (const template of archetypeTemplates(project, mode, archetypeDefinition)) {
+
+  // `init` always writes a standalone workspace, so archetype and capability
+  // paths need no layout translation here.
+  const capabilities = effectiveCapabilities(archetypeDefinition, manifest.project.capabilities);
+  const directories = new Set([
+    ...dirsForArchetype(archetypeDefinition, mode),
+    ...capabilityDirs(capabilities),
+  ]);
+  for (const directory of directories) {
+    await ensureDir(path.join(root, directory), root, report);
+  }
+
+  for (const template of mergeTemplateFiles(
+    archetypeTemplates(project, mode, archetypeDefinition),
+    capabilityTemplates(project, mode, archetypeDefinition, capabilities),
+  )) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,
@@ -660,8 +818,8 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
       recordTemplate(manifest, template);
     }
   }
-  if (archetypeDefinition.modules.includes("adr")) {
-    await scaffoldAdrIndex(root, report);
+  for (const capability of capabilities) {
+    await scaffoldCapabilityState(root, capability, report);
   }
 
   const manifestExisted = await exists(path.join(root, MANIFEST_FILE));
@@ -694,6 +852,128 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   }
 
   return { root, project, archetype, mode, report };
+}
+
+/**
+ * Enable a capability module in an existing workspace.
+ *
+ * Enablement is decoupled from the init-time archetype choice: the module's
+ * directories and templates are scaffolded through the workspace layout, its
+ * state files are created, the manifest records the module, and a
+ * `capability.added` event is written. Every step is idempotent, and a module
+ * the workspace already has returns without writing anything, so re-running
+ * the command is a no-op rather than an error.
+ */
+export async function addCapability(options: AddCapabilityOptions): Promise<AddCapabilityResult> {
+  const root = path.resolve(options.root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const module = requireCapabilityModule(options.module);
+  const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
+  const layout = layoutForManifest(manifest);
+  const report = createEmptyReport();
+  const now = options.now ?? new Date();
+
+  const alreadyDeclared = declaredCapabilities(manifest).includes(module);
+  if (archetypeHasCapability(archetypeDefinition, module) || alreadyDeclared) {
+    return {
+      root,
+      module,
+      alreadyEnabled: true,
+      source: alreadyDeclared ? "added" : "archetype",
+      capabilities: effectiveCapabilities(archetypeDefinition, manifest.project.capabilities),
+      report,
+    };
+  }
+
+  // Archetype template paths are workspace-root-relative literals. An overlay
+  // workspace keeps everything under `.assay/`, so both directories and
+  // templates are translated before any write; otherwise `capability add`
+  // would scaffold into an attached product repository's root.
+  for (const directory of capabilityDirs([module])) {
+    const relativePath = workspaceTemplateRelativePath(layout, directory);
+    await ensureDir(path.join(root, relativePath), root, report);
+  }
+
+  const project = projectFromManifest(manifest, root);
+  for (const template of capabilityTemplates(
+    project,
+    manifest.project.mode,
+    archetypeDefinition,
+    [module],
+    layout,
+  )) {
+    const result = await writeTemplateFile(root, template.path, template.content, report, {
+      force: false,
+      createNew: false,
+      executable: template.executable,
+    });
+    if (result === "written") {
+      recordTemplate(manifest, template);
+    }
+  }
+  await scaffoldCapabilityState(root, module, report);
+
+  manifest.project.capabilities = [
+    ...new Set([...(manifest.project.capabilities ?? []), module]),
+  ].sort();
+  const saved = await saveManifest(root, manifest);
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "capability.added",
+      module,
+      archetype: saved.project.archetype,
+      capabilities: saved.project.capabilities ?? [],
+    },
+    now,
+  );
+
+  return {
+    root,
+    module,
+    alreadyEnabled: false,
+    source: "added",
+    capabilities: effectiveCapabilities(archetypeDefinition, saved.project.capabilities),
+    report,
+    eventFile: relativeDisplayPath(eventFile, root),
+  };
+}
+
+/**
+ * Report every capability module and how this workspace obtained it: provided
+ * by the archetype, added after init, or not enabled. Manifest entries this
+ * build does not implement are listed as unsupported instead of being dropped.
+ */
+export async function listCapabilities(
+  options: ListCapabilitiesOptions,
+): Promise<ListCapabilitiesResult> {
+  const root = path.resolve(options.root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
+  const declared = new Set(manifest.project.capabilities ?? []);
+
+  const capabilities: CapabilityStatus[] = SUPPORTED_CAPABILITY_MODULES.map((module) => {
+    const fromArchetype = archetypeHasCapability(archetypeDefinition, module);
+    const added = declared.has(module);
+    return {
+      module,
+      enabled: fromArchetype || added,
+      source: fromArchetype ? "archetype" : added ? "added" : null,
+      supported: true,
+    };
+  });
+  for (const module of declared) {
+    if (!isCapabilityModule(module)) {
+      capabilities.push({ module, enabled: false, source: "added", supported: false });
+    }
+  }
+
+  return {
+    root,
+    project: manifest.project.name,
+    archetype: manifest.project.archetype,
+    capabilities,
+  };
 }
 
 export async function checkFramework(
@@ -729,6 +1009,7 @@ export async function checkFramework(
   // top-level dirs (intake/, problem/, references/, analyses/, iterations/,
   // benchmarks/, attempts/...). Default to a permissive check when the
   // manifest/archetype cannot be read.
+  const archetypeDegradations: CheckRow[] = [];
   try {
     const installedArchetype = await readInstalledArchetype(root);
     const archetypeDefinition = await loadArchetype(installedArchetype ?? "study", { root });
@@ -743,10 +1024,33 @@ export async function checkFramework(
     for (const dir of topLevels) {
       checkTargets.push([`${dir} directory`, layoutDirectoryPath(layout, dir)]);
     }
-  } catch {
-    // unreadable manifest/archetype; fall back to base targets only
+  } catch (error) {
+    // The archetype is what tells check which directories this workspace is
+    // supposed to have. Falling back to the base set silently made a workspace
+    // whose archetype no longer resolves look fully checked, so say so.
+    archetypeDegradations.push({
+      path: MANIFEST_FILE,
+      status: "warning",
+      message: describeArchetypeDegradation(error),
+    });
   }
-  const rows: CheckRow[] = [];
+
+  // Directories owned by capability modules the workspace added after init.
+  // `capability add` scaffolds them, so a missing one is real drift. Modules
+  // the archetype itself declares are left to the archetype's own directory
+  // coverage: an overlay workspace may legitimately never have scaffolded
+  // them, and reporting those as missing would be a false failure.
+  const existingTargets = new Set(checkTargets.map(([, target]) => target));
+  for (const capability of declaredCapabilities(manifestForLayout)) {
+    for (const directory of capabilityDirs([capability])) {
+      const target = workspaceTemplateRelativePath(layout, directory);
+      if (!existingTargets.has(target)) {
+        existingTargets.add(target);
+        checkTargets.push([`${directory} directory`, target]);
+      }
+    }
+  }
+  const rows: CheckRow[] = [...archetypeDegradations];
 
   for (const [label, target] of checkTargets) {
     rows.push({
@@ -985,42 +1289,23 @@ export async function checkFramework(
     // knowledge dir may not exist; skip
   }
 
-  // Advisory check 1: unanalyzed frozen references
-  // The core loop is references → analyses → .... A frozen reference that no
-  // analysis cites can be useful to review, but it is workflow state rather
-  // than persisted-record corruption. Report it only when explicitly asked.
+  // Advisory check 1: frozen references with no case file.
+  //
+  // This replaces the old `analyzed` gate, which was true nowhere and blocked
+  // nothing. The real gap it hid is a frozen directory with no
+  // `reference.yaml`: v3-era freezes carry no provenance at all, so nothing
+  // downstream can say where the material came from or when it was captured.
   if (includeAdvisories) {
     try {
       const frozenRoot = path.join(workspacePath(root, layout, "references"), "frozen");
       if (await exists(frozenRoot)) {
-        const references = await collectFrozenReferences(root, frozenRoot);
-        if (references.length > 0) {
-          const analysisText = await readAllAnalysisText(root, layout);
-          for (const ref of references) {
-            // Authoritative signal: reference.yaml.analyzed === true means an
-            // analysis was closed against this reference (see closeAnalysis).
-            const yamlPath = path.join(root, ref.relativePath, "reference.yaml");
-            let explicitlyAnalyzed = false;
-            try {
-              if (await exists(yamlPath)) {
-                const parsed = parseReferenceYaml(await readFile(yamlPath, "utf8"));
-                explicitlyAnalyzed = parsed.analyzed === true;
-              }
-            } catch {
-              // unreadable yaml; fall back to citation check
-            }
-            if (explicitlyAnalyzed) continue;
-            const cited = analysisText.some(
-              (text) => text.includes(ref.name) || text.includes(ref.relativePath),
-            );
-            if (!cited) {
-              rows.push({
-                path: ref.relativePath,
-                status: "warning",
-                message: `frozen reference '${ref.name}' has no analysis citing it (references → analyses loop is incomplete)`,
-              });
-            }
-          }
+        for (const ref of await collectFrozenReferences(root, frozenRoot)) {
+          if (await exists(path.join(root, ref.relativePath, "reference.yaml"))) continue;
+          rows.push({
+            path: ref.relativePath,
+            status: "warning",
+            message: `frozen reference '${ref.name}' has no reference.yaml, so its provenance is not recorded. Write one with \`assay reference backfill ${ref.relativePath}\`.`,
+          });
         }
       }
     } catch {
@@ -1092,6 +1377,83 @@ export async function checkFramework(
     }
   }
 
+  // Advisory check 5: intent captured into an unversioned private overlay.
+  // A private overlay keeps `.assay/` out of the product repository and gives
+  // it no history of its own, and intent captures are the least regenerable
+  // records Assay holds: nothing else can reconstruct what was originally
+  // asked for. Recommending `private-git` is a workspace-setup suggestion,
+  // never a failure.
+  if (includeAdvisories && layout.mode === "overlay" && layout.privacy === "private") {
+    try {
+      if ((await enabledCapabilities(root, manifestForLayout)).includes("intent")) {
+        rows.push({
+          path: intentRootPath(layout),
+          status: "warning",
+          message:
+            "intent is enabled in a private overlay, so captures live in the one directory that has no version history. Re-attach with `--privacy private-git`, or initialize a Git repository inside .assay/, so captured intent can be recovered.",
+        });
+      }
+    } catch {
+      // capability state is reported elsewhere; skip the advisory
+    }
+  }
+
+  // Advisory check 6: superseded systems no chain points at. `system promote`
+  // demotes the previous primary without writing a supersedes link, so an
+  // unreferenced superseded system is unreachable from the current primary and
+  // its intent captures drop out of `intent list --include-lineage`.
+  if (includeAdvisories) {
+    try {
+      const registry = await loadSystemsRegistry(root);
+      if (registry) {
+        const referenced = new Set(
+          Object.values(registry.systems).flatMap((system) => system.supersedes),
+        );
+        for (const system of Object.values(registry.systems)) {
+          if (system.status === "superseded" && !referenced.has(system.name)) {
+            rows.push({
+              path: SYSTEMS_REGISTRY_FILE,
+              status: "warning",
+              message: `system '${system.name}' is superseded but no system records it in a supersedes chain, so its lineage cannot be followed. Record the replacement with \`assay system update <replacement> --supersedes ${system.name}\`.`,
+            });
+          }
+        }
+      }
+    } catch {
+      // registry problems are reported by the structural registry check
+    }
+  }
+
+  // Advisory check 7: placement. `check` has always validated that declared
+  // directories exist; these three report the opposite — content sitting where
+  // the archetype never said it should. They are advisories on purpose:
+  // writing straight into a directory instead of going through a command is
+  // normal usage, and the goal is to make misplacement visible and fixable
+  // rather than to fail the workspace over it.
+  if (includeAdvisories) {
+    rows.push(...(await collectPlacementAdvisories(root, layout, manifestForLayout)));
+  }
+
+  // Advisory check 8: the AGENTS.md managed block no longer matches the
+  // archetype. The block is generated, so an archetype whose directories or
+  // description changed leaves stale layout guidance in the one channel that
+  // reaches an agent before it does anything.
+  if (includeAdvisories) {
+    try {
+      const agentsPlan = await planAssayAgentsBlock({ root, mode: "refresh-existing" });
+      if (agentsPlan.changed && agentsPlan.action === "replace") {
+        rows.push({
+          path: ASSAY_AGENTS_FILE,
+          status: "warning",
+          message:
+            "Assay managed block in AGENTS.md does not match the current archetype. Run `assay update --agents` to refresh the workspace layout table.",
+        });
+      }
+    } catch {
+      // AGENTS.md problems are reported by update; never fail check over them
+    }
+  }
+
   // Semantic check 6: living source observation integrity. Major-change
   // revalidation is an opt-in advisory; missing referenced records remain
   // visible in the default structural check.
@@ -1142,6 +1504,146 @@ export async function checkFramework(
   };
 }
 
+/**
+ * Directories under a work root that belong to Assay's own machinery rather
+ * than to an archetype. In an overlay workspace the work root and the state
+ * root are the same directory, so these sit next to the work folders and must
+ * not be reported as stray placement.
+ */
+const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["donors", "archetypes", "node_modules"]);
+
+/**
+ * Name of the work-root entry a workspace-root-relative path sits under, or
+ * null when the path lies outside the work root.
+ */
+function workRootEntryName(layout: WorkspaceLayout, rootRelativePath: string): string | null {
+  const normalized = rootRelativePath.replace(/\\/g, "/");
+  if (layout.work_root === ".") {
+    return normalized.split("/")[0] ?? null;
+  }
+  const prefix = `${layout.work_root.replace(/\\/g, "/")}/`;
+  if (!normalized.startsWith(prefix)) {
+    return null;
+  }
+  return normalized.slice(prefix.length).split("/")[0] ?? null;
+}
+
+/**
+ * Placement advisories: content that exists where the archetype never declared
+ * a home for it. Every row is a warning, never an error.
+ */
+async function collectPlacementAdvisories(
+  root: string,
+  layout: WorkspaceLayout,
+  manifest: FrameworkManifest | null,
+): Promise<CheckRow[]> {
+  const rows: CheckRow[] = [];
+  rows.push(...(await collectUndeclaredDirectoryRows(root, layout, manifest)));
+  rows.push(...(await collectStatuslessAnalysisRows(root, layout)));
+  return rows;
+}
+
+/**
+ * Top-level directories in the workspace's work root that neither the
+ * archetype nor the layout accounts for. This is the Loreal case: material
+ * piling up somewhere the workspace has no semantics for.
+ */
+async function collectUndeclaredDirectoryRows(
+  root: string,
+  layout: WorkspaceLayout,
+  manifest: FrameworkManifest | null,
+): Promise<CheckRow[]> {
+  if (!manifest) {
+    return [];
+  }
+  let archetype: Archetype;
+  try {
+    archetype = await loadArchetype(manifest.project.archetype, { root });
+  } catch {
+    return [];
+  }
+
+  const capabilities = effectiveCapabilities(archetype, manifest.project.capabilities);
+  const declared = new Set<string>(NON_ZONE_WORK_ROOT_ENTRIES);
+  for (const directory of [
+    ...dirsForArchetype(archetype, manifest.project.mode),
+    ...capabilityDirs(capabilities),
+  ]) {
+    const name = workRootEntryName(layout, workspaceTemplateRelativePath(layout, directory));
+    if (name) {
+      declared.add(name);
+    }
+  }
+  // Work areas and state files the layout itself owns. In an overlay these are
+  // children of the work root, so they are compared by the same rule.
+  for (const declaredPath of Object.values(layout.paths)) {
+    const name = workRootEntryName(layout, declaredPath);
+    if (name) {
+      declared.add(name);
+    }
+  }
+
+  const workRootPath = path.join(root, layout.work_root);
+  let names: string[];
+  try {
+    const entries = await readdir(workRootPath, { withFileTypes: true });
+    names = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+
+  const rows: CheckRow[] = [];
+  for (const name of names) {
+    if (name.startsWith(".") || declared.has(name)) continue;
+    rows.push({
+      path: workspaceWorkRelativePath(layout, name),
+      status: "warning",
+      message: `directory '${name}/' is not declared by archetype ${archetype.name}. Move its contents into a declared directory (\`assay status\` lists them) or add it to the archetype.`,
+    });
+  }
+  return rows;
+}
+
+/**
+ * Analysis files written straight into `analyses/references/` without the
+ * `Status:` header every analysis carries. These are hand-written notes that
+ * never entered the analysis lifecycle, so nothing can tell whether they are
+ * open or closed.
+ */
+async function collectStatuslessAnalysisRows(
+  root: string,
+  layout: WorkspaceLayout,
+): Promise<CheckRow[]> {
+  const referencesRoot = path.join(workspacePath(root, layout, "analyses"), "references");
+  if (!(await exists(referencesRoot))) {
+    return [];
+  }
+  const files: string[] = [];
+  try {
+    await collectMarkdownFiles(referencesRoot, files);
+  } catch {
+    return [];
+  }
+  const rows: CheckRow[] = [];
+  for (const file of files) {
+    if (path.basename(file) === "README.md") continue;
+    let content: string;
+    try {
+      content = await readFile(file, "utf8");
+    } catch {
+      continue;
+    }
+    if (readHeaderField(content, "Status") !== null) continue;
+    rows.push({
+      path: relativeDisplayPath(file, root),
+      status: "warning",
+      message:
+        "analysis file has no `Status:` header, so it is outside the analysis lifecycle. Add `- Status: draft` or create it with `assay analysis new`.",
+    });
+  }
+  return rows;
+}
+
 interface FrozenReference {
   readonly name: string;
   readonly relativePath: string;
@@ -1171,26 +1673,6 @@ async function collectFrozenReferences(
     }
   }
   return references;
-}
-
-/**
- * Read the concatenated text of every markdown file under analyses/. Used to
- * test whether a frozen reference is cited by any analysis.
- */
-async function readAllAnalysisText(root: string, layout: WorkspaceLayout): Promise<string[]> {
-  const analysesRoot = workspacePath(root, layout, "analyses");
-  if (!(await exists(analysesRoot))) return [];
-  const files: string[] = [];
-  await collectMarkdownFiles(analysesRoot, files);
-  const texts: string[] = [];
-  for (const file of files) {
-    try {
-      texts.push(await readFile(file, "utf8"));
-    } catch {
-      // skip unreadable
-    }
-  }
-  return texts;
 }
 
 async function collectMarkdownFiles(dir: string, out: string[]): Promise<void> {
@@ -1427,20 +1909,143 @@ function countPendingQueueEntries(parsed: unknown): number {
   }).length;
 }
 
+/**
+ * Work areas every layout defines, with the purpose to show when one of them
+ * holds content the archetype never declared. A workspace whose archetype
+ * predates a directory still has real work in it — study workspaces created
+ * before `iteration` became a capability module are the concrete case — and
+ * status must not hide that.
+ */
+const WORK_AREA_ZONE_PURPOSES: ReadonlyArray<readonly [WorkspaceArea, string]> = [
+  ["references", "External systems captured as evidence"],
+  ["analyses", "Conversion layer from references to decisions"],
+  ["iterations", "Controlled changes to your own systems, one folder each"],
+  ["knowledge", "Accepted, reusable knowledge"],
+  ["systemsContracts", "Registered systems and local implementations"],
+];
+
+async function readArchetypeForStatus(
+  root: string,
+  manifest: FrameworkManifest | null,
+): Promise<{ readonly archetype: Archetype | null; readonly degradation?: string }> {
+  if (!manifest) {
+    return { archetype: null };
+  }
+  try {
+    return { archetype: await loadArchetype(manifest.project.archetype, { root }) };
+  } catch (error) {
+    // An unresolvable archetype degrades to work-area zones rather than
+    // failing, but the degradation is stated: the zone list is otherwise
+    // indistinguishable from a workspace that simply has little in it.
+    return { archetype: null, degradation: describeArchetypeDegradation(error) };
+  }
+}
+
+/**
+ * One line explaining that the archetype could not be resolved and what the
+ * command did instead. Shared by `status` and `check` so both name the same
+ * cause, which for a removed or renamed archetype is the actionable part.
+ */
+function describeArchetypeDegradation(error: unknown): string {
+  const reason = error instanceof Error ? error.message : "archetype could not be loaded";
+  return `${reason} — reporting base structure only`;
+}
+
+/**
+ * Zones for `assay status`: every zone the archetype declares, plus any layout
+ * work area that exists on disk and no declared zone already covers. Paths are
+ * resolved through the layout, so an overlay workspace reports the `.assay/`
+ * locations it actually uses.
+ */
+async function resolveStatusZones(
+  root: string,
+  layout: WorkspaceLayout,
+  archetype: Archetype | null,
+  mode: ProjectMode,
+  capabilities: readonly CapabilityModule[],
+): Promise<FrameworkZoneCount[]> {
+  const declared = archetype ? archetypeZones(archetype, mode, capabilities) : [];
+  const resolved = new Map<string, string>();
+  for (const zone of declared) {
+    const zonePath = workspaceTemplateRelativePath(layout, zone.path);
+    if (!resolved.has(zonePath)) {
+      resolved.set(zonePath, zone.purpose);
+    }
+  }
+
+  for (const [area, purpose] of WORK_AREA_ZONE_PURPOSES) {
+    const areaPath = workspaceRelativePath(layout, area);
+    const covered = [...resolved.keys()].some(
+      (zonePath) => zonePath === areaPath || zonePath.startsWith(`${areaPath}/`),
+    );
+    if (covered || !(await exists(path.join(root, areaPath)))) {
+      continue;
+    }
+    resolved.set(areaPath, purpose);
+  }
+
+  return Promise.all(
+    [...resolved].map(async ([zonePath, purpose]) => ({
+      path: zonePath,
+      files: await countFiles(path.join(root, zonePath)),
+      purpose,
+    })),
+  );
+}
+
+/**
+ * Count records in a workspace-root `runs.jsonl`. Assay does not create the
+ * file and no command writes to it; external harnesses append one JSON object
+ * per line. Counting it keeps those records visible without asking anyone to
+ * run a command they would have to remember.
+ */
+async function countRunRecords(root: string, layout: WorkspaceLayout): Promise<number | undefined> {
+  const runsPath = path.join(root, workspaceWorkRelativePath(layout, "runs.jsonl"));
+  let size: number;
+  try {
+    const stats = await stat(runsPath);
+    if (!stats.isFile()) {
+      return undefined;
+    }
+    size = stats.size;
+  } catch {
+    return undefined;
+  }
+  if (size === 0) {
+    return 0;
+  }
+  if (size > MAX_RUN_LOG_BYTES) {
+    return undefined;
+  }
+  try {
+    const content = await readFile(runsPath, "utf8");
+    return content.split("\n").filter((line) => line.trim().length > 0).length;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Guard against reading an unbounded append-only log into memory for a count. */
+const MAX_RUN_LOG_BYTES = 16 * 1024 * 1024;
+
 export async function getFrameworkStatus(
-  options: CheckFrameworkOptions,
+  options: GetFrameworkStatusOptions,
 ): Promise<FrameworkStatusResult> {
   const root = path.resolve(options.root);
   const manifest = await loadManifest(root);
   const layout = layoutForManifest(manifest);
-  const zones = await Promise.all(
-    [
-      workspaceSubpath(layout, "references", "frozen"),
-      workspaceSubpath(layout, "analyses", "references"),
-      workspaceSubpath(layout, "analyses", "patterns"),
-      workspaceRelativePath(layout, "iterations"),
-      workspaceRelativePath(layout, "knowledge"),
-    ].map(async (zone) => ({ path: zone, files: await countFiles(path.join(root, zone)) })),
+  // Zones come from the installed archetype plus the modules the workspace has
+  // actually enabled, so a solve workspace stops being told about study's
+  // directories and an intent-less workspace gains no permanently empty rows.
+  const capabilities = await enabledCapabilities(root, manifest);
+  const { archetype: archetypeDefinition, degradation: archetypeNotice } =
+    await readArchetypeForStatus(root, manifest);
+  const zones = await resolveStatusZones(
+    root,
+    layout,
+    archetypeDefinition,
+    manifest?.project.mode ?? archetypeDefinition?.mode ?? "learning",
+    capabilities,
   );
 
   // Systems section from registry
@@ -1478,6 +2083,7 @@ export async function getFrameworkStatus(
   }
 
   let livingSources: FrameworkStatusLivingSources | undefined;
+  let adrSuggestions: readonly SourceAdrSuggestion[] | undefined;
   try {
     const status = await getSourceStatus({ root });
     const sources = status.sources;
@@ -1490,8 +2096,22 @@ export async function getFrameworkStatus(
         (source) => source.latestChangeClass === "major" && source.analysisStatus !== "closed",
       ).length,
     };
+    const suggestions = adrSuggestionsForSources(sources);
+    adrSuggestions = suggestions.length > 0 ? suggestions : undefined;
   } catch {
     // sources may not exist or may be mid-migration; status omits the summary
+  }
+
+  // Upstream drift is the answer users would otherwise have to go and fetch
+  // with a command nobody runs. It is computed here, in the command they do
+  // run, and it never fails status: a broken checkout or an unreachable remote
+  // annotates its own line.
+  let upstream: UpstreamStatus | undefined;
+  try {
+    const collected = await collectUpstreamStatus({ root, fetch: options.fetch === true });
+    upstream = collected.total > 0 ? collected : undefined;
+  } catch {
+    // source ledger problems are reported by check; status stays usable
   }
 
   let donors: FrameworkStatusDonors | undefined;
@@ -1502,6 +2122,7 @@ export async function getFrameworkStatus(
   }
 
   const knowledgeCount = await countKnowledgeEntries(root, layout);
+  const runRecords = await countRunRecords(root, layout);
 
   if (!manifest) {
     return {
@@ -1511,9 +2132,12 @@ export async function getFrameworkStatus(
       zones,
       ...(systems ? { systems } : {}),
       ...(livingSources ? { livingSources } : {}),
+      ...(upstream ? { upstream } : {}),
+      ...(adrSuggestions ? { adrSuggestions } : {}),
       ...(donors ? { donors } : {}),
       ...(openIterations !== undefined ? { openIterations } : {}),
       knowledgeEntries: knowledgeCount,
+      ...(runRecords !== undefined ? { runRecords } : {}),
     };
   }
 
@@ -1525,14 +2149,21 @@ export async function getFrameworkStatus(
     manifestFormat: `schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
     project: manifest.project.name,
     archetype: manifest.project.archetype,
+    ...(archetypeDefinition && archetypeDefinition.description !== ""
+      ? { archetypeDescription: archetypeDefinition.description }
+      : {}),
+    ...(archetypeNotice ? { archetypeNotice } : {}),
     mode: manifest.project.mode,
     managedFiles: Object.keys(manifest.managed_files).length,
     zones,
     ...(systems ? { systems } : {}),
     ...(livingSources ? { livingSources } : {}),
+    ...(upstream ? { upstream } : {}),
+    ...(adrSuggestions ? { adrSuggestions } : {}),
     ...(donors ? { donors } : {}),
     ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
+    ...(runRecords !== undefined ? { runRecords } : {}),
   };
 }
 
@@ -1569,10 +2200,9 @@ export async function addReference(options: AddReferenceOptions): Promise<AddRef
     filter: (_source, dest) => shouldCopyReference(destination, dest),
   });
 
-  // Freeze = open a case file, not just copy files. Write a reference.yaml that
-  // records provenance and an `analyzed: false` flag so the framework can track
-  // whether this reference ever received an analysis. Without this, a frozen
-  // reference is indistinguishable from "done" and tends to be forgotten.
+  // Freeze = open a case file, not just copy files. The reference.yaml records
+  // where the material came from and when it was captured; without it a frozen
+  // directory is a pile of files with no provenance.
   const referenceYamlPath = path.join(destination, "reference.yaml");
   await writeFile(
     referenceYamlPath,
@@ -1592,8 +2222,7 @@ export async function addReference(options: AddReferenceOptions): Promise<AddRef
       name: options.name,
       path: relativePath,
       source,
-      analyzed: false,
-      analysis_required: true,
+      reference_file: `${relativePath}/reference.yaml`,
     },
     now,
   );
@@ -1618,17 +2247,104 @@ function referenceYaml(input: {
   readonly frozenOn: string;
 }): string {
   return [
-    "# Reference case file. Managed by `assay`. Edit provenance fields",
-    "# freely; the `analyzed` flag is flipped by `analysis close`.",
+    "# Reference case file. Managed by `assay`. Edit provenance fields freely.",
     `name: ${yamlScalar(input.name)}`,
     `source: ${yamlScalar(input.source)}`,
     `freeze_path: ${yamlScalar(input.freezePath)}`,
     `frozen_on: ${input.frozenOn}`,
-    "analyzed: false",
     "# analysis_points: fill with concrete questions this reference should answer",
     "analysis_points: []",
     "",
   ].join("\n");
+}
+
+export interface BackfillReferenceOptions {
+  readonly root: string;
+  /** Workspace-relative path of the frozen reference directory. */
+  readonly path: string;
+  /** Where the material originally came from, when it is known. */
+  readonly source?: string;
+  readonly now?: Date;
+}
+
+export interface BackfillReferenceResult {
+  readonly root: string;
+  readonly path: string;
+  readonly referenceFile: string;
+  /** False when the directory already had a case file; nothing was written. */
+  readonly created: boolean;
+  readonly eventFile?: string;
+}
+
+/**
+ * Write the missing `reference.yaml` for a frozen reference that predates the
+ * case file, or was created by hand.
+ *
+ * `check --advisories` names this command with the path already filled in, so
+ * the fix is one line away from the report instead of being a documented
+ * procedure. An existing case file is never overwritten: provenance already
+ * recorded is the thing worth protecting here.
+ */
+export async function backfillReferenceCaseFile(
+  options: BackfillReferenceOptions,
+): Promise<BackfillReferenceResult> {
+  const root = path.resolve(options.root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = layoutForManifest(manifest);
+  const now = options.now ?? new Date();
+  const target = resolveContainedPath(root, options.path, "reference path");
+  const frozenPrefix = `${workspaceSubpath(layout, "references", "frozen")}/`;
+  if (!target.relativePath.startsWith(frozenPrefix)) {
+    throw new FrameworkError(
+      `not a frozen reference path: ${target.relativePath} (expected a directory under ${frozenPrefix})`,
+    );
+  }
+
+  let info: Awaited<ReturnType<typeof stat>>;
+  try {
+    info = await stat(target.absolutePath);
+  } catch {
+    throw new FrameworkNotFoundError(`reference not found: ${target.relativePath}`);
+  }
+  if (!info.isDirectory()) {
+    throw new FrameworkError(`reference path is not a directory: ${target.relativePath}`);
+  }
+
+  const referenceFile = `${target.relativePath}/reference.yaml`;
+  const yamlPath = path.join(target.absolutePath, "reference.yaml");
+  if (await exists(yamlPath)) {
+    return { root, path: target.relativePath, referenceFile, created: false };
+  }
+
+  await writeFile(
+    yamlPath,
+    referenceYaml({
+      name: path.basename(target.relativePath),
+      source: options.source ?? "unknown",
+      freezePath: target.relativePath,
+      // The freeze happened when the directory was written, not now.
+      frozenOn: nowIso(info.mtime),
+    }),
+    "utf8",
+  );
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "reference.backfilled",
+      path: target.relativePath,
+      reference_file: referenceFile,
+      source: options.source ?? null,
+    },
+    now,
+  );
+
+  return {
+    root,
+    path: target.relativePath,
+    referenceFile,
+    created: true,
+    eventFile: relativeDisplayPath(eventFile, root),
+  };
 }
 
 /** Quote a YAML scalar only when it contains characters that need quoting. */
@@ -1641,14 +2357,14 @@ function yamlScalar(value: string): string {
 
 /**
  * Read the scalar fields of a reference.yaml case file. Parsing goes through
- * the YAML library so the reader accepts exactly what the writer can update:
- * a file this returns values for is a file `markReferenceAnalyzed` can rewrite.
+ * the YAML library, and unknown keys are ignored, so a case file written by an
+ * older build — including one that still carries the removed `analyzed` flag —
+ * keeps resolving its provenance.
  */
 function parseReferenceYaml(content: string): {
   name?: string;
   source?: string;
   freezePath?: string;
-  analyzed?: boolean;
 } {
   let parsed: unknown;
   try {
@@ -1663,54 +2379,11 @@ function parseReferenceYaml(content: string): {
     return {};
   }
   const record = parsed as Record<string, unknown>;
-  const result: { name?: string; source?: string; freezePath?: string; analyzed?: boolean } = {};
+  const result: { name?: string; source?: string; freezePath?: string } = {};
   if (typeof record.name === "string") result.name = record.name;
   if (typeof record.source === "string") result.source = record.source;
   if (typeof record.freeze_path === "string") result.freezePath = record.freeze_path;
-  if (typeof record.analyzed === "boolean") result.analyzed = record.analyzed;
   return result;
-}
-
-/**
- * Set `analyzed: true` in a reference.yaml, preserving comments and every other
- * field. Returns false when there is no case file to update (a legacy or
- * hand-made freeze) or when the flag is already true. Raises when the file
- * exists but its `analyzed` flag cannot be read or written, because a close
- * that silently fails to mark the reference leaves `check` and the case file
- * disagreeing.
- */
-async function markReferenceAnalyzed(yamlPath: string): Promise<boolean> {
-  if (!(await exists(yamlPath))) return false;
-  const content = await readFile(yamlPath, "utf8");
-  let document: ReturnType<typeof parseYamlDocument>;
-  try {
-    document = parseYamlDocument(content);
-    if (document.errors.length > 0) {
-      throw new Error(document.errors[0]?.message ?? "invalid YAML");
-    }
-  } catch (error) {
-    throw new FrameworkError(`reference case file cannot be parsed: ${yamlPath}`, {
-      code: "IO_ERROR",
-      cause: error,
-    });
-  }
-  const current = document.get("analyzed");
-  if (current === true) return false;
-  if (typeof current !== "boolean") {
-    throw new FrameworkError(
-      `reference case file has no boolean 'analyzed' flag to update: ${yamlPath}`,
-      { code: "IO_ERROR" },
-    );
-  }
-  document.set("analyzed", true);
-  const updated = document.toString();
-  if (parseReferenceYaml(updated).analyzed !== true) {
-    throw new FrameworkError(`reference case file 'analyzed' flag could not be set: ${yamlPath}`, {
-      code: "IO_ERROR",
-    });
-  }
-  await writeFile(yamlPath, updated, "utf8");
-  return true;
 }
 
 /**
@@ -2329,24 +3002,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
     throw error;
   }
 
-  // If this analysis was bound to a frozen reference, flip that reference's
-  // `analyzed` flag to true so `check` stops warning about it. This closes the
-  // references → analyses loop: freezing opens the case, closing the analysis
-  // marks it resolved.
-  const freezePath = readHeaderToken(content, "Freeze path");
-  let analyzedReference: string | null = null;
-  if (freezePath) {
-    // The freeze path is read back out of the analysis header, so it is treated
-    // as untrusted: a path that leaves the workspace is ignored rather than
-    // followed into a write.
-    if (isContainedPath(root, toPosixPath(freezePath))) {
-      const yamlPath = path.join(root, freezePath, "reference.yaml");
-      if (await markReferenceAnalyzed(yamlPath)) {
-        analyzedReference = freezePath;
-      }
-    }
-  }
-
   const eventFile = await appendEvent(
     root,
     {
@@ -2354,7 +3009,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
       path: analysisPath,
       exit: options.exit,
       note: options.note ?? null,
-      ...(analyzedReference ? { marked_reference_analyzed: analyzedReference } : {}),
       ...(closedSourceObservation
         ? { marked_source_observation_closed: closedSourceObservation }
         : {}),

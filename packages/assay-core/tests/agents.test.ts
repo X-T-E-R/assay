@@ -11,6 +11,7 @@ import {
   adoptExistingProject,
   applyAssayAgentsBlock,
   applyUpdate,
+  checkFramework,
   initFramework,
   loadManifest,
 } from "../src/index.js";
@@ -214,6 +215,67 @@ describe("Assay AGENTS.md managed block", () => {
     expect(appended.report.updated_files).toContain(ASSAY_AGENTS_FILE);
     expect(await readAgents(plainRoot)).toContain("# User Rules\n\n");
     expect(await readAgents(plainRoot)).toContain(ASSAY_AGENTS_START_MARKER);
+  });
+
+  it("carries the archetype's directory table so layout reaches an agent before it acts", async () => {
+    const root = path.join(await tempDir(), "solve");
+    await initFramework({ target: root, name: "Solve Demo", archetype: "solve" });
+
+    const content = await readAgents(root);
+
+    expect(content).toContain("## Workspace layout (archetype: solve)");
+    expect(content).toContain(
+      "Attack one goal that has a measurable success criterion, iterating until the score moves.",
+    );
+    expect(content).toContain("| Directory | What goes here |");
+    expect(content).toContain(
+      "| `problem/` | Task statement, official rules, scoring definition |",
+    );
+    expect(content).toContain("| `iterations/` | Goal-attack loops |");
+    // Study's directories are not solve's.
+    expect(content).not.toContain("analyses/references/");
+    // Scaffolding folders are not places to put work.
+    expect(content).not.toContain("iterations/templates/");
+  });
+
+  it("refreshes the directory table from the archetype when update --agents runs", async () => {
+    const root = path.join(await tempDir(), "custom");
+    await initFramework({ target: root, name: "Custom", archetype: "solve" });
+    await mkdir(path.join(root, ".assay", "archetypes"), { recursive: true });
+    await writeFile(
+      path.join(root, ".assay", "archetypes", "solve.yaml"),
+      [
+        "extends: base",
+        "mode: absorption",
+        "description: Locally overridden solve.",
+        "dirs:",
+        "  - path: problem",
+        "    purpose: Rewritten purpose for the problem folder",
+        "templates: []",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const stale = await checkFramework({ root, includeAdvisories: true });
+    expect(stale.ok).toBe(true);
+    expect(
+      stale.rows.some(
+        (row) => row.path === ASSAY_AGENTS_FILE && row.message?.includes("does not match"),
+      ),
+    ).toBe(true);
+
+    await applyUpdate({ root, agents: true });
+    const content = await readAgents(root);
+    expect(content).toContain("Locally overridden solve.");
+    expect(content).toContain("| `problem/` | Rewritten purpose for the problem folder |");
+
+    const refreshed = await checkFramework({ root, includeAdvisories: true });
+    expect(
+      refreshed.rows.some(
+        (row) => row.path === ASSAY_AGENTS_FILE && row.message?.includes("does not match"),
+      ),
+    ).toBe(false);
   });
 
   it("update reports malformed Assay markers without rewriting the file", async () => {

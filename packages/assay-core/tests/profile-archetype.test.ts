@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   SUPPORTED_CAPABILITY_MODULES,
+  archetypeDirectories,
+  archetypeZones,
   desiredTemplates,
   dirsForArchetype,
   listAvailableArchetypes,
@@ -15,7 +17,7 @@ import {
 const configTemplateId = "framework" + ".config";
 const coreContractTemplateId = "system.core" + ".contract";
 const frameworkConfigPath = ".assay/" + "config.yaml";
-const USER_FACING_BUILT_INS = ["evaluation", "explore", "library", "science", "solve", "study"];
+const USER_FACING_BUILT_INS = ["explore", "solve", "study"];
 const tempRoots: string[] = [];
 
 async function tempDir(): Promise<string> {
@@ -84,11 +86,44 @@ describe("archetype loader", () => {
       /Available archetypes:/,
     );
 
-    for (const removedName of [`re${"search"}`, `con${"test"}`]) {
-      await expect(loadArchetype(removedName, { userArchetypesDir })).rejects.toThrow(
-        new RegExp(`archetype not found: ${removedName}`),
+    await expect(loadArchetype(`con${"test"}`, { userArchetypesDir })).rejects.toThrow(
+      /archetype not found: con/,
+    );
+    await expect(loadArchetype(`con${"test"}`, { userArchetypesDir })).rejects.toThrow(
+      /Available archetypes:/,
+    );
+  });
+
+  it("resolves the old research name to study so existing manifests keep loading", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    const aliased = await loadArchetype(`re${"search"}`, { userArchetypesDir });
+    const study = await loadArchetype("study", { userArchetypesDir });
+
+    expect(aliased.name).toBe("study");
+    expect(dirsForArchetype(aliased, aliased.mode)).toEqual(dirsForArchetype(study, study.mode));
+  });
+
+  it("lets an archetype file with an aliased name win over the alias", async () => {
+    const root = path.join(await tempDir(), "workspace");
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeCustomArchetype(path.join(userArchetypesDir, `re${"search"}.yaml`), {
+      dirs: ["user-zone"],
+    });
+
+    const archetype = await loadArchetype(`re${"search"}`, { root, userArchetypesDir });
+
+    expect(archetype.name).toBe(`re${"search"}`);
+    expect(dirsForArchetype(archetype, archetype.mode)).toContain("user-zone");
+  });
+
+  it("names the removal when a deleted built-in archetype is requested", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+
+    for (const removed of ["science", "evaluation", "library"]) {
+      await expect(loadArchetype(removed, { userArchetypesDir })).rejects.toThrow(
+        new RegExp(`archetype '${removed}' was removed in Assay`),
       );
-      await expect(loadArchetype(removedName, { userArchetypesDir })).rejects.toThrow(
+      await expect(loadArchetype(removed, { userArchetypesDir })).rejects.toThrow(
         /Available archetypes:/,
       );
     }
@@ -102,7 +137,7 @@ describe("archetype loader", () => {
   });
 
   it("does not expose events as an optional capability module", () => {
-    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["adr", "iteration"]);
+    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["adr", "intent", "iteration"]);
   });
 
   it("loads project-local archetypes before user-global and built-in archetypes", async () => {
@@ -137,11 +172,15 @@ describe("archetype loader", () => {
     });
 
     const custom = await loadArchetype("foo", { root, userArchetypesDir });
-    const builtIn = await loadArchetype("library", { root, userArchetypesDir });
+    const builtIn = await loadArchetype("explore", { root, userArchetypesDir });
 
     expect(dirsForArchetype(custom, custom.mode)).toContain("user-zone");
-    expect(builtIn.name).toBe("library");
+    expect(builtIn.name).toBe("explore");
     expect(dirsForArchetype(builtIn, builtIn.mode)).toEqual([
+      "approaches",
+      "trials",
+      "iterations",
+      "iterations/templates",
       ".assay/backups",
       ".assay/migrations",
       "systems",
@@ -165,9 +204,6 @@ describe("archetype loader", () => {
       expect.arrayContaining([
         expect.objectContaining({ name: "study", source: "built-in" }),
         expect.objectContaining({ name: "solve", source: "built-in" }),
-        expect.objectContaining({ name: "library", source: "built-in" }),
-        expect.objectContaining({ name: "science", source: "built-in" }),
-        expect.objectContaining({ name: "evaluation", source: "built-in" }),
         expect.objectContaining({ name: "explore", source: "built-in" }),
         expect.objectContaining({ name: "project-only", source: "project" }),
         expect.objectContaining({ name: "user-only", source: "user" }),
@@ -197,7 +233,7 @@ describe("archetype loader", () => {
 
     expect(error?.message).toContain("archetype not found: missing");
     expect(error?.message).toContain("foo (user)");
-    expect(error?.message).toContain("library (built-in)");
+    expect(error?.message).toContain("study (built-in)");
     expect(error?.message).not.toContain("base");
   });
 
@@ -214,6 +250,135 @@ describe("archetype loader", () => {
     await expect(loadArchetype("badmode", { userArchetypesDir })).rejects.toThrow(
       /supported modes: learning, absorption/,
     );
+  });
+});
+
+describe("archetype directory purposes", () => {
+  it("accepts bare-string dirs, which stay valid and carry no purpose", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeCustomArchetype(path.join(userArchetypesDir, "legacy.yaml"), {
+      dirs: ["zone", "zone/deep"],
+    });
+
+    const archetype = await loadArchetype("legacy", { userArchetypesDir });
+
+    expect(dirsForArchetype(archetype, archetype.mode)).toEqual(
+      expect.arrayContaining(["zone", "zone/deep", "systems", "knowledge"]),
+    );
+    expect(archetype.description).toBe("");
+    expect(archetypeDirectories(archetype, archetype.mode)).toEqual(
+      expect.arrayContaining([
+        { path: "zone", purpose: "" },
+        { path: "zone/deep", purpose: "" },
+      ]),
+    );
+    expect(archetypeZones(archetype, archetype.mode)).toEqual(
+      expect.arrayContaining([{ path: "zone", purpose: "" }]),
+    );
+  });
+
+  it("reads path/purpose objects and mixes them with bare strings", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await mkdir(userArchetypesDir, { recursive: true });
+    await writeFile(
+      path.join(userArchetypesDir, "mixed.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "description: A mixed declaration.",
+        "dirs:",
+        "  - plain",
+        "  - path: described",
+        "    purpose: What belongs in described",
+        "templates: []",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const archetype = await loadArchetype("mixed", { userArchetypesDir });
+
+    expect(archetype.description).toBe("A mixed declaration.");
+    expect(archetypeDirectories(archetype, "learning")).toEqual([
+      { path: "plain", purpose: "" },
+      { path: "described", purpose: "What belongs in described" },
+      { path: ".assay/backups", purpose: "" },
+      { path: ".assay/migrations", purpose: "" },
+      { path: "systems", purpose: "Registered systems and local implementations" },
+      { path: "knowledge", purpose: "Accepted, reusable knowledge" },
+    ]);
+  });
+
+  it("lets an archetype restate a shared directory in its own words", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await mkdir(userArchetypesDir, { recursive: true });
+    await writeFile(
+      path.join(userArchetypesDir, "restated.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - path: knowledge",
+        "    purpose: Team playbooks only",
+        "templates: []",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const archetype = await loadArchetype("restated", { userArchetypesDir });
+
+    expect(archetypeZones(archetype, "learning")).toContainEqual({
+      path: "knowledge",
+      purpose: "Team playbooks only",
+    });
+  });
+
+  it("rejects a directory entry with no usable path", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await mkdir(userArchetypesDir, { recursive: true });
+    await writeFile(
+      path.join(userArchetypesDir, "broken.yaml"),
+      [
+        "extends: base",
+        "mode: learning",
+        "dirs:",
+        "  - purpose: no path here",
+        "templates: []",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await expect(loadArchetype("broken", { userArchetypesDir })).rejects.toThrow(
+      /invalid dirs path in archetype broken/,
+    );
+  });
+
+  it("every built-in archetype describes itself and its own directories", async () => {
+    for (const archetypeName of USER_FACING_BUILT_INS) {
+      const archetype = await loadArchetype(archetypeName);
+      expect(archetype.description).not.toBe("");
+      for (const zone of archetypeZones(archetype, archetype.mode, archetype.modules)) {
+        expect(zone.purpose, `${archetypeName}:${zone.path}`).not.toBe("");
+      }
+    }
+  });
+
+  it("leaves runtime state and template folders out of the zone list", async () => {
+    const solve = await loadArchetype("solve");
+    const zones = archetypeZones(solve, solve.mode, solve.modules).map((zone) => zone.path);
+
+    expect(zones).toEqual([
+      "problem",
+      "intake",
+      "benchmarks",
+      "attempts",
+      "tools",
+      "iterations",
+      "systems",
+      "knowledge",
+    ]);
   });
 });
 
@@ -260,75 +425,6 @@ describe("archetype data shapes", () => {
     expect(dirs.some((dir) => dir.startsWith("systems/") && dir !== "systems")).toBe(false);
   });
 
-  it("science owns evidence research dirs and enables iteration by default", async () => {
-    const science = await loadArchetype("science");
-    const dirs = dirsForArchetype(science, science.mode);
-    const paths = (await desiredTemplates("Demo", science.mode, "science")).map(
-      (template) => template.path,
-    );
-
-    expect(science.mode).toBe("absorption");
-    expect(science.modules).toEqual(["iteration"]);
-    expect(dirs).toEqual(
-      expect.arrayContaining([
-        "systems",
-        "knowledge",
-        "hypotheses",
-        "experiments",
-        "datasets",
-        "findings",
-        "papers",
-        "iterations/templates",
-      ]),
-    );
-    expect(paths).toEqual(
-      expect.arrayContaining([
-        "hypotheses/README.md",
-        "experiments/README.md",
-        "datasets/README.md",
-        "findings/README.md",
-        "papers/README.md",
-        "iterations/README.md",
-        "iterations/templates/iteration-plan.md",
-      ]),
-    );
-    expect(hasPath(dirs, "attempts")).toBe(false);
-    expect(hasPath(dirs, "candidates")).toBe(false);
-    expect(hasPath(dirs, "scorecards")).toBe(false);
-  });
-
-  it("evaluation owns candidate scorecards and enables ADR decisions", async () => {
-    const evaluation = await loadArchetype("evaluation");
-    const dirs = dirsForArchetype(evaluation, evaluation.mode);
-    const paths = (await desiredTemplates("Demo", evaluation.mode, "evaluation")).map(
-      (template) => template.path,
-    );
-
-    expect(evaluation.mode).toBe("learning");
-    expect(evaluation.modules).toEqual(["adr"]);
-    expect(dirs).toEqual(
-      expect.arrayContaining([
-        "systems",
-        "knowledge",
-        "candidates",
-        "scorecards",
-        "knowledge/decisions",
-      ]),
-    );
-    expect(paths).toEqual(
-      expect.arrayContaining([
-        "candidates/README.md",
-        "criteria.md",
-        "scorecards/README.md",
-        "knowledge/decisions/README.md",
-        "knowledge/decisions/ADR-TEMPLATE.md",
-      ]),
-    );
-    expect(hasPath(dirs, "analyses/gaps")).toBe(false);
-    expect(hasPath(dirs, "analyses/patterns")).toBe(false);
-    expect(hasPath(dirs, "references/frozen")).toBe(false);
-  });
-
   it("explore owns approach trials and enables iteration by default", async () => {
     const explore = await loadArchetype("explore");
     const dirs = dirsForArchetype(explore, explore.mode);
@@ -359,31 +455,6 @@ describe("archetype data shapes", () => {
     expect(hasPath(dirs, "problem")).toBe(false);
     expect(hasPath(dirs, "candidates")).toBe(false);
     expect(hasPath(dirs, "scorecards")).toBe(false);
-  });
-
-  it("library is shared core only", async () => {
-    const library = await loadArchetype("library");
-    const dirs = dirsForArchetype(library, library.mode);
-    const paths = (await desiredTemplates("Demo", library.mode, "library")).map(
-      (template) => template.path,
-    );
-
-    expect(library.mode).toBe("learning");
-    expect(library.modules).toEqual([]);
-    expect(dirs).toEqual([".assay/backups", ".assay/migrations", "systems", "knowledge"]);
-    expect(paths).toEqual([
-      "README.md",
-      ".gitignore",
-      ".assay/README.md",
-      ".assay/VERSION",
-      ".assay/migrations/README.md",
-      ".assay/backups/.gitkeep",
-      "systems/README.md",
-      "knowledge/README.md",
-    ]);
-    expect(dirs.some((dir) => dir.startsWith("analyses"))).toBe(false);
-    expect(dirs.some((dir) => dir.startsWith("references"))).toBe(false);
-    expect(dirs.some((dir) => dir.startsWith("iterations"))).toBe(false);
   });
 });
 
@@ -591,42 +662,10 @@ describe("archetype templates", () => {
   });
 
   it("new archetype templates use distinct domain language", async () => {
-    const removedSolveSpecificTerms = new RegExp(
-      [
-        ["con", "test"].join(""),
-        "selection",
-        "scor(e|ing|ecard)",
-        ["sub", "mission"].join(""),
-      ].join("|"),
-      "i",
-    );
-    const removedNarrowTerms = new RegExp(
-      [["con", "test"].join(""), "gaps", "patterns"].join("|"),
-      "i",
-    );
     const removedExploreTerms = new RegExp(
       [["con", "test"].join(""), "selection", "scorecards", "single goal"].join("|"),
       "i",
     );
-
-    const science = await desiredTemplates("Demo", "absorption", "science");
-    const scienceText = science
-      .filter((template) => template.templateId.startsWith("science."))
-      .map((template) => template.content)
-      .join("\n");
-    expect(scienceText).toContain("hypothesis");
-    expect(scienceText).toContain("evidence");
-    expect(scienceText).not.toMatch(removedSolveSpecificTerms);
-
-    const evaluation = await desiredTemplates("Demo", "learning", "evaluation");
-    const evaluationText = evaluation
-      .filter((template) => template.templateId.startsWith("evaluation."))
-      .map((template) => template.content)
-      .join("\n");
-    expect(evaluationText).toContain("decision matrix");
-    expect(evaluationText).toContain("scorecards");
-    expect(evaluationText).toContain("final selection");
-    expect(evaluationText).not.toMatch(removedNarrowTerms);
 
     const explore = await desiredTemplates("Demo", "absorption", "explore");
     const exploreText = explore

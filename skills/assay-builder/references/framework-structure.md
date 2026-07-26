@@ -13,12 +13,10 @@ Every current Assay workspace has a shared base, then the selected archetype add
 │   ├── patterns/     # validated reusable patterns
 │   ├── guides/       # operational guides
 │   └── troubleshooting/  # failure modes and fixes
-├── references/       # study/evaluation learning-mode sources, when enabled
+├── references/       # study learning-mode sources, when enabled
 ├── analyses/         # study analysis cards, when enabled
 ├── problem/          # solve/absorption-mode source materials, when enabled
-├── iterations/       # solve/science/explore iteration plans, when enabled
-├── candidates/       # evaluation candidates, when enabled
-├── hypotheses/       # science claims, when enabled
+├── iterations/       # solve/explore iteration plans, when enabled
 └── approaches/       # explore alternatives, when enabled
 ```
 
@@ -27,6 +25,19 @@ Every current Assay workspace has a shared base, then the selected archetype add
 A workspace records `project.archetype` and `project.mode` in `.assay/manifest.json`. `assay init --archetype <archetype>` selects the archetype; the archetype YAML sets the mode. Use `assay archetype` to read the active values from the manifest.
 
 Custom archetypes are YAML files resolved in order: project-local `.assay/archetypes/<name>.yaml`, user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. Template entries may reuse built-in templateIds, carry inline `content` (with `{{project}}` substitution), or reference a `file` relative to the archetype directory — so third-party archetype packs can ship their own README/template content. Unresolvable template entries fail loudly at init/update time.
+
+An archetype should also say what it is for and what each directory holds:
+
+```yaml
+description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+
+dirs:
+  - path: problem
+    purpose: Task statement, official rules, scoring definition
+  - plain-directory-with-no-purpose
+```
+
+`assay status`, the `AGENTS.md` managed block, and the placement advisories in `assay check --advisories` all read those declarations, so a custom archetype explains itself everywhere without any change to Assay. Directories under `.assay/` and `<zone>/templates` folders are treated as machinery rather than places to put work and stay out of all three; declare the parent directory when you want it listed. After changing an archetype, run `assay update --agents` so the `AGENTS.md` table matches it again.
 
 - **learning** (default): the project learns from external systems. Living external sources are added under `references/<alias>/` with `source.yaml`, current `checkout/`, bounded `materials/`, `history.md`, and a flat observation ledger (`observations/`, `manifests/`, `comparisons/`, `captures/`). Use this when the external thing is something you study, not something you are.
 - **absorption**: the project exists to absorb a specific external thing (a benchmark target, a paper, a repo you are rebuilding). Its official/source materials land under `problem/<name>/` with a `source.yaml` case file, because they ARE the project, not external references. `references/frozen/` is still available for genuine third-party side evidence.
@@ -40,15 +51,16 @@ file existing does not prove content quality, so Assay does not turn prose
 heuristics into mandatory gates. Use `assay check --advisories` when workflow
 reminders are useful:
 
-- A frozen reference that is not cited by an analysis and is not marked
-  `analyzed: true` is listed as an `unanalyzed reference` advisory.
+- A frozen reference directory with no `reference.yaml` is listed with the
+  `assay reference backfill <path>` command that writes one. Provenance is
+  checkable; whether someone read the material is not.
 - A living source observation must always retain provenance, fingerprint, and
   manifest metadata. A `major` observation can additionally be listed as a
   revalidation advisory until a bound analysis closes.
 - An analysis at `Status: draft` with empty `## Key observations` is listed as
   an unfinished-draft advisory.
-- `analysis close --exit …` records the explicit decision and flips a bound
-  `reference.yaml` to `analyzed: true`; it does not judge section prose.
+- `analysis close --exit …` records the explicit decision and marks a bound
+  source observation closed; it does not judge section prose.
 
 
 ## Intent-to-directory mapping
@@ -58,8 +70,6 @@ reminders are useful:
 | study others' projects/materials | `references/` |
 | analyze them | `analyses/` |
 | absorb objective inputs | `problem/`, `intake/` |
-| compare external candidates | `candidates/`, `criteria.md`, `scorecards/` |
-| run science work | `hypotheses/`, `experiments/`, `datasets/`, `findings/`, `papers/` |
 | explore local approaches | `approaches/`, `trials/`, `comparison.md` |
 | build local systems | `systems/` |
 | iterate local systems | `iterations/` |

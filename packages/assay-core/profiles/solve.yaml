@@ -7,21 +7,32 @@ mode: absorption
 modules:
   - iteration
 
+description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+
 dirs:
-  - problem
-  - intake
-  - benchmarks
-  - attempts
-  - tools
-  - iterations/templates
+  - path: problem
+    purpose: Task statement, official rules, scoring definition
+  - path: intake
+    purpose: Raw deliveries that have not been normalized yet
+  - path: benchmarks
+    purpose: Local proxy evaluation sets
+  - path: attempts
+    purpose: Sealed attempt packages
+  - path: tools
+    purpose: Packaging, scoring, and validation scripts
+  - path: iterations
+    purpose: Goal-attack loops
+  - path: iterations/templates
+    purpose: Blank iteration plans
 
 dirs_learning: []
 dirs_absorption: []
 
 templates:
+  - { path: "README.md", templateId: "solve.readme" }
   - { path: "objective.json", templateId: "solve.objective" }
   - { path: "systems/current.json", templateId: "solve.current_attempt" }
-  - { path: "runs.jsonl", templateId: "solve.runs.jsonl" }
+  - { path: "problem/README.md", templateId: "solve.problem.readme" }
   - { path: "intake/README.md", templateId: "solve.intake.readme" }
   - { path: "benchmarks/README.md", templateId: "solve.benchmarks.readme" }
   - { path: "attempts/README.md", templateId: "solve.attempts.readme" }

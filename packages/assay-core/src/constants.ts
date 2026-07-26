@@ -1,4 +1,4 @@
-export const CURRENT_VERSION = "0.3.0";
+export const CURRENT_VERSION = "0.4.0";
 
 /**
  * Layout version written by this build of Assay. New workspaces always carry

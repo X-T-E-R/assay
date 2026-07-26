@@ -8,6 +8,7 @@ import { defaultStandaloneLayout, resolveWorkspaceLayout, workspaceSubpath } fro
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
+  type SystemIntentAuthority,
   type SystemRecord,
   type SystemStatus,
   type SystemVcs,
@@ -32,6 +33,7 @@ export interface RegisterSystemInput {
   readonly primary?: boolean;
   readonly supersedes?: readonly string[];
   readonly contractFile?: string | null;
+  readonly intentAuthority?: SystemIntentAuthority;
 }
 
 export interface RegisterSystemResult {
@@ -49,6 +51,8 @@ export interface UpdateSystemInput {
   readonly primary?: boolean;
   readonly supersedes?: readonly string[];
   readonly contractFile?: string | null;
+  /** `null` clears the field back to the default (`inline`). */
+  readonly intentAuthority?: SystemIntentAuthority | null;
 }
 
 export type SystemUpdateField =
@@ -58,7 +62,8 @@ export type SystemUpdateField =
   | "version"
   | "contract_file"
   | "supersedes"
-  | "status";
+  | "status"
+  | "intent_authority";
 
 export type SystemUpdateValue = string | readonly string[] | null;
 
@@ -215,6 +220,21 @@ function cloneSystemRecord(system: SystemRecord): SystemRecord {
   return { ...system, supersedes: [...system.supersedes] };
 }
 
+/**
+ * Intent authority rendered for change reporting and event payloads, which
+ * carry scalars rather than nested objects. An absent field means `inline`.
+ */
+export function describeIntentAuthority(
+  authority: SystemIntentAuthority | undefined,
+): string | null {
+  if (!authority) {
+    return null;
+  }
+  return authority.pointer === undefined
+    ? authority.mode
+    : `${authority.mode} ${authority.pointer}`;
+}
+
 function normalizeRegistryPath(root: string, value: string): string {
   return relativeDisplayPath(path.resolve(root, value), root);
 }
@@ -265,6 +285,11 @@ function collectSystemUpdateChanges(
   addChange("contract_file", previous.contract_file, current.contract_file);
   addChange("supersedes", previous.supersedes, current.supersedes);
   addChange("status", previous.status, current.status);
+  addChange(
+    "intent_authority",
+    describeIntentAuthority(previous.intent_authority),
+    describeIntentAuthority(current.intent_authority),
+  );
 
   return changes;
 }
@@ -315,6 +340,7 @@ async function createSystemContractIfMissing(
     vcs: system.vcs,
     vcsRef: system.vcs_ref,
     supersedes: system.supersedes,
+    intentAuthority: system.intent_authority,
   });
 
   await mkdir(path.dirname(contractPath), { recursive: true });
@@ -362,6 +388,7 @@ export async function registerSystem(
     absorbed_on: dateStamp,
     archived_on: null,
     archive_path: null,
+    ...(input.intentAuthority === undefined ? {} : { intent_authority: input.intentAuthority }),
   };
 
   registry.systems[name] = record;
@@ -431,6 +458,14 @@ export async function updateSystem(
   }
   if (input.supersedes !== undefined) {
     updated = { ...updated, supersedes: [...input.supersedes] };
+  }
+  if (input.intentAuthority !== undefined) {
+    if (input.intentAuthority === null) {
+      const { intent_authority: _cleared, ...rest } = updated;
+      updated = rest;
+    } else {
+      updated = { ...updated, intent_authority: input.intentAuthority };
+    }
   }
 
   registry.systems[system.name] = updated;

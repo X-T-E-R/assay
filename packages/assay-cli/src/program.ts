@@ -5,17 +5,24 @@ import {
   type AnalysisExit,
   type AssayProjectRegistryStatus,
   CURRENT_VERSION,
+  DONOR_TAKE_MODES,
   type DonorDecisionOutcome,
+  type DonorTakeMode,
+  type IntentPromotionTarget,
   type IterationResult,
   type KnowledgeType,
   SOURCE_CAPTURE_MODES,
   SOURCE_CHANGE_CLASSES,
+  SUPPORTED_CAPABILITY_MODULES,
   type SourceCaptureMode,
   type SourceChangeClass,
+  type SystemIntentAuthority,
+  type SystemIntentAuthorityMode,
   type SystemVcs,
   type WorkspacePrivacy,
   absorbReference,
   acceptAdr,
+  addCapability,
   addKnowledge,
   addReference,
   addSource,
@@ -23,7 +30,9 @@ import {
   applyUpdate,
   archiveSystem,
   attachExistingRepo,
+  backfillReferenceCaseFile,
   captureEvent,
+  captureIntent,
   checkFramework,
   closeAnalysis,
   closeIteration,
@@ -48,11 +57,14 @@ import {
   inspectDonorAdoption,
   listAdrs,
   listAvailableArchetypes,
+  listCapabilities,
   listDonorAdoptions,
+  listIntent,
   listProjectRecords,
   listSystems,
   loadManifest,
   migrateLayout,
+  promoteIntent,
   promoteSystem,
   pruneProjects,
   recordDonorEvidenceFromFile,
@@ -66,6 +78,7 @@ import {
   supersedeAdr,
   switchSource,
   syncSource,
+  takeDonorMaterial,
   updateDonorAdoptionFromFile,
   updateSystem,
   verifyDonorInspection,
@@ -78,6 +91,8 @@ import {
   formatAdrList,
   formatAdrRecord,
   formatAttachResult,
+  formatCapabilityAdd,
+  formatCapabilityList,
   formatCheckResult,
   formatConvertResult,
   formatDonorAdoption,
@@ -88,6 +103,9 @@ import {
   formatDonorStatus,
   formatDonorVerification,
   formatInitResult,
+  formatIntentCapture,
+  formatIntentList,
+  formatIntentPromotion,
   formatMigrationResult,
   formatProjectList,
   formatProjectRecord,
@@ -138,6 +156,7 @@ const PROJECT_STATUSES: readonly AssayProjectRegistryStatus[] = [
 ];
 
 const ADR_STATUSES: readonly AdrStatus[] = ["proposed", "accepted", "superseded", "deprecated"];
+const INTENT_AUTHORITY_MODES: readonly SystemIntentAuthorityMode[] = ["inline", "external", "none"];
 const ABSORPTION_OUTLETS: readonly AbsorptionOutlet[] = ["problem", "intake"];
 
 type AbsorptionOutlet = "problem" | "intake";
@@ -205,6 +224,67 @@ function parseAdrStatusFilter(status?: string): AdrStatus | undefined {
   throw new Error(`--status must be one of: ${ADR_STATUSES.join(", ")}`);
 }
 
+/**
+ * Build the registry's intent-authority value from the two CLI options that
+ * describe it. The pointer is meaningless without a mode, so passing it alone
+ * is a usage error rather than a silently dropped argument.
+ */
+function parseIntentAuthority(
+  mode: string | undefined,
+  pointer: string | undefined,
+): SystemIntentAuthority | undefined {
+  if (mode === undefined) {
+    if (pointer !== undefined) {
+      throw new Error("--intent-pointer requires --intent-authority <mode>");
+    }
+    return undefined;
+  }
+  if (!INTENT_AUTHORITY_MODES.includes(mode as SystemIntentAuthorityMode)) {
+    throw new Error(`--intent-authority must be one of: ${INTENT_AUTHORITY_MODES.join(", ")}`);
+  }
+  return {
+    mode: mode as SystemIntentAuthorityMode,
+    ...(pointer === undefined ? {} : { pointer }),
+  };
+}
+
+/**
+ * Split a `<name>:<path>` pair.
+ *
+ * The name is everything before the **first** colon, so the remainder keeps a
+ * Windows-style path intact instead of being cut at its drive colon. A path
+ * like that is not a valid donor locator — locators are relative to the source
+ * observation or the registered system — and it is refused by name below or by
+ * the path schema, rather than being silently rewritten into something else.
+ */
+function splitDonorLocatorArgument(
+  value: string,
+  label: string,
+): { readonly name: string; readonly path: string } {
+  const separator = value.indexOf(":");
+  const name = separator < 0 ? "" : value.slice(0, separator);
+  const locatorPath = separator < 0 ? "" : value.slice(separator + 1);
+  if (name === "" || locatorPath === "") {
+    throw new Error(`${label} must be <name>:<path>; got '${value}'`);
+  }
+  if (/^[a-zA-Z]$/.test(name) && /^[\\/]/.test(locatorPath)) {
+    throw new Error(
+      `${label} must be <name>:<path> with a path relative to the source or system root; '${value}' looks like a Windows absolute path`,
+    );
+  }
+  return { name, path: locatorPath };
+}
+
+function splitList(value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 async function writeArchetypeCommandResult(
   output: Pick<CliOutput, "stdout" | "stderr">,
   options: { readonly root: string; readonly json?: boolean },
@@ -226,6 +306,58 @@ async function writeArchetypeCommandResult(
   writeLine(output, "stdout", `Project: ${payload.project}`);
   writeLine(output, "stdout", `Archetype: ${payload.archetype}`);
   writeLine(output, "stdout", `Mode: ${payload.mode}`);
+}
+
+/**
+ * Where an analysis goes after it closes depends on how it closed: an adopted
+ * pattern becomes knowledge, a decision becomes an ADR, an experiment becomes
+ * an iteration. Naming the one command that fits the exit is the whole point of
+ * the hint — a generic "record the outcome" line would be prose.
+ */
+function analysisCloseNextLine(analysisPath: string, exit: string): string {
+  switch (exit) {
+    case "adopt":
+      return `Next: \`assay knowledge add pattern "<title>" --from-analysis ${analysisPath}\` to keep what survived.`;
+    case "adr":
+      return 'Next: `assay adr new "<decision title>"` to record the decision this analysis reached.';
+    case "experiment":
+      return 'Next: `assay iteration start "<what you are trying>"` to run the experiment this analysis proposed.';
+    default:
+      return "Next: `assay status` shows what is still open in this workspace.";
+  }
+}
+
+/**
+ * What follows registering a system. A non-primary one has an obvious next
+ * step; for the primary one the freshly generated contract carries metadata and
+ * no description yet. Both hold in every archetype, unlike `iteration start`,
+ * which only exists where the iteration module is enabled.
+ */
+function systemRegisterNextLine(system: {
+  readonly name: string;
+  readonly status: string;
+  readonly contract_file: string | null;
+}): string {
+  if (system.status !== "primary") {
+    return `Next: \`assay system promote ${system.name}\` when it becomes the primary system.`;
+  }
+  return system.contract_file
+    ? `Next: describe what ${system.name} does in ${system.contract_file}.`
+    : `Next: \`assay system show ${system.name}\` to confirm what was recorded.`;
+}
+
+/** The first command a freshly scaffolded capability module makes available. */
+function capabilityAddNextLine(module: string): string {
+  switch (module) {
+    case "adr":
+      return 'Next: `assay adr new "<decision title>"`.';
+    case "intent":
+      return 'Next: `assay intent capture --text "<what the product is for>"`.';
+    case "iteration":
+      return 'Next: `assay iteration start "<what you are changing>"`.';
+    default:
+      return "Next: `assay capability list` shows what this workspace now has.";
+  }
 }
 
 export function createProgram(options: CreateProgramOptions = {}): Command {
@@ -384,9 +516,16 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .command("status")
     .description("Print workspace status")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .option("--fetch", "also compare Git-backed sources against their remotes (network)")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      writeLine(output, "stdout", formatStatusResult(await getFrameworkStatus({ root })));
+      const result = await getFrameworkStatus({ root, fetch: commandOptions.fetch === true });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", formatStatusResult(result));
     });
 
   program
@@ -587,6 +726,39 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       }
     });
 
+  const capability = program
+    .command("capability")
+    .description("Enable and inspect optional capability modules");
+
+  capability
+    .command("add")
+    .description("Enable a capability module in an existing workspace")
+    .argument("<module>", `capability module: ${SUPPORTED_CAPABILITY_MODULES.join(", ")}`)
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (module, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await addCapability({ root, module });
+      writeLine(output, "stdout", formatCapabilityAdd(result));
+      if (!result.alreadyEnabled) {
+        writeLine(output, "stdout", capabilityAddNextLine(result.module));
+      }
+    });
+
+  capability
+    .command("list")
+    .description("List capability modules and how each one was enabled")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await listCapabilities({ root });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", formatCapabilityList(result));
+    });
+
   const reference = program.command("reference").description("Reference operations");
   reference
     .command("add")
@@ -599,6 +771,29 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       const result = await addReference({ root, source: sourceDir, name });
       writeLine(output, "stdout", `Frozen reference: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  reference
+    .command("backfill")
+    .description("Write the missing reference.yaml for an existing frozen reference")
+    .argument("<path>", "frozen reference directory, relative to the workspace root")
+    .option("--source <origin>", "where the material came from, when it is known")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (referencePath, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await backfillReferenceCaseFile({
+        root,
+        path: referencePath,
+        ...(commandOptions.source === undefined ? {} : { source: commandOptions.source }),
+      });
+      if (!result.created) {
+        writeLine(output, "stdout", `Reference already has a case file: ${result.referenceFile}`);
+        return;
+      }
+      writeLine(output, "stdout", `Wrote reference case file: ${result.referenceFile}`);
+      if (result.eventFile) {
+        writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      }
     });
 
   const source = program.command("source").description("Living external source operations");
@@ -631,6 +826,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       }
       writeLine(output, "stdout", `Materials: ${result.materialsPath}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        "Next: `assay status` reports when this source moves upstream and which adopted mappings it reaches.",
+      );
     });
 
   source
@@ -760,6 +960,66 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       if (result.eventFile) {
         writeLine(output, "stdout", `Event: ${result.eventFile}`);
       }
+    });
+
+  donor
+    .command("take")
+    .description("Register a single-source, single-target adoption without a definition file")
+    .argument("<source>", "<source-alias>:<path-in-source>")
+    .requiredOption("--into <target>", "<target-system>:<path-in-system>")
+    .addOption(
+      new Option("--mode <mode>", "how the material was carried over")
+        .choices([...DONOR_TAKE_MODES])
+        .default("adapt"),
+    )
+    .addOption(
+      new Option("--match <match>", "locator shape; inferred from the observation by default")
+        .choices(["exact", "prefix"])
+        .hideHelp(),
+    )
+    .option("--to <observation>", "source observation id; defaults to latest")
+    .option("--id <adoption-id>", "adoption id; derived from source, system, and path by default")
+    .option("--title <title>", "human-readable adoption title")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (sourceArgument, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const from = splitDonorLocatorArgument(sourceArgument, "donor source");
+      const into = splitDonorLocatorArgument(commandOptions.into, "--into");
+      const result = await takeDonorMaterial({
+        root,
+        sourceAlias: from.name,
+        sourcePath: from.path,
+        targetSystem: into.name,
+        targetPath: into.path,
+        mode: commandOptions.mode as DonorTakeMode,
+        ...(commandOptions.match === undefined
+          ? {}
+          : { match: commandOptions.match as "exact" | "prefix" }),
+        ...(commandOptions.to === undefined ? {} : { observation: commandOptions.to }),
+        ...(commandOptions.id === undefined ? {} : { adoptionId: commandOptions.id }),
+        ...(commandOptions.title === undefined ? {} : { title: commandOptions.title }),
+      });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", `Registered donor adoption: ${result.adoptionId}`);
+      writeLine(output, "stdout", `Definition: ${result.definitionDigest}`);
+      writeLine(
+        output,
+        "stdout",
+        `Mapping: ${from.name}:${from.path} -> ${result.targetId}:${into.path} (${commandOptions.mode}, match ${result.match})`,
+      );
+      writeLine(output, "stdout", `Observation: ${result.observation}`);
+      if (result.eventFile) {
+        writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      }
+      writeLine(
+        output,
+        "stdout",
+        `Next: assay status reports when ${from.name} changes under this mapping.`,
+      );
     });
 
   donor
@@ -1054,6 +1314,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Created analysis: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        `Next: fill ## Key observations, then \`assay analysis close ${result.path} --exit adopt|reject|experiment|adr\`.`,
+      );
     });
 
   analysis
@@ -1084,6 +1349,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Closed analysis: ${result.path}`);
       writeLine(output, "stdout", `Exit: ${commandOptions.exit}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(output, "stdout", analysisCloseNextLine(result.path, commandOptions.exit));
     });
 
   const iteration = program.command("iteration").description("Iteration operations");
@@ -1098,6 +1364,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Started iteration: ${result.path}`);
       writeLine(output, "stdout", `Plan: ${result.planPath}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        `Next: fill ${result.planPath}, then \`assay iteration close ${result.path} --result applied|rejected|retest\`.`,
+      );
     });
 
   iteration
@@ -1121,6 +1392,13 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Closed iteration: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        commandOptions.result === "applied"
+          ? `Next: \`assay knowledge add pattern "<title>" --from-iteration ${result.path}\` if this produced something reusable.`
+          : "Next: `assay status` shows what is still open in this workspace.",
+      );
     });
 
   const event = program.command("event").description("Event ledger operations");
@@ -1250,6 +1528,78 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", formatAdrRecord(record));
     });
 
+  const intent = program
+    .command("intent")
+    .description("Capture product intent verbatim and promote it into requirements or decisions");
+
+  intent
+    .command("capture")
+    .description("Record product intent verbatim against a registered system")
+    .option("--text <text>", "intent text to capture")
+    .option("--file <path>", "workspace-relative file whose contents are the intent text")
+    .option("--system <name>", "system name or unique prefix; defaults to the primary system")
+    .option("--source <text>", "where the intent came from (conversation, ticket, meeting)")
+    .option("--supersedes <ids>", "comma-separated capture ids this record corrects")
+    .option("--force", "record a shadow copy when the system's intent authority is elsewhere")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const supersedes = splitList(commandOptions.supersedes);
+      const result = await captureIntent({
+        root,
+        ...(commandOptions.text === undefined ? {} : { text: commandOptions.text }),
+        ...(commandOptions.file === undefined ? {} : { file: commandOptions.file }),
+        ...(commandOptions.system === undefined ? {} : { system: commandOptions.system }),
+        ...(commandOptions.source === undefined ? {} : { source: commandOptions.source }),
+        ...(supersedes === undefined ? {} : { supersedes }),
+        force: commandOptions.force ?? false,
+      });
+      writeLine(output, "stdout", formatIntentCapture(result));
+    });
+
+  intent
+    .command("promote")
+    .description("Derive a requirement or an ADR from a recorded intent capture")
+    .argument("<capture>", "intent capture id or unique id prefix")
+    .addOption(
+      new Option("--to <target>", "promotion target")
+        .choices(["requirement", "decision"])
+        .makeOptionMandatory(),
+    )
+    .option("--title <title>", "title for the requirement or ADR")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .action(async (capture, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await promoteIntent({
+        root,
+        capture,
+        to: commandOptions.to as IntentPromotionTarget,
+        ...(commandOptions.title === undefined ? {} : { title: commandOptions.title }),
+      });
+      writeLine(output, "stdout", formatIntentPromotion(result));
+    });
+
+  intent
+    .command("list")
+    .description("List recorded intent captures and what they became")
+    .option("--system <name>", "system name or unique prefix to filter by")
+    .option("--include-lineage", "also include systems the filtered system supersedes")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await listIntent({
+        root,
+        ...(commandOptions.system === undefined ? {} : { system: commandOptions.system }),
+        includeLineage: commandOptions.includeLineage ?? false,
+      });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", formatIntentList(result));
+    });
+
   const system = program.command("system").description("System registry operations");
 
   system
@@ -1269,15 +1619,21 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--system-version <version>", "system semantic version")
     .option("--primary", "set this system as the primary system")
     .option("--supersedes <names>", "comma-separated superseded system names")
+    .addOption(
+      new Option(
+        "--intent-authority <mode>",
+        "where this system's product intent is authoritative",
+      ).choices([...INTENT_AUTHORITY_MODES]),
+    )
+    .option("--intent-pointer <pointer>", "where the external intent authority lives")
     .action(async (systemPath, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const vcs = commandOptions.vcs as SystemVcs | undefined;
-      const supersedes = commandOptions.supersedes
-        ? commandOptions.supersedes
-            .split(",")
-            .map((value) => value.trim())
-            .filter(Boolean)
-        : [];
+      const supersedes = splitList(commandOptions.supersedes) ?? [];
+      const intentAuthority = parseIntentAuthority(
+        commandOptions.intentAuthority,
+        commandOptions.intentPointer,
+      );
       const result = await registerSystem(root, {
         path: systemPath,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
@@ -1288,12 +1644,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           : { version: commandOptions.systemVersion }),
         primary: commandOptions.primary ?? false,
         supersedes,
+        ...(intentAuthority === undefined ? {} : { intentAuthority }),
       });
       writeLine(output, "stdout", `Registered system: ${result.system.name}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
       writeLine(output, "stdout", `Contract: ${result.system.contract_file ?? "-"}`);
       writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(output, "stdout", systemRegisterNextLine(result.system));
     });
 
   system
@@ -1315,16 +1673,27 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--no-contract-file", "clear the contract file path")
     .option("--primary", "set this system as the primary system")
     .option("--supersedes <names>", "comma-separated superseded system names")
+    .addOption(
+      new Option(
+        "--intent-authority <mode>",
+        "where this system's product intent is authoritative",
+      ).choices([...INTENT_AUTHORITY_MODES]),
+    )
+    .option("--no-intent-authority", "clear the recorded intent authority (back to inline)")
+    .option("--intent-pointer <pointer>", "where the external intent authority lives")
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const vcs = commandOptions.vcs as SystemVcs | undefined;
-      const supersedes =
-        commandOptions.supersedes === undefined
-          ? undefined
-          : commandOptions.supersedes
-              .split(",")
-              .map((value) => value.trim())
-              .filter(Boolean);
+      const supersedes = splitList(commandOptions.supersedes);
+      const intentAuthority =
+        commandOptions.intentAuthority === false
+          ? null
+          : parseIntentAuthority(
+              typeof commandOptions.intentAuthority === "string"
+                ? commandOptions.intentAuthority
+                : undefined,
+              commandOptions.intentPointer,
+            );
       const contractFile =
         commandOptions.contractFile === false
           ? null
@@ -1340,6 +1709,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           : { version: commandOptions.systemVersion }),
         ...(contractFile === undefined ? {} : { contractFile }),
         ...(supersedes === undefined ? {} : { supersedes }),
+        ...(intentAuthority === undefined ? {} : { intentAuthority }),
         ...(commandOptions.primary ? { primary: true } : {}),
       });
       const changedFields = result.changes.map((change) => change.field).join(", ");
@@ -1471,6 +1841,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       });
       writeLine(output, "stdout", `Added knowledge: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      writeLine(
+        output,
+        "stdout",
+        `Next: write the entry in ${result.path}; \`assay check\` reports the workspace's knowledge structure.`,
+      );
     });
 
   return program;

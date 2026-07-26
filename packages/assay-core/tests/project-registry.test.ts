@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -237,7 +237,7 @@ describe("project registry scan and cleanup", () => {
     expect(await exists(path.join(root, MANIFEST_FILE))).toBe(true);
 
     const stale = await registerProject(root, "scan", { registryRoot });
-    await rm(path.join(root, ".assay"), { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
     const dryRun = await pruneProjects({ registryRoot, dryRun: true });
     expect(dryRun.map((record) => record.id)).toEqual([stale.id]);
     expect(await exists(projectRecordPath(stale.id, { registryRoot }))).toBe(true);
@@ -245,7 +245,42 @@ describe("project registry scan and cleanup", () => {
     const pruned = await pruneProjects({ registryRoot });
     expect(pruned.map((record) => record.id)).toEqual([stale.id]);
     expect(await exists(projectRecordPath(stale.id, { registryRoot }))).toBe(false);
-    expect(await readFile(path.join(root, "README.md"), "utf8")).toContain("# Cleanup Demo");
+  });
+
+  it("keeps a record whose directory is still there but whose manifest cannot be read", async () => {
+    const root = path.join(await tempDir(), "unreadable");
+    const registryRoot = path.join(await tempDir(), "registry");
+    await initFramework({ target: root, name: "Unreadable Demo" });
+    const record = await registerProject(root, "init", { registryRoot });
+    await rm(path.join(root, ".assay"), { recursive: true, force: true });
+
+    expect((await listProjectRecords({ registryRoot }))[0]).toMatchObject({ status: "missing" });
+    await expect(pruneProjects({ registryRoot })).resolves.toEqual([]);
+    expect(await exists(projectRecordPath(record.id, { registryRoot }))).toBe(true);
+    expect(await readFile(path.join(root, "README.md"), "utf8")).toContain("# Unreadable Demo");
+  });
+
+  it("keeps a legacy .framework workspace listed as active", async () => {
+    const root = path.join(await tempDir(), "legacy");
+    const registryRoot = path.join(await tempDir(), "registry");
+    await initFramework({ target: root, name: "Legacy Demo" });
+    await rename(path.join(root, ".assay"), path.join(root, ".framework"));
+    const record = await registerProject(root, "scan", { registryRoot });
+
+    expect(record.status).toBe("active");
+    await expect(pruneProjects({ registryRoot })).resolves.toEqual([]);
+    expect(await exists(projectRecordPath(record.id, { registryRoot }))).toBe(true);
+  });
+
+  it("prunes a record the workspace explicitly uninstalled", async () => {
+    const root = path.join(await tempDir(), "uninstalled");
+    const registryRoot = path.join(await tempDir(), "registry");
+    await initFramework({ target: root, name: "Uninstalled Demo" });
+    await registerProject(root, "init", { registryRoot });
+    const record = await markProjectUninstalled(root, { registryRoot });
+
+    await expect(pruneProjects({ registryRoot })).resolves.toMatchObject([{ id: record.id }]);
+    expect(await exists(projectRecordPath(record.id, { registryRoot }))).toBe(false);
   });
 
   it("ignores corrupted records whose ids do not match the generated hash format", async () => {
@@ -278,5 +313,35 @@ describe("project registry scan and cleanup", () => {
     await expect(listProjectRecords({ registryRoot })).resolves.toEqual([]);
     await expect(pruneProjects({ registryRoot })).resolves.toEqual([]);
     expect(await exists(filePath)).toBe(true);
+  });
+
+  it("prunes records whose project directory no longer exists at all", async () => {
+    const registryRoot = path.join(await tempDir(), "registry");
+    const vanished = path.join(await tempDir(), "vanished");
+    await initFramework({ target: vanished, name: "Vanished" });
+    const record = await registerProject(vanished, "init", { registryRoot });
+    await rm(vanished, { recursive: true, force: true });
+
+    const pruned = await pruneProjects({ registryRoot });
+
+    expect(pruned.map((entry) => entry.id)).toEqual([record.id]);
+    expect(await exists(projectRecordPath(record.id, { registryRoot }))).toBe(false);
+  });
+});
+
+/**
+ * The isolation itself, asserted where a broken harness fails loudly. The
+ * run-level check lives in the vitest global setup and compares the user
+ * registry before and after; this catches a misconfigured worker at the point
+ * where the workspace-creating tests run.
+ */
+describe("test project registry isolation", () => {
+  it("redirects the registry away from the user's home directory", () => {
+    const configured = process.env.ASSAY_PROJECT_REGISTRY_ROOT;
+    const userRegistryRoot = path.join(homedir(), ".assay", "projects");
+
+    expect(configured, "vitest setup must redirect ASSAY_PROJECT_REGISTRY_ROOT").toBeTruthy();
+    expect(path.resolve(configured ?? "")).not.toBe(path.resolve(userRegistryRoot));
+    expect(path.resolve(projectRegistryRoot())).not.toBe(path.resolve(userRegistryRoot));
   });
 });

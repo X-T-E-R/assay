@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { BARE_ARCHETYPE, writeBareArchetype } from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -61,18 +62,14 @@ beforeEach(async () => {
   registryRoot = await tempDir();
 });
 
-type Archetype = "study" | "solve" | "library" | "science" | "evaluation" | "explore";
-const USER_FACING_BUILT_INS: readonly Archetype[] = [
-  "library",
-  "study",
-  "solve",
-  "science",
-  "evaluation",
-  "explore",
-];
+type Archetype = "study" | "solve" | "explore" | typeof BARE_ARCHETYPE;
+const USER_FACING_BUILT_INS: readonly Archetype[] = ["study", "solve", "explore"];
 
 async function initWorkspace(name: string, archetype: Archetype = "study"): Promise<string> {
   const root = path.join(await tempDir(), name);
+  if (archetype === BARE_ARCHETYPE) {
+    await writeBareArchetype(root);
+  }
   await runCli(["init", root, "--name", name, "--archetype", archetype]);
   return root;
 }
@@ -145,10 +142,8 @@ describe("assay iteration close CLI", () => {
 
   it("starts iterations only when the archetype enables the iteration capability", async () => {
     const studyRoot = await initWorkspace("IterStudy");
-    const libraryRoot = await initWorkspace("IterLibrary", "library");
-    const evaluationRoot = await initWorkspace("IterEvaluation", "evaluation");
+    const bareRoot = await initWorkspace("IterBare", BARE_ARCHETYPE);
     const solveRoot = await initWorkspace("IterSolve", "solve");
-    const scienceRoot = await initWorkspace("IterScience", "science");
     const exploreRoot = await initWorkspace("IterExplore", "explore");
 
     const study = await runCli(["iteration", "start", "Try Pattern", "--root", studyRoot]);
@@ -156,33 +151,17 @@ describe("assay iteration close CLI", () => {
     expect(study.stdout).toBe("");
     expect(study.stderr).toContain("capability not enabled in archetype study: iteration");
 
-    const library = await runCli(["iteration", "start", "Try Pattern", "--root", libraryRoot]);
-    expect(library.exitCode).toBe(1);
-    expect(library.stdout).toBe("");
-    expect(library.stderr).toContain("capability not enabled in archetype library: iteration");
-
-    const evaluation = await runCli([
-      "iteration",
-      "start",
-      "Try Pattern",
-      "--root",
-      evaluationRoot,
-    ]);
-    expect(evaluation.exitCode).toBe(1);
-    expect(evaluation.stdout).toBe("");
-    expect(evaluation.stderr).toContain(
-      "capability not enabled in archetype evaluation: iteration",
+    const bare = await runCli(["iteration", "start", "Try Pattern", "--root", bareRoot]);
+    expect(bare.exitCode).toBe(1);
+    expect(bare.stdout).toBe("");
+    expect(bare.stderr).toContain(
+      `capability not enabled in archetype ${BARE_ARCHETYPE}: iteration`,
     );
 
     const solve = await runCli(["iteration", "start", "Try Pattern", "--root", solveRoot]);
     expect(solve.exitCode).toBe(0);
     expect(solve.stderr).toBe("");
     expect(solve.stdout).toContain("Started iteration: iterations/");
-
-    const science = await runCli(["iteration", "start", "Try Pattern", "--root", scienceRoot]);
-    expect(science.exitCode).toBe(0);
-    expect(science.stderr).toBe("");
-    expect(science.stdout).toContain("Started iteration: iterations/");
 
     const explore = await runCli(["iteration", "start", "Try Pattern", "--root", exploreRoot]);
     expect(explore.exitCode).toBe(0);
@@ -291,7 +270,7 @@ describe("assay analysis close CLI", () => {
     expect(close.exitCode).not.toBe(0);
   });
 
-  it("binds analysis to a frozen reference and marks it analyzed on close", async () => {
+  it("binds analysis to a frozen reference and leaves its case file untouched on close", async () => {
     const root = await initWorkspace("AnalForRef");
     // Create a source directory and freeze it as a reference.
     const source = path.join(root, "..", "anal-for-ref-source");
@@ -327,7 +306,7 @@ describe("assay analysis close CLI", () => {
       adopt: "- Adopt the useful reference detail.",
     });
 
-    // Closing the analysis must flip reference.yaml analyzed to true.
+    const yamlBefore = await readFile(path.join(root, refPath, "reference.yaml"), "utf8");
     const close = await runCli([
       "analysis",
       "close",
@@ -339,8 +318,11 @@ describe("assay analysis close CLI", () => {
     ]);
     expect(close.exitCode).toBe(0);
 
+    // The frozen case file records provenance only; closing an analysis no
+    // longer writes a gate flag into it.
     const yaml = await readFile(path.join(root, refPath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: true");
+    expect(yaml).toBe(yamlBefore);
+    expect(yaml).not.toContain("analyzed:");
   });
 
   it("keeps major revalidation optional and clears the requested advisory on close", async () => {
@@ -427,9 +409,9 @@ describe("assay absorb CLI", () => {
     expect(res.stdout).toContain(`Absorbed source: ${referencePath}`);
     expect(res.stdout).toContain("Opened analysis: analyses/references/");
 
-    // reference.yaml case file present and unanalyzed.
+    // reference.yaml case file present with provenance.
     const yaml = await readFile(path.join(root, referencePath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: false");
+    expect(yaml).toContain(`freeze_path: ${referencePath}`);
 
     // The opened analysis is pre-filled with the README lead.
     const match = res.stdout.match(/analyses\/references\/[^\s]+\.md/);
@@ -517,5 +499,208 @@ describe("assay knowledge add CLI", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`Added knowledge: knowledge/${typeDirs[type]}/`);
     }
+  });
+});
+
+describe("assay capability CLI", () => {
+  it("adds a module the archetype lacks and reports the scaffolded files", async () => {
+    const root = await initWorkspace("CapAdd", BARE_ARCHETYPE);
+
+    const added = await runCli(["capability", "add", "adr", "--root", root]);
+
+    expect(added.exitCode).toBe(0);
+    expect(added.stderr).toBe("");
+    expect(added.stdout).toContain("Added capability: adr");
+    expect(added.stdout).toContain("Enabled capabilities: adr");
+    expect(added.stdout).toContain("knowledge/decisions/ADR-TEMPLATE.md");
+    expect(added.stdout).toContain("Event:");
+    expect(await exists(path.join(root, "knowledge", "decisions", "README.md"))).toBe(true);
+
+    const adr = await runCli(["adr", "new", "First Decision", "--root", root]);
+    expect(adr.exitCode).toBe(0);
+    expect(adr.stdout).toContain("Created ADR: ADR-0001-first-decision");
+
+    const check = await runCli(["check", "--root", root]);
+    expect(check.exitCode).toBe(0);
+    expect(check.stdout).toContain("Framework check: ok");
+  });
+
+  it("reports an already-enabled module without failing", async () => {
+    const root = await initWorkspace("CapRerun", BARE_ARCHETYPE);
+    await runCli(["capability", "add", "iteration", "--root", root]);
+
+    const rerun = await runCli(["capability", "add", "iteration", "--root", root]);
+
+    expect(rerun.exitCode).toBe(0);
+    expect(rerun.stderr).toBe("");
+    expect(rerun.stdout).toContain("Capability already enabled: iteration");
+
+    const provided = await runCli([
+      "capability",
+      "add",
+      "adr",
+      "--root",
+      await initWorkspace("CapStudy"),
+    ]);
+    expect(provided.exitCode).toBe(0);
+    expect(provided.stdout).toContain("Capability already enabled: adr (provided by archetype)");
+  });
+
+  it("rejects an unsupported module name", async () => {
+    const root = await initWorkspace("CapUnknown", BARE_ARCHETYPE);
+
+    const result = await runCli(["capability", "add", "telepathy", "--root", root]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Error: unsupported capability module 'telepathy'");
+    expect(result.stderr).toContain("supported modules: adr, intent, iteration");
+  });
+
+  it("lists modules and distinguishes archetype-provided from added", async () => {
+    const root = await initWorkspace("CapList");
+    await runCli(["capability", "add", "iteration", "--root", root]);
+
+    const listed = await runCli(["capability", "list", "--root", root]);
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain("Capability modules for CapList (archetype study):");
+    expect(listed.stdout).toContain("adr: enabled (archetype)");
+    expect(listed.stdout).toContain("intent: not enabled");
+    expect(listed.stdout).toContain("iteration: enabled (added)");
+
+    const json = await runCli(["capability", "list", "--root", root, "--json"]);
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout).capabilities).toEqual([
+      { module: "adr", enabled: true, source: "archetype", supported: true },
+      { module: "intent", enabled: false, source: null, supported: true },
+      { module: "iteration", enabled: true, source: "added", supported: true },
+    ]);
+  });
+
+  it("marks modules that are not enabled", async () => {
+    const root = await initWorkspace("CapListNone", BARE_ARCHETYPE);
+
+    const listed = await runCli(["capability", "list", "--root", root]);
+
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain("adr: not enabled");
+    expect(listed.stdout).toContain("iteration: not enabled");
+  });
+});
+
+/**
+ * Every write command an agent actually reaches for ends by naming the command
+ * that continues the loop. The lines are the only in-product guidance most
+ * runs ever see, so a missing one is a real regression rather than cosmetic.
+ */
+describe("Next: hints on high-adoption write commands", () => {
+  it("points source add at status rather than at a sync nobody runs", async () => {
+    const root = await initWorkspace("NextSourceAdd", "study");
+    const donor = await tempDir();
+    await writeFile(path.join(donor, "README.md"), "# Donor\n", "utf8");
+
+    const added = await runCli(["source", "add", donor, "donor", "--root", root]);
+
+    expect(added.exitCode, added.stderr).toBe(0);
+    expect(added.stdout).toContain("Next: `assay status` reports when this source moves upstream");
+    expect(added.stdout).not.toContain("assay source sync");
+  });
+
+  it("carries an analysis from new through close to the exit's own next command", async () => {
+    const root = await initWorkspace("NextAnalysis", "study");
+
+    const created = await runCli(["analysis", "new", "Review Source", "--root", root]);
+    expect(created.exitCode, created.stderr).toBe(0);
+    expect(created.stdout).toContain("Next: fill ## Key observations");
+    expect(created.stdout).toContain("assay analysis close analyses/references/");
+
+    const analysisPath = created.stdout.match(/analyses\/references\/[^\s]+\.md/)?.[0];
+    if (!analysisPath) {
+      throw new Error(`analysis path not found in output:\n${created.stdout}`);
+    }
+    await fillAnalysisSections(root, analysisPath, { key: "Observed the loop." });
+
+    const closed = await runCli([
+      "analysis",
+      "close",
+      analysisPath,
+      "--exit",
+      "adopt",
+      "--root",
+      root,
+    ]);
+    expect(closed.exitCode, closed.stderr).toBe(0);
+    expect(closed.stdout).toContain("Next: `assay knowledge add pattern");
+    expect(closed.stdout).toContain(`--from-analysis ${analysisPath}`);
+  });
+
+  it("carries an iteration from start through close", async () => {
+    const root = await initWorkspace("NextIteration", "solve");
+
+    const started = await runCli(["iteration", "start", "Try Pattern", "--root", root]);
+    expect(started.exitCode, started.stderr).toBe(0);
+    expect(started.stdout).toContain("Next: fill iterations/");
+    expect(started.stdout).toContain("assay iteration close iterations/");
+
+    const iterationPath = started.stdout.match(/Started iteration: (\S+)/)?.[1];
+    if (!iterationPath) {
+      throw new Error(`iteration path not found in output:\n${started.stdout}`);
+    }
+
+    const closed = await runCli([
+      "iteration",
+      "close",
+      iterationPath,
+      "--result",
+      "applied",
+      "--root",
+      root,
+    ]);
+    expect(closed.exitCode, closed.stderr).toBe(0);
+    expect(closed.stdout).toContain("Next: `assay knowledge add pattern");
+    expect(closed.stdout).toContain(`--from-iteration ${iterationPath}`);
+  });
+
+  it("names what to do after registering a system and adding knowledge", async () => {
+    const root = await initWorkspace("NextSystemKnowledge", "solve");
+    await mkdir(path.join(root, "systems", "engine"), { recursive: true });
+
+    const registered = await runCli(["system", "register", "systems/engine", "--root", root]);
+    expect(registered.exitCode, registered.stderr).toBe(0);
+    expect(registered.stdout).toContain("Next: `assay system promote engine`");
+
+    await mkdir(path.join(root, "systems", "core"), { recursive: true });
+    const primary = await runCli([
+      "system",
+      "register",
+      "systems/core",
+      "--primary",
+      "--root",
+      root,
+    ]);
+    expect(primary.exitCode, primary.stderr).toBe(0);
+    expect(primary.stdout).toContain("Next: describe what core does in systems/core/system.yaml.");
+
+    const knowledge = await runCli([
+      "knowledge",
+      "add",
+      "pattern",
+      "Retry With Backoff",
+      "--root",
+      root,
+    ]);
+    expect(knowledge.exitCode, knowledge.stderr).toBe(0);
+    expect(knowledge.stdout).toContain("Next: write the entry in knowledge/patterns/");
+  });
+
+  it("names the first command a newly added capability makes available", async () => {
+    const root = await initWorkspace("NextCapability", BARE_ARCHETYPE);
+
+    const added = await runCli(["capability", "add", "adr", "--root", root]);
+    expect(added.exitCode, added.stderr).toBe(0);
+    expect(added.stdout).toContain("Next: `assay adr new");
+
+    const rerun = await runCli(["capability", "add", "adr", "--root", root]);
+    expect(rerun.exitCode, rerun.stderr).toBe(0);
+    expect(rerun.stdout).not.toContain("Next:");
   });
 });

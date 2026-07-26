@@ -1,14 +1,33 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  defaultStandaloneLayout,
+  resolveWorkspaceLayout,
+  workspaceTemplateRelativePath,
+} from "./layout.js";
+import { loadManifest } from "./manifest.js";
+import { effectiveCapabilities, loadArchetype } from "./profile.js";
+import { type WorkspaceZone, archetypeZones, zoneTable } from "./zones.js";
+
 export const ASSAY_AGENTS_FILE = "AGENTS.md";
 export const ASSAY_AGENTS_START_MARKER = "<!-- ASSAY:START -->";
 export const ASSAY_AGENTS_END_MARKER = "<!-- ASSAY:END -->";
 export const ASSAY_AGENTS_MALFORMED_REASON = "AGENTS.md has incomplete Assay managed block markers";
 
-export const ASSAY_AGENTS_BLOCK = [
-  ASSAY_AGENTS_START_MARKER,
-  "",
+/**
+ * Workspace facts the managed block states beyond the fixed rules. The block is
+ * the one channel that is already in context when a session starts, so the
+ * directory table lives here rather than only in per-directory READMEs an agent
+ * would have to go looking for.
+ */
+export interface AssayAgentsLayoutSection {
+  readonly archetype: string;
+  readonly description: string;
+  readonly zones: readonly WorkspaceZone[];
+}
+
+const ASSAY_AGENTS_RULES = [
   "# Assay Workspace Instructions",
   "",
   "This workspace is managed by Assay.",
@@ -16,9 +35,63 @@ export const ASSAY_AGENTS_BLOCK = [
   "- Before changing workspace structure, start from the installed `assay-builder` skill if the agent environment exposes it. Otherwise use `assay --help` / `assay help <command>` and inspect the workspace with `assay status`.",
   "- Do not assume the repository root is the system being built. The root is the Assay workspace/control surface. Systems live under `systems/` and registered systems are managed with `assay system ...`.",
   "- Use Assay commands for `.assay/` state. Edits outside this block are preserved.",
-  "",
-  ASSAY_AGENTS_END_MARKER,
-].join("\n");
+];
+
+/**
+ * Build the managed block. The layout section is appended only when the
+ * workspace resolves an archetype with at least one zone, so a workspace whose
+ * manifest or archetype cannot be read still gets the standing rules.
+ */
+export function assayAgentsBlock(layout?: AssayAgentsLayoutSection | null): string {
+  const table = layout ? zoneTable(layout.zones) : [];
+  const layoutSection =
+    layout && table.length > 0
+      ? [
+          "",
+          `## Workspace layout (archetype: ${layout.archetype})`,
+          ...(layout.description === "" ? [] : ["", layout.description]),
+          "",
+          ...table,
+        ]
+      : [];
+  return [
+    ASSAY_AGENTS_START_MARKER,
+    "",
+    ...ASSAY_AGENTS_RULES,
+    ...layoutSection,
+    "",
+    ASSAY_AGENTS_END_MARKER,
+  ].join("\n");
+}
+
+/** The managed block without a workspace layout section. */
+export const ASSAY_AGENTS_BLOCK = assayAgentsBlock(null);
+
+/**
+ * Read the archetype-declared layout for a workspace root. Returns null when
+ * the workspace has no readable manifest or archetype: the block then keeps its
+ * rules instead of failing the command that writes it.
+ */
+export async function readAssayAgentsLayoutSection(
+  root: string,
+): Promise<AssayAgentsLayoutSection | null> {
+  try {
+    const manifest = await loadManifest(root);
+    if (!manifest) {
+      return null;
+    }
+    const archetype = await loadArchetype(manifest.project.archetype, { root });
+    const workspaceLayout = resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
+    const capabilities = effectiveCapabilities(archetype, manifest.project.capabilities);
+    const zones = archetypeZones(archetype, manifest.project.mode, capabilities).map((zone) => ({
+      path: workspaceTemplateRelativePath(workspaceLayout, zone.path),
+      purpose: zone.purpose,
+    }));
+    return { archetype: archetype.name, description: archetype.description, zones };
+  } catch {
+    return null;
+  }
+}
 
 export type AssayAgentsBlockMode = "install" | "refresh-existing" | "skip";
 export type AssayAgentsBlockAction = "create" | "append" | "replace" | "skip";
@@ -64,8 +137,8 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-function blockContentForFile(): string {
-  return `${ASSAY_AGENTS_BLOCK}\n`;
+function blockContentForFile(layout: AssayAgentsLayoutSection | null): string {
+  return `${assayAgentsBlock(layout)}\n`;
 }
 
 function includeTrailingLineEnding(content: string, index: number): number {
@@ -98,17 +171,18 @@ function locateAssayAgentsBlock(content: string): LocatedAssayAgentsBlock {
   };
 }
 
-function appendAssayAgentsBlock(content: string): string {
+function appendAssayAgentsBlock(content: string, layout: AssayAgentsLayoutSection | null): string {
+  const block = blockContentForFile(layout);
   if (content.length === 0) {
-    return blockContentForFile();
+    return block;
   }
   if (content.endsWith("\n\n")) {
-    return `${content}${blockContentForFile()}`;
+    return `${content}${block}`;
   }
   if (content.endsWith("\n")) {
-    return `${content}\n${blockContentForFile()}`;
+    return `${content}\n${block}`;
   }
-  return `${content}\n\n${blockContentForFile()}`;
+  return `${content}\n\n${block}`;
 }
 
 async function readAgentsFile(root: string): Promise<string | null> {
@@ -133,7 +207,6 @@ async function buildAssayAgentsBlockPlan(
 ): Promise<InternalAssayAgentsBlockPlan> {
   const root = path.resolve(options.root);
   const mode = options.mode ?? "install";
-  const existing = await readAgentsFile(root);
 
   if (mode === "skip") {
     return {
@@ -144,6 +217,9 @@ async function buildAssayAgentsBlockPlan(
     };
   }
 
+  const existing = await readAgentsFile(root);
+  const layoutSection = await readAssayAgentsLayoutSection(root);
+
   if (existing === null) {
     if (mode === "install") {
       return {
@@ -151,7 +227,7 @@ async function buildAssayAgentsBlockPlan(
         action: "create",
         reason: "AGENTS.md is missing",
         changed: true,
-        content: blockContentForFile(),
+        content: blockContentForFile(layoutSection),
       };
     }
     return {
@@ -179,7 +255,7 @@ async function buildAssayAgentsBlockPlan(
         action: "append",
         reason: "AGENTS.md exists without an Assay managed block",
         changed: true,
-        content: appendAssayAgentsBlock(existing),
+        content: appendAssayAgentsBlock(existing, layoutSection),
       };
     }
     return {
@@ -190,9 +266,9 @@ async function buildAssayAgentsBlockPlan(
     };
   }
 
-  const nextContent = `${existing.slice(0, located.start)}${blockContentForFile()}${existing.slice(
-    located.end,
-  )}`;
+  const nextContent = `${existing.slice(0, located.start)}${blockContentForFile(
+    layoutSection,
+  )}${existing.slice(located.end)}`;
   if (nextContent === existing) {
     return {
       path: ASSAY_AGENTS_FILE,

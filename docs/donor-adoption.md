@@ -38,6 +38,34 @@ It deliberately does not edit a target, run target commands, create commits,
 merge changes, or restore revisions. Those are target-side operations, not
 unfinished Assay lifecycle steps.
 
+## One source path into one system path
+
+Most adoptions are a single file or folder that landed in a single place. State
+that in one command, without writing a definition file first:
+
+```bash
+assay donor take readseek:packages/pi-readseek/src/hashline.ts \
+  --into pipi:packages/pipi-readseek/src/anchor.ts --mode adapt
+```
+
+`take` synthesizes the definition below and registers it, so the result is an
+ordinary adoption: `donor show`, `donor inspect`, `donor decide`, and the
+`Upstream` section of `assay status` all read it the same way.
+
+- Both arguments are `<name>:<path>`. The name is everything before the **first**
+  colon, and paths are relative to the source observation and to the registered
+  system. A path that is absolute or drive-prefixed is refused by name rather
+  than being split somewhere else.
+- The source locator's shape is read off the observation: a path naming one
+  recorded file becomes `exact`, a path with files beneath it becomes `prefix`.
+- `--mode` records how the material was carried over (`adapt` or `copy`).
+- The adoption id defaults to `<alias>-<system>-<source-path-slug>`; pass `--id`
+  to choose your own. `--to <observation>` pins a source observation other than
+  the latest.
+
+Use `--file` for anything larger: several mappings, several target systems, or
+required evidence.
+
 ## Definition
 
 Register a complete JSON or YAML definition:

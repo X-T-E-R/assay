@@ -1,6 +1,11 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
+import {
+  BARE_ARCHETYPE,
+  createTempDirectoryFixture,
+  pathExists as exists,
+  writeBareArchetype,
+} from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -12,6 +17,7 @@ import {
   addReference,
   addSource,
   attachExistingRepo,
+  backfillReferenceCaseFile,
   captureEvent,
   checkFramework,
   closeAnalysis,
@@ -37,14 +43,7 @@ import {
   syncSource,
 } from "../src/index.js";
 
-const USER_FACING_BUILT_INS = [
-  "library",
-  "study",
-  "solve",
-  "science",
-  "evaluation",
-  "explore",
-] as const;
+const USER_FACING_BUILT_INS = ["study", "solve", "explore"] as const;
 const tempDirs = createTempDirectoryFixture("assay-core-workspace");
 
 async function tempDir(): Promise<string> {
@@ -251,6 +250,117 @@ describe("checkFramework and getFrameworkStatus", () => {
       managedFiles: (await desiredRuntimeTemplates("Demo", "study", "learning")).length,
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);
+  });
+
+  it("derives status zones from the installed archetype, with purposes", async () => {
+    const solveRoot = path.join(await tempDir(), "solve");
+    await initFramework({ target: solveRoot, name: "Solve", archetype: "solve" });
+
+    const solve = await getFrameworkStatus({ root: solveRoot });
+
+    expect(solve.archetypeDescription).toContain("measurable success criterion");
+    expect(solve.zones.map((zone) => zone.path)).toEqual([
+      "problem",
+      "intake",
+      "benchmarks",
+      "attempts",
+      "tools",
+      "iterations",
+      "systems",
+      "knowledge",
+    ]);
+    expect(solve.zones.find((zone) => zone.path === "problem")?.purpose).toBe(
+      "Task statement, official rules, scoring definition",
+    );
+    // Study's directories are dead zones for a solve workspace.
+    expect(solve.zones.some((zone) => zone.path.startsWith("analyses"))).toBe(false);
+
+    const studyRoot = path.join(await tempDir(), "study");
+    await initFramework({ target: studyRoot, name: "Study" });
+
+    const study = await getFrameworkStatus({ root: studyRoot });
+    const studyZones = study.zones.map((zone) => zone.path);
+
+    expect(studyZones).toEqual(
+      expect.arrayContaining([
+        "analyses/references",
+        "analyses/patterns",
+        "references/frozen",
+        "knowledge",
+      ]),
+    );
+    expect(studyZones.some((zone) => zone.startsWith("problem"))).toBe(false);
+    expect(study.zones.every((zone) => zone.purpose !== "")).toBe(true);
+  });
+
+  it("still reports a work area that holds content the archetype never declared", async () => {
+    const root = path.join(await tempDir(), "legacy-iterations");
+    await initFramework({ target: root, name: "Legacy" });
+
+    expect(
+      (await getFrameworkStatus({ root })).zones.some((zone) => zone.path === "iterations"),
+    ).toBe(false);
+
+    await mkdir(path.join(root, "iterations", "2026-07-01-topic"), { recursive: true });
+    await writeFile(
+      path.join(root, "iterations", "2026-07-01-topic", "plan.md"),
+      "# Topic\n\n- Status: open\n",
+      "utf8",
+    );
+
+    const iterations = (await getFrameworkStatus({ root })).zones.find(
+      (zone) => zone.path === "iterations",
+    );
+    expect(iterations?.files).toBe(1);
+    expect(iterations?.purpose).not.toBe("");
+  });
+});
+
+describe("checkFramework placement advisories", () => {
+  it("reports undeclared top-level directories and statusless analyses without failing", async () => {
+    const root = path.join(await tempDir(), "placement");
+    await initFramework({ target: root, name: "Placement" });
+
+    expect((await checkFramework({ root, includeAdvisories: true })).rows).not.toContainEqual(
+      expect.objectContaining({ status: "warning", path: "scratch" }),
+    );
+
+    await mkdir(path.join(root, "scratch"), { recursive: true });
+    await writeFile(path.join(root, "scratch", "note.md"), "# note\n", "utf8");
+    await writeFile(
+      path.join(root, "analyses", "references", "hand-written.md"),
+      "# Hand written\n\nSome observations.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "analyses", "references", "proper.md"),
+      "# Proper\n\n- Date: 2026-07-26\n- Status: draft\n\n## Key observations\n\nSomething.\n",
+      "utf8",
+    );
+
+    const result = await checkFramework({ root, includeAdvisories: true });
+
+    expect(result.ok).toBe(true);
+    expect(result.rows).toContainEqual(
+      expect.objectContaining({
+        path: "scratch",
+        status: "warning",
+        message: expect.stringContaining("is not declared by archetype study"),
+      }),
+    );
+    expect(result.rows).toContainEqual(
+      expect.objectContaining({
+        path: "analyses/references/hand-written.md",
+        status: "warning",
+        message: expect.stringContaining("no `Status:` header"),
+      }),
+    );
+    expect(result.rows.some((row) => row.path === "analyses/references/proper.md")).toBe(false);
+
+    // Placement rows are advisory-only: the default check never sees them.
+    const withoutAdvisories = await checkFramework({ root });
+    expect(withoutAdvisories.ok).toBe(true);
+    expect(withoutAdvisories.rows.some((row) => row.path === "scratch")).toBe(false);
   });
 });
 
@@ -519,56 +629,27 @@ describe("checkFramework semantic validation", () => {
     ).toBe(true);
   });
 
-  it("warns on a frozen reference that no analysis cites", async () => {
+  it("reports a frozen reference only for missing provenance, not for missing citations", async () => {
     const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
 
-    // Freeze a reference directory with no analysis mentioning it.
-    await mkdir(path.join(root, "references", "frozen", "202606", "lonely-ref"), {
+    // A properly frozen reference no analysis mentions. Nothing to report:
+    // whether a reference was read is not something the tool can observe.
+    const frozen = await addReference({ root, source, name: "Lonely Ref" });
+    // A hand-made freeze with no case file: real, checkable, and reported.
+    await mkdir(path.join(root, "references", "frozen", "202606", "handmade"), {
       recursive: true,
     });
-    await writeFile(
-      path.join(root, "references", "frozen", "202606", "lonely-ref", "README.md"),
-      "# lonely\n",
-      "utf8",
-    );
 
     const result = await checkFramework({ root, includeAdvisories: true });
 
+    expect(result.rows.filter((row) => row.path === frozen.path)).toEqual([]);
     expect(
-      result.rows.some(
-        (row) =>
-          row.path === "references/frozen/202606/lonely-ref" &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
-      ),
-    ).toBe(true);
-  });
-
-  it("does not warn on a frozen reference that an analysis cites", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-
-    await mkdir(path.join(root, "references", "frozen", "202606", "cited-ref"), {
-      recursive: true,
-    });
-    // An analysis that mentions the reference name.
-    await writeFile(
-      path.join(root, "analyses", "references", "2026-06-20-cited-ref.md"),
-      "# Cited ref\n\n- Status: applied\n\n## Reference\n\ncited-ref\n\n## Key observations\n\nsomething\n",
-      "utf8",
-    );
-
-    const result = await checkFramework({ root, includeAdvisories: true });
-
-    expect(
-      result.rows.some(
-        (row) =>
-          row.path === "references/frozen/202606/cited-ref" &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
-      ),
-    ).toBe(false);
+      result.rows.find((row) => row.path === "references/frozen/202606/handmade"),
+    ).toMatchObject({ status: "warning" });
   });
 
   it("warns on a draft analysis with empty Key observations", async () => {
@@ -840,7 +921,7 @@ describe("workspace operations", () => {
     expect(await readFile(path.join(root, result.eventFile), "utf8")).toContain("reference.frozen");
   });
 
-  it("writes a reference.yaml case file with analyzed: false on freeze", async () => {
+  it("writes a reference.yaml case file recording provenance on freeze", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo" });
@@ -858,12 +939,13 @@ describe("workspace operations", () => {
     expect(await exists(yamlPath)).toBe(true);
     const yaml = await readFile(yamlPath, "utf8");
     expect(yaml).toContain("name: Source Project");
-    expect(yaml).toContain("analyzed: false");
     expect(yaml).toContain("freeze_path: references/frozen/202606/source-project");
+    // The removed gate must not come back as a field nothing reads.
+    expect(yaml).not.toContain("analyzed:");
 
-    // The freeze event should record analysis_required.
     const event = await readFile(path.join(root, result.eventFile), "utf8");
-    expect(event).toContain('"analysis_required":true');
+    expect(event).toContain('"reference.frozen"');
+    expect(event).not.toContain('"analyzed"');
   });
 
   it("createAnalysis --forReference pre-fills provenance from reference.yaml", async () => {
@@ -892,7 +974,7 @@ describe("workspace operations", () => {
     expect(content).toContain("- Freeze path: references/frozen/202606/source-project");
   });
 
-  it("closeAnalysis flips the bound reference.yaml analyzed flag to true", async () => {
+  it("closeAnalysis leaves a bound reference case file untouched", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo" });
@@ -905,6 +987,8 @@ describe("workspace operations", () => {
       name: "Source Project",
       now: new Date("2026-06-14T10:00:00"),
     });
+    const yamlPath = path.join(ref.absolutePath, "reference.yaml");
+    const before = await readFile(yamlPath, "utf8");
     const analysis = await createAnalysis({
       root,
       title: "Review Source Project",
@@ -916,29 +1000,77 @@ describe("workspace operations", () => {
       adopt: "- Adopt the pattern.",
     });
 
-    await closeAnalysis({
+    const closed = await closeAnalysis({
       root,
       path: analysis.path,
       exit: "adopt",
       now: new Date("2026-06-16T10:00:00"),
     });
 
-    const yaml = await readFile(path.join(ref.absolutePath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: true");
+    expect(await readFile(yamlPath, "utf8")).toBe(before);
     const content = await readFile(analysis.absolutePath, "utf8");
     expect(content).toContain("- Status: applied");
     expect(content).not.toContain("- Source analysis status:");
+    expect(await readFile(path.join(root, closed.eventFile), "utf8")).not.toContain(
+      "marked_reference_analyzed",
+    );
+  });
 
-    // check should no longer warn about this reference being unanalyzed.
+  it("reads a legacy reference.yaml that still carries the removed analyzed flag", async () => {
+    const root = path.join(await tempDir(), "demo");
+    const source = path.join(await tempDir(), "source");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
+
+    const ref = await addReference({
+      root,
+      source,
+      name: "Legacy Ref",
+      now: new Date("2026-06-14T10:00:00"),
+    });
+    const yamlPath = path.join(ref.absolutePath, "reference.yaml");
+    await writeFile(yamlPath, `${await readFile(yamlPath, "utf8")}analyzed: false\n`, "utf8");
+
+    const analysis = await createAnalysis({
+      root,
+      title: "Review Legacy Ref",
+      forReference: ref.path,
+      now: new Date("2026-06-15T10:00:00"),
+    });
+    const content = await readFile(analysis.absolutePath, "utf8");
+    expect(content).toContain("- Reference: Legacy Ref");
+    expect(content).toContain(`- Freeze path: ${ref.path}`);
+
     const check = await checkFramework({ root, includeAdvisories: true });
-    expect(
-      check.rows.some(
-        (row) =>
-          row.path === ref.path &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
-      ),
-    ).toBe(false);
+    expect(check.ok).toBe(true);
+    expect(check.rows.some((row) => row.message?.includes("analyzed"))).toBe(false);
+  });
+
+  it("reports a frozen reference with no case file and names the backfill command", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    const legacyPath = "references/frozen/202512/hand-frozen";
+    await mkdir(path.join(root, legacyPath), { recursive: true });
+    await writeFile(path.join(root, legacyPath, "README.md"), "# Hand frozen\n", "utf8");
+
+    const check = await checkFramework({ root, includeAdvisories: true });
+    const row = check.rows.find((candidate) => candidate.path === legacyPath);
+    expect(row?.status).toBe("warning");
+    expect(row?.message).toContain(`assay reference backfill ${legacyPath}`);
+    // Advisories never fail the check.
+    expect(check.ok).toBe(true);
+
+    const backfilled = await backfillReferenceCaseFile({ root, path: legacyPath });
+    expect(backfilled.created).toBe(true);
+    const yaml = await readFile(path.join(root, backfilled.referenceFile), "utf8");
+    expect(yaml).toContain("name: hand-frozen");
+    expect(yaml).toContain(`freeze_path: ${legacyPath}`);
+
+    const after = await checkFramework({ root, includeAdvisories: true });
+    expect(after.rows.some((candidate) => candidate.path === legacyPath)).toBe(false);
+    // Re-running never overwrites recorded provenance.
+    expect((await backfillReferenceCaseFile({ root, path: legacyPath })).created).toBe(false);
   });
 
   it("absorbReference freezes, opens a bound analysis, and pre-fills it", async () => {
@@ -964,7 +1096,7 @@ describe("workspace operations", () => {
     // Reference frozen with a case file.
     expect(result.referencePath).toBe("references/frozen/202606/source-project");
     const yaml = await readFile(path.join(root, result.referencePath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("analyzed: false");
+    expect(yaml).toContain("freeze_path: references/frozen/202606/source-project");
 
     // An analysis was opened and bound.
     expect(result.analysisPath).toBe("analyses/references/2026-06-14-absorb-source-project.md");
@@ -977,17 +1109,13 @@ describe("workspace operations", () => {
     expect(analysis).toContain("src/");
     expect(analysis).toContain("README.md");
 
-    // Status is draft (open work), so check flags it as an open analysis — not
-    // silently "done". The reference is unanalyzed until the analysis closes.
+    // The freeze wrote a case file, so no provenance advisory fires for it.
     const check = await checkFramework({ root, includeAdvisories: true });
     expect(
       check.rows.some(
-        (row) =>
-          row.path === result.referencePath &&
-          row.status === "warning" &&
-          row.message?.includes("no analysis citing"),
+        (row) => row.path === result.referencePath && row.message?.includes("no reference.yaml"),
       ),
-    ).toBe(false); // cited by its own bound analysis
+    ).toBe(false);
   });
 
   it("absorbReference rejects a file source (expects a directory)", async () => {
@@ -1003,11 +1131,8 @@ describe("workspace operations", () => {
 
   it("init writes the mode declared by each built-in archetype yaml", async () => {
     const expectedModes = {
-      library: "learning",
       study: "learning",
       solve: "absorption",
-      science: "absorption",
-      evaluation: "learning",
       explore: "absorption",
     } as const;
 
@@ -1091,15 +1216,16 @@ describe("workspace operations", () => {
     expect(sourceYaml).toContain("absorb_path: intake/candidate-source");
   });
 
-  it("library archetype scaffolds only systems/knowledge, no references or analyses", async () => {
-    const root = path.join(await tempDir(), "lib-archetype");
-    await initFramework({ target: root, name: "LibProj", archetype: "library" });
+  it("a bare archetype scaffolds only systems/knowledge, no references or analyses", async () => {
+    const root = path.join(await tempDir(), "bare-archetype");
+    await writeBareArchetype(root);
+    await initFramework({ target: root, name: "BareProj", archetype: BARE_ARCHETYPE });
 
     // Core dirs present
     expect(await exists(path.join(root, "systems"))).toBe(true);
     expect(await exists(path.join(root, "knowledge"))).toBe(true);
 
-    // Governance dirs absent — library archetype does not scaffold them
+    // Governance dirs absent — a bare archetype does not scaffold them
     expect(await exists(path.join(root, "data"))).toBe(false);
     expect(await exists(path.join(root, "references"))).toBe(false);
     expect(await exists(path.join(root, "analyses"))).toBe(false);
@@ -1110,8 +1236,8 @@ describe("workspace operations", () => {
 
     // Manifest records the archetype.
     expect(await exists(path.join(root, ".assay", "config.yaml"))).toBe(false);
-    expect((await loadManifest(root))?.project.archetype).toBe("library");
-    expect(await readInstalledArchetype(root)).toBe("library");
+    expect((await loadManifest(root))?.project.archetype).toBe(BARE_ARCHETYPE);
+    expect(await readInstalledArchetype(root)).toBe(BARE_ARCHETYPE);
   });
 
   it("solve archetype scaffolds problem/ + intake/benchmarks/attempts + tools/iterations", async () => {
@@ -1166,76 +1292,32 @@ describe("workspace operations", () => {
     expect(currentAttempt).not.toHaveProperty("q2");
     expect(currentAttempt.schema_version).toBe(1);
 
-    // runs.jsonl + tools/README explain contract
-    expect(await readFile(path.join(root, "runs.jsonl"), "utf8")).toBe("");
+    // Assay ships no runs.jsonl: the observed fill rate of the template file
+    // was zero. The append convention is documented instead, so a harness that
+    // wants a run log knows the shape without a command to remember.
+    expect(await exists(path.join(root, "runs.jsonl"))).toBe(false);
+    const readme = await readFile(path.join(root, "README.md"), "utf8");
+    expect(readme).toContain("## Run records");
+    expect(readme).toContain("one JSON object per line");
+    expect(readme).toContain("runs.jsonl");
+
     const toolsReadme = await readFile(path.join(root, "tools", "README.md"), "utf8");
     expect(toolsReadme).toContain("tools/evaluate/");
   });
 
-  it("science archetype creates evidence research structure and passes check", async () => {
-    const root = path.join(await tempDir(), "science-archetype");
-    await initFramework({ target: root, name: "Science Project", archetype: "science" });
+  it("counts an externally appended runs.jsonl in status", async () => {
+    const root = path.join(await tempDir(), "solve-runs");
+    await initFramework({ target: root, name: "Solve Runs", archetype: "solve" });
 
-    for (const directory of [
-      "systems",
-      "knowledge",
-      "hypotheses",
-      "experiments",
-      "datasets",
-      "findings",
-      "papers",
-      "iterations",
-      path.join("iterations", "templates"),
-    ]) {
-      expect(await exists(path.join(root, directory))).toBe(true);
-    }
-    expect(await exists(path.join(root, "attempts"))).toBe(false);
-    expect(await exists(path.join(root, "candidates"))).toBe(false);
-    expect(await exists(path.join(root, "scorecards"))).toBe(false);
+    expect((await getFrameworkStatus({ root })).runRecords).toBeUndefined();
 
-    const hypotheses = await readFile(path.join(root, "hypotheses", "README.md"), "utf8");
-    const findings = await readFile(path.join(root, "findings", "README.md"), "utf8");
-    expect(hypotheses).toContain("hypothesis");
-    expect(findings).toContain("Evidence-backed findings");
-    expect(`${hypotheses}\n${findings}`).not.toMatch(
-      new RegExp([["con", "test"].join(""), "selection", "scor(e|ing|ecard)"].join("|"), "i"),
+    await writeFile(
+      path.join(root, "runs.jsonl"),
+      '{"run_id":"a","score":0.1}\n{"run_id":"b","score":0.2}\n\n',
+      "utf8",
     );
 
-    expect((await loadManifest(root))?.project).toMatchObject({
-      archetype: "science",
-      mode: "absorption",
-    });
-    expect((await checkFramework({ root })).ok).toBe(true);
-  });
-
-  it("evaluation archetype creates scorecards, criteria, ADRs, and passes check", async () => {
-    const root = path.join(await tempDir(), "evaluation-archetype");
-    await initFramework({ target: root, name: "Evaluation Project", archetype: "evaluation" });
-
-    for (const directory of ["systems", "knowledge", "candidates", "scorecards"]) {
-      expect(await exists(path.join(root, directory))).toBe(true);
-    }
-    expect(await exists(path.join(root, "criteria.md"))).toBe(true);
-    expect(await exists(path.join(root, "knowledge", "decisions"))).toBe(true);
-    expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
-    expect(await exists(path.join(root, ".assay", "adrs.json"))).toBe(true);
-    expect(await exists(path.join(root, "analyses"))).toBe(false);
-    expect(await exists(path.join(root, "references"))).toBe(false);
-
-    const criteria = await readFile(path.join(root, "criteria.md"), "utf8");
-    const scorecards = await readFile(path.join(root, "scorecards", "README.md"), "utf8");
-    expect(criteria).toContain("decision matrix");
-    expect(scorecards).toContain("scorecards");
-    expect(`${criteria}\n${scorecards}`).toContain("final selection");
-    expect(`${criteria}\n${scorecards}`).not.toMatch(
-      new RegExp([["con", "test"].join(""), "gaps", "patterns"].join("|"), "i"),
-    );
-
-    expect((await loadManifest(root))?.project).toMatchObject({
-      archetype: "evaluation",
-      mode: "learning",
-    });
-    expect((await checkFramework({ root })).ok).toBe(true);
+    expect((await getFrameworkStatus({ root })).runRecords).toBe(2);
   });
 
   it("explore archetype creates compare-and-converge structure and passes check", async () => {
@@ -1297,30 +1379,23 @@ describe("workspace operations", () => {
 
   it("gates iteration operations by archetype capability modules", async () => {
     const studyRoot = path.join(await tempDir(), "study-iteration-disabled");
-    const libraryRoot = path.join(await tempDir(), "library-iteration-disabled");
-    const evaluationRoot = path.join(await tempDir(), "evaluation-iteration-disabled");
+    const bareRoot = path.join(await tempDir(), "bare-iteration-disabled");
     const solveRoot = path.join(await tempDir(), "solve-iteration-enabled");
-    const scienceRoot = path.join(await tempDir(), "science-iteration-enabled");
     const exploreRoot = path.join(await tempDir(), "explore-iteration-enabled");
     await initFramework({ target: studyRoot, name: "Study" });
-    await initFramework({ target: libraryRoot, name: "Library", archetype: "library" });
-    await initFramework({ target: evaluationRoot, name: "Evaluation", archetype: "evaluation" });
+    await writeBareArchetype(bareRoot);
+    await initFramework({ target: bareRoot, name: "Bare", archetype: BARE_ARCHETYPE });
     await initFramework({ target: solveRoot, name: "Solve", archetype: "solve" });
-    await initFramework({ target: scienceRoot, name: "Science", archetype: "science" });
     await initFramework({ target: exploreRoot, name: "Explore", archetype: "explore" });
 
     await expect(startIteration({ root: studyRoot, title: "Try Pattern" })).rejects.toThrow(
       /capability not enabled in archetype study: iteration/,
     );
-    await expect(startIteration({ root: libraryRoot, title: "Try Pattern" })).rejects.toThrow(
-      /capability not enabled in archetype library: iteration/,
-    );
-    await expect(startIteration({ root: evaluationRoot, title: "Try Pattern" })).rejects.toThrow(
-      /capability not enabled in archetype evaluation: iteration/,
+    await expect(startIteration({ root: bareRoot, title: "Try Pattern" })).rejects.toThrow(
+      `capability not enabled in archetype ${BARE_ARCHETYPE}: iteration`,
     );
 
     const started = await startIteration({ root: solveRoot, title: "Try Pattern" });
-    const scienceIteration = await startIteration({ root: scienceRoot, title: "Try Pattern" });
     const exploreIteration = await startIteration({ root: exploreRoot, title: "Try Pattern" });
     await expect(
       closeIteration({ root: studyRoot, selector: started.path, result: "rejected" }),
@@ -1328,7 +1403,6 @@ describe("workspace operations", () => {
     await expect(
       closeIteration({ root: solveRoot, selector: started.path, result: "applied" }),
     ).resolves.toMatchObject({ path: started.path });
-    expect(scienceIteration.path).toContain("iterations/");
     expect(exploreIteration.path).toContain("iterations/");
   });
 
@@ -1372,7 +1446,8 @@ describe("workspace operations", () => {
   it("allows explicit event capture while internal audit events still write", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo", archetype: "library" });
+    await writeBareArchetype(root);
+    await initFramework({ target: root, name: "Demo", archetype: BARE_ARCHETYPE });
     await mkdir(source, { recursive: true });
     await writeFile(path.join(source, "README.md"), "# Source\n\nUseful material.\n", "utf8");
 

@@ -23,6 +23,11 @@ export const frameworkProjectSchema = z
     core: z.string().min(1).optional(),
     archetype: projectArchetypeSchema.default("study"),
     mode: projectModeSchema.default("learning"),
+    // Capability modules enabled after init by `assay capability add`. The
+    // effective set is the archetype's modules plus these. Kept as plain
+    // strings so a workspace stays loadable when it records a module this
+    // build does not implement; use sites decide what a name means.
+    capabilities: z.array(z.string().min(1)).optional(),
   })
   .strict();
 
@@ -31,6 +36,21 @@ export const frameworkProjectSchema = z
 export const systemVcsSchema = z.enum(["independent-git", "embedded", "none"]);
 
 export const systemStatusSchema = z.enum(["primary", "active", "archived", "superseded"]);
+
+export const systemIntentAuthorityModeSchema = z.enum(["inline", "external", "none"]);
+
+/**
+ * Where a system's product intent is authoritatively recorded. `inline` (also
+ * the meaning of an absent field) means this workspace owns it; `external`
+ * names another home through `pointer`; `none` means the system deliberately
+ * keeps no intent record. `assay intent capture` fail-closes on the last two.
+ */
+export const systemIntentAuthoritySchema = z
+  .object({
+    mode: systemIntentAuthorityModeSchema,
+    pointer: z.string().min(1).optional(),
+  })
+  .strict();
 
 export const systemRecordSchema = z
   .object({
@@ -45,6 +65,9 @@ export const systemRecordSchema = z
     absorbed_on: z.string().nullable(),
     archived_on: z.string().nullable(),
     archive_path: z.string().nullable(),
+    // Optional so registries written before the intent module keep validating;
+    // absent means `inline`.
+    intent_authority: systemIntentAuthoritySchema.optional(),
   })
   .strict();
 
@@ -74,6 +97,11 @@ export const adrRecordSchema = z
     superseded_by: z.string().min(1).nullable(),
     related_analysis: z.string().min(1).nullable(),
     related_iteration: z.string().min(1).nullable(),
+    // Written only by `assay intent promote --to decision`. Optional rather
+    // than nullable-required so an ADR index created before the intent module
+    // keeps validating and is not rewritten with empty fields.
+    related_intent: z.string().min(1).optional(),
+    system: z.string().min(1).optional(),
   })
   .strict();
 
@@ -286,6 +314,8 @@ export type WorkspaceLayoutPaths = z.infer<typeof workspaceLayoutPathsSchema>;
 export type WorkspaceLayout = z.infer<typeof workspaceLayoutSchema>;
 export type SystemVcs = z.infer<typeof systemVcsSchema>;
 export type SystemStatus = z.infer<typeof systemStatusSchema>;
+export type SystemIntentAuthorityMode = z.infer<typeof systemIntentAuthorityModeSchema>;
+export type SystemIntentAuthority = z.infer<typeof systemIntentAuthoritySchema>;
 export type SystemRecord = z.infer<typeof systemRecordSchema>;
 export type SystemsRegistry = z.infer<typeof systemsRegistrySchema>;
 export type AdrStatus = z.infer<typeof adrStatusSchema>;

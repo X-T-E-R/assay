@@ -31,7 +31,7 @@ Assay fits the way your code already lives.
 
 | Mode | Use it when | Where Assay writes | Git posture |
 | --- | --- | --- | --- |
-| `standalone` | You want a dedicated research / evaluation / solve workspace. | `.assay/` for Assay state, with work folders such as `references/`, `analyses/`, `iterations/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
+| `standalone` | You want a dedicated study / solve / explore workspace. | `.assay/` for Assay state, with work folders such as `references/`, `analyses/`, `iterations/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
 | `overlay` | You already have a product repo and want its root to be the primary system. | One private `.assay/` folder containing Assay state and work folders. Product files stay where they are. | Product Git ignores `.assay/` by default; Assay state can optionally have its own Git inside `.assay/`. |
 
 ## Choose what you're building
@@ -42,12 +42,23 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 | --- | --- | --- |
 | Study external projects without losing provenance | `study` | living sources, reference analyses, pattern notes, decision exits |
 | Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, iterations |
-| Run evidence-oriented experiments | `science` | hypotheses, experiments, datasets, findings |
-| Compare tools, libraries, or approaches | `evaluation` | candidates, criteria, scorecards, ADR-ready decisions |
 | Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
-| Keep durable reusable knowledge | `library` | shared systems and knowledge as the base layer |
 
-Most work starts as `study`, `solve`, or `explore`: study outside examples, solve a measurable target, or explore when the target shape is still open. The command surface stays small: `source`, `analysis`, `donor`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+The three built-ins cover the three shapes work actually takes: study outside examples, solve a measurable target, or explore when the target shape is still open. A workspace that needs a different structure declares its own archetype YAML under `.assay/archetypes/` or `~/.assay/archetypes/`; see `docs/workspace-layout.md`. The command surface stays small: `source`, `analysis`, `donor`, `intent`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+
+## Turn capabilities on when you need them
+
+Capability modules are optional features. An archetype enables some at init; the rest can be added to a live workspace at any time, so the choice you made on day one never locks you out.
+
+| Module | Turns on | Enable it with |
+| --- | --- | --- |
+| `adr` | Numbered architecture decisions with status and supersede chains | `assay capability add adr` |
+| `intent` | Verbatim capture of what was asked for, promoted into requirements or ADRs | `assay capability add intent` |
+| `iteration` | Planned changes to your own systems, opened and closed with a result | `assay capability add iteration` |
+
+`assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run.
+
+Intent is the newest of the three, and the one most often missing from a repo: months later the code is still there but the reason for it is not. `assay intent capture` stores the original wording, content-addressed and append-only, scoped to a registered system, so a requirement or an ADR can point back at the words it came from.
 
 ## Quick start
 

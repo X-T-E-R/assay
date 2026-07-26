@@ -8,15 +8,23 @@ mode: learning
 modules:
   - adr
 
+description: Absorb external systems as the main product, converting what survives analysis into decisions.
+
 dirs:
-  - analyses/references
-  - analyses/gaps
-  - analyses/patterns
-  - analyses/templates
-  - knowledge/decisions
+  - path: analyses/references
+    purpose: Analysis cards for external systems
+  - path: analyses/gaps
+    purpose: Gaps between an external system and this workspace
+  - path: analyses/patterns
+    purpose: Candidate reusable patterns awaiting validation
+  - path: analyses/templates
+    purpose: Blank analysis forms
+  - path: knowledge/decisions
+    purpose: Accepted decisions and ADRs
 
 dirs_learning:
-  - references/frozen
+  - path: references/frozen
+    purpose: Read-only full captures of external systems, by month
 
 dirs_absorption: []
 

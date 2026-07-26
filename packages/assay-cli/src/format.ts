@@ -1,9 +1,11 @@
 import type {
+  AddCapabilityResult,
   AdoptExistingProjectResult,
   AdrRecord,
   ApplyUpdateResult,
   AssayProjectRecord,
   AttachResult,
+  CaptureIntentResult,
   CheckFrameworkResult,
   ConvertOverlayResult,
   DonorAdoptionListResult,
@@ -14,8 +16,11 @@ import type {
   DonorStatusResult,
   FrameworkStatusResult,
   InitFrameworkResult,
+  ListCapabilitiesResult,
+  ListIntentResult,
   MigrateLayoutResult,
   OperationReport,
+  PromoteIntentResult,
   SourceDiffResult,
   SourceLogResult,
   SourceStatusResult,
@@ -25,6 +30,7 @@ import type {
   UpdatePlan,
   VerifyDonorInspectionResult,
 } from "assay-core";
+import { describeIntentAuthority } from "assay-core";
 
 function section(title: string, lines: readonly string[]): string[] {
   if (lines.length === 0) {
@@ -39,12 +45,16 @@ function countLine(label: string, count: number): string {
 
 type OptionalManifestSemantics = {
   readonly archetype?: string;
+  readonly archetypeDescription?: string;
   readonly mode?: string;
 };
 
 function manifestSemanticsLines(value: OptionalManifestSemantics): string[] {
+  const archetype = value.archetypeDescription
+    ? `${value.archetype} - ${value.archetypeDescription}`
+    : value.archetype;
   return [
-    ...(value.archetype ? [`Archetype: ${value.archetype}`] : []),
+    ...(value.archetype ? [`Archetype: ${archetype}`] : []),
     ...(value.mode ? [`Mode: ${value.mode}`] : []),
   ];
 }
@@ -114,6 +124,101 @@ export function formatConvertResult(result: ConvertOverlayResult): string {
   ].join("\n");
 }
 
+export function formatCapabilityAdd(result: AddCapabilityResult): string {
+  const enabled = `Enabled capabilities: ${result.capabilities.join(", ") || "(none)"}`;
+  if (result.alreadyEnabled) {
+    const origin =
+      result.source === "archetype" ? "provided by archetype" : "already added to this workspace";
+    return [`Capability already enabled: ${result.module} (${origin})`, enabled].join("\n");
+  }
+  return [
+    `Added capability: ${result.module}`,
+    enabled,
+    formatReport(result.report),
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+  ].join("\n");
+}
+
+export function formatCapabilityList(result: ListCapabilitiesResult): string {
+  const lines = result.capabilities.map((entry) => {
+    if (!entry.supported) {
+      return `${entry.module}: recorded in the manifest, not supported by this build`;
+    }
+    return `${entry.module}: ${entry.enabled ? `enabled (${entry.source})` : "not enabled"}`;
+  });
+  return [
+    `Capability modules for ${result.project} (archetype ${result.archetype}):`,
+    ...lines.map((line) => `  - ${line}`),
+  ].join("\n");
+}
+
+export function formatIntentCapture(result: CaptureIntentResult): string {
+  const { capture } = result;
+  return [
+    result.created
+      ? `Captured intent: ${capture.id}`
+      : `Intent already captured: ${capture.id} (identical text; nothing written)`,
+    `Path: ${capture.path}`,
+    `System: ${capture.system}`,
+    `SHA-256: ${capture.sha256}`,
+    ...(capture.supersedes.length > 0 ? [`Supersedes: ${capture.supersedes.join(", ")}`] : []),
+    ...(capture.shadow
+      ? ["Shadow: yes (the authoritative record for this system lives elsewhere)"]
+      : []),
+    // Captures are append-only, so metadata passed to a repeat capture cannot
+    // be applied. Say so instead of exiting 0 as if it had been.
+    ...(result.ignoredOptions.length > 0
+      ? [
+          `Ignored: ${result.ignoredOptions.join(", ")} (the recorded capture keeps the metadata it was written with; record a correction with --supersedes ${capture.id})`,
+        ]
+      : []),
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+  ].join("\n");
+}
+
+export function formatIntentPromotion(result: PromoteIntentResult): string {
+  return [
+    `Promoted intent ${result.capture.id} to ${result.to}`,
+    ...(result.adrId ? [`ADR: ${result.adrId}`] : []),
+    `Title: ${result.title}`,
+    `Path: ${result.path}`,
+    `System: ${result.capture.system}`,
+    `Event: ${result.eventFile}`,
+  ].join("\n");
+}
+
+export function formatIntentList(result: ListIntentResult): string {
+  const scope =
+    result.system === null
+      ? "all systems"
+      : result.systems.length > 1
+        ? `system ${result.system} (lineage: ${result.systems.join(", ")})`
+        : `system ${result.system}`;
+  if (result.captures.length === 0) {
+    return [`Intent captures for ${scope}`, "(none)"].join("\n");
+  }
+  return [
+    `Intent captures for ${scope}`,
+    ...result.captures.map((capture) => {
+      const markers = [
+        ...(capture.integrity === "modified" ? ["modified after recording"] : []),
+        ...(capture.integrity === "unreadable" ? ["unreadable record"] : []),
+        ...(capture.shadow ? ["shadow"] : []),
+        ...(capture.supersedes.length > 0 ? [`supersedes ${capture.supersedes.join(",")}`] : []),
+        ...(capture.requirements.length > 0
+          ? [`${capture.requirements.length} requirement(s)`]
+          : []),
+        ...(capture.decisions.length > 0 ? [`ADR ${capture.decisions.join(",")}`] : []),
+      ];
+      const suffix = markers.length > 0 ? ` [${markers.join("; ")}]` : "";
+      // A record damaged past parsing has no frontmatter left to report.
+      const system = capture.system || "(unknown)";
+      const capturedAt = capture.capturedAt || "(unknown)";
+      return `  - ${capture.id}  ${system.padEnd(20)} ${capturedAt}${suffix}`;
+    }),
+  ].join("\n");
+}
+
 export function formatCheckResult(result: CheckFrameworkResult): string {
   const rows = result.rows.map((row) => {
     const suffix = row.message ? ` - ${row.message}` : "";
@@ -139,6 +244,62 @@ export function formatCheckResult(result: CheckFrameworkResult): string {
   ].join("\n");
 }
 
+/**
+ * Zone lines carry the archetype's purpose text next to the count. An agent
+ * entering a workspace has no history, so what a directory is for is directed
+ * information rather than noise, and it is the only placement signal that
+ * reaches the command agents actually run.
+ */
+function zoneLines(zones: FrameworkStatusResult["zones"]): string[] {
+  if (zones.length === 0) {
+    return ["Zones", "  (none declared)"];
+  }
+  const pathWidth = Math.max(...zones.map((zone) => zone.path.length + 1));
+  const countWidth = Math.max(...zones.map((zone) => String(zone.files).length));
+  return [
+    "Zones",
+    ...zones.map((zone) => {
+      const label = `${zone.path}/`.padEnd(pathWidth);
+      const count = String(zone.files).padStart(countWidth);
+      return `  - ${label}  ${count}  ${zone.purpose}`.trimEnd();
+    }),
+  ];
+}
+
+/**
+ * The Upstream block answers the question a living source exists to raise —
+ * did it move, and does that reach anything we adopted — in the command that
+ * actually gets run. The `Next:` line names the command that resolves it, and
+ * appears only when one exists.
+ */
+function upstreamLines(upstream: FrameworkStatusResult["upstream"]): string[] {
+  if (!upstream || upstream.sources.length === 0) {
+    return [];
+  }
+  const aliasWidth = Math.max(...upstream.sources.map((source) => source.alias.length));
+  const lines = [
+    "Upstream",
+    ...upstream.sources.map((source) => {
+      const impact =
+        source.impact && source.impact.mappings > 0
+          ? `   affects ${source.impact.mappings} donor mapping${source.impact.mappings === 1 ? "" : "s"}`
+          : "";
+      return `  - ${source.alias.padEnd(aliasWidth)}   ${source.summary}${impact}`;
+    }),
+  ];
+  if (upstream.nextCommand) {
+    lines.push(`Next: ${upstream.nextCommand}`);
+  }
+  return lines;
+}
+
+function adrSuggestionLines(suggestions: FrameworkStatusResult["adrSuggestions"]): string[] {
+  if (!suggestions || suggestions.length === 0) {
+    return [];
+  }
+  return ["Decision records", ...suggestions.map((suggestion) => `  - ${suggestion.message}`)];
+}
+
 export function formatStatusResult(result: FrameworkStatusResult): string {
   const header = ["Framework status", `Root: ${result.root}`];
   const semantics = manifestSemanticsLines(
@@ -153,7 +314,8 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
         `Managed files: ${result.managedFiles}`,
       ]
     : ["Manifest: missing", "Managed files: 0"];
-  const zones = ["Zones", ...result.zones.map((zone) => `  - ${zone.path}: ${zone.files} files`)];
+  const archetypeNotice = result.archetypeNotice ? [`Archetype: ${result.archetypeNotice}`] : [];
+  const zones = zoneLines(result.zones);
 
   const systems =
     result.systems && result.systems.length > 0
@@ -198,13 +360,19 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
   if (result.knowledgeEntries !== undefined) {
     summary.push(`Knowledge entries: ${result.knowledgeEntries}`);
   }
+  if (result.runRecords !== undefined) {
+    summary.push(`Run records (runs.jsonl): ${result.runRecords}`);
+  }
 
   return [
     ...header,
     ...manifest,
+    ...archetypeNotice,
     ...zones,
     ...systems,
     ...livingSources,
+    ...upstreamLines(result.upstream),
+    ...adrSuggestionLines(result.adrSuggestions),
     ...donors,
     ...summary,
   ].join("\n");
@@ -239,6 +407,21 @@ export function formatSourceLogResult(result: SourceLogResult): string {
   ].join("\n");
 }
 
+/**
+ * A `major` or `replacement` grade is Assay's only signal that an upstream
+ * change may have invalidated an architectural assumption. Deciding whether a
+ * change deserves a decision record is the step people report as the hard one,
+ * so the grade is offered as that prompt. It blocks nothing.
+ */
+function adrSuggestionForChange(changeClass: SourceSyncResult["changeClass"]): string[] {
+  if (changeClass !== "major" && changeClass !== "replacement") {
+    return [];
+  }
+  return [
+    `Advisory: graded '${changeClass}'. If that changed an architectural assumption, record it: assay adr new "<decision>"`,
+  ];
+}
+
 export function formatSourceSyncResult(result: SourceSyncResult): string {
   if (!result.observation) {
     return [
@@ -247,6 +430,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
       `Change: ${result.changeClass}`,
       "Observation: unchanged",
       `Event: ${result.eventFile}`,
+      ...adrSuggestionForChange(result.changeClass),
     ].join("\n");
   }
   return [
@@ -256,6 +440,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
     `Observation: ${result.observationFile ?? result.observation.observation_id}`,
     `Manifest: ${result.manifestFile ?? result.observation.manifest}`,
     `Event: ${result.eventFile}`,
+    ...adrSuggestionForChange(result.changeClass),
   ].join("\n");
 }
 
@@ -551,6 +736,7 @@ export function formatSystemRecord(system: SystemRecord): string {
     `  version:        ${system.version}`,
     `  contract:       ${system.contract_file ?? "-"}`,
     `  supersedes:     ${supersedesLine(system)}`,
+    `  intent:         ${describeIntentAuthority(system.intent_authority) ?? "inline (default)"}`,
     `  absorbed on:    ${system.absorbed_on ?? "-"}`,
     `  archived on:    ${system.archived_on ?? "-"}`,
     `  archive path:   ${system.archive_path ?? "-"}`,
@@ -591,6 +777,10 @@ export function formatAdrRecord(adr: AdrRecord): string {
     `  superseded by:     ${adr.superseded_by ?? "-"}`,
     `  related analysis:  ${adr.related_analysis ?? "-"}`,
     `  related iteration: ${adr.related_iteration ?? "-"}`,
+    // Shown only when the ADR carries them, so ADRs written without the intent
+    // module keep the same output shape.
+    ...(adr.related_intent === undefined ? [] : [`  related intent:    ${adr.related_intent}`]),
+    ...(adr.system === undefined ? [] : [`  system:            ${adr.system}`]),
   ].join("\n");
 }
 

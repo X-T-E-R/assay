@@ -9,7 +9,7 @@ assay init [target-dir] --name <project> --archetype <name> [--git] [--force] [-
 assay attach [--root <dir>] --name <project> --archetype <name> [--privacy private|private-git|tracked] [--no-track] [--no-agents]
 assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overlay]
 assay check [--advisories] [--root <dir>]
-assay status [--root <dir>]
+assay status [--root <dir>] [--json] [--fetch]
 assay update [--root <dir>] [--dry-run] [--agents] [--force | --skip-all | --create-new] [--no-track]
 assay migrate-layout [--root <dir>] [--dry-run | --apply] [--backup]
 assay archetype [--root <dir>] [--json]
@@ -29,8 +29,54 @@ state, source observation integrity, and donor persistence. It exits non-zero
 only for missing required structure or invalid persisted state. Add
 `--advisories` to request non-blocking workflow reminders such as open
 iterations, unfinished draft analyses, pending queue entries, lingering
-adoption archives, unanalyzed frozen references, and major source changes that
-have not been re-reviewed.
+adoption archives, frozen references with no `reference.yaml`, and major source
+changes that have not been re-reviewed.
+
+`--advisories` also reports placement: a top-level directory the archetype does
+not declare, an `analyses/references/` file with no `Status:` header, and an
+`AGENTS.md` managed block whose directory table no longer matches the
+archetype. Writing straight into a directory instead of going through a command
+is normal usage, so these are reminders and never failures.
+
+`assay status` prints the workspace's zones — the directories its archetype
+declares — each with a file count and the archetype's own statement of what
+belongs there, under a header naming the archetype and its description. A
+directory Assay's layout defines but the archetype does not declare is listed
+too when it holds files, so nothing with content becomes invisible. `--json`
+emits the same data, zones and purposes included.
+
+### Upstream drift in `status`
+
+When the workspace has living sources, `status` adds an `Upstream` section
+answering the two questions a source exists to raise — did it move, and does
+that reach anything adopted from it:
+
+```text
+Upstream
+  - qwen-agent   3 new upstream commits   affects 2 donor mappings
+  - langgraph    local checkout modified (1 uncommitted file); not recorded — preserve or discard it before the next sync
+  - autogen      no change
+Next: assay source sync qwen-agent
+```
+
+- Without `--fetch` the comparison is local and free: the managed checkout's
+  `HEAD` and working tree against the commit the latest observation recorded.
+  This is what makes a hand-edited checkout visible; previously only
+  `source sync` noticed, and it noticed by refusing.
+- A checkout that is not a Git repository reports `not checked (no cheap
+  signal)`. Full content fingerprinting stays in `sync`.
+- `--fetch` also compares the remote tip. Failures — offline, expired
+  credentials, a deleted remote — annotate that source with `upstream not
+  checked this run` and leave the exit code at 0.
+- When donor adoptions exist, the changed paths are intersected with their
+  source locators, so the line says how many adopted mappings the change
+  reaches.
+- `Next:` appears only for an upstream move, which is the case `source sync`
+  resolves. A drifted or modified checkout is deliberately refused by `sync`, so
+  it is reported rather than pointed at a command that would fail.
+
+`status` also prints a `Decision records` line for a source whose latest change
+was graded `major` or `replacement`, suggesting an ADR. Nothing is blocked.
 
 ## Attach an existing repository
 
@@ -69,6 +115,7 @@ assay source diff <alias> [--root <dir>] [--since <observation>]
 assay source log <alias> [--root <dir>]
 assay absorb <source-dir> [--name <name>] [--root <dir>] [--as problem|intake]
 assay reference add <source-dir> <name> [--root <dir>]
+assay reference backfill <path> [--source <origin>] [--root <dir>]
 assay analysis new <title> [--root <dir>] [--for-source <alias>] [--observation <id-or-path>] [--for-reference <path>]
 assay analysis close <path> --exit adopt|reject|experiment|adr [--note <note>] [--root <dir>]
 assay iteration start <title> [--root <dir>]
@@ -79,10 +126,17 @@ assay knowledge add <type> <title> [--from-analysis <path>] [--from-iteration <p
 
 Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
 
-`analysis close` records the caller's explicit exit, updates bound reference or
-source metadata, and writes an event. It does not block on section-content
-heuristics. Use `assay check --advisories` before closing when unfinished-draft
-reminders are useful.
+`analysis close` records the caller's explicit exit, updates bound source
+metadata, and writes an event. It does not block on section-content heuristics.
+Use `assay check --advisories` before closing when unfinished-draft reminders
+are useful.
+
+`reference add` writes a `reference.yaml` recording where the frozen material
+came from and when. `reference backfill` writes that file for a frozen
+directory that has none — a freeze made by hand, or by a version of Assay that
+predates the case file. It never overwrites provenance that is already there,
+and `check --advisories` prints the exact command for each directory missing
+one.
 
 ## Donor adoption
 
@@ -90,6 +144,7 @@ Use donor commands when selected material from a living source has been
 implemented, adapted, or otherwise carried into a registered target system:
 
 ```bash
+assay donor take <alias>:<source-path> --into <system>:<target-path> [--mode adapt|copy] [--to <observation>] [--id <adoption-id>] [--title <title>] [--root <dir>] [--json]
 assay donor register --file <definition.json|yaml> [--root <dir>] [--json]
 assay donor update <adoption> --file <definition.json|yaml> [--root <dir>] [--json]
 assay donor list [--root <dir>] [--json]
@@ -103,10 +158,18 @@ assay donor history <adoption> [--target <id>] [--root <dir>] [--json]
 assay donor rollback record <adoption> --to-decision <id> [--reason <text>] [--root <dir>] [--json]
 ```
 
+`take` covers the common case — one source path carried into one system path —
+by synthesizing and registering the definition `--file` would have contained.
+Both arguments are `<name>:<path>` split at the first colon, with paths relative
+to the source observation and the registered system. Use `--file` for several
+mappings, several targets, or required evidence.
+
 `inspect` captures source and target direct-change facts. It is optional:
 `decide` without `--inspection` captures the current snapshots inside the
-decision operation. Evidence is advisory by default and blocks `accept` only
-when the definition explicitly marks it `required`.
+decision operation, and `assay status` answers "did the source change, and does
+it reach this adoption" without any inspection at all. Evidence is advisory by
+default and blocks `accept` only when the definition explicitly marks it
+`required`.
 
 Donor records live under `.assay/donors/`. They do not edit target files,
 execute target tests, create commits, or restore revisions. See
@@ -116,8 +179,8 @@ and integrity behavior.
 ## Systems, ADRs, and project registry
 
 ```bash
-assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>]
-assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
+assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>] [--intent-authority inline|external|none] [--intent-pointer <pointer>]
+assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>] [--intent-authority inline|external|none | --no-intent-authority] [--intent-pointer <pointer>]
 assay system promote <selector> [--root <dir>]
 assay system archive <selector> [--root <dir>] [--dry-run | --apply]
 assay system list [--root <dir>] [--status primary|active|superseded|archived] [--json]
@@ -138,16 +201,93 @@ assay projects prune [--dry-run] [--json]
 
 Use `system register` only for first-time registration; it rejects duplicate names so accidental re-registration is visible. Use `system update <selector>` to correct metadata on an existing record, such as changing `vcs` from `embedded` to `independent-git` and setting `--vcs-ref main`. Omitted update fields are preserved. `--primary` uses the same one-primary behavior as `system promote`, and archived systems are read-only.
 
-The built-in archetypes are `library`, `study`, `solve`, `science`, `evaluation`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
+`--intent-authority` records where a system's product intent is authoritative:
+`inline` (the default when the field is absent) means this workspace owns it,
+`external` names another home through `--intent-pointer`, and `none` means the
+system deliberately keeps no intent record. `assay intent capture` refuses to
+write for `external` and `none`. The registry is the machine-readable home; the
+sidecar contract mirrors the field only when `register` generates the contract,
+so a later `system update` leaves an existing contract untouched, and the root
+contract written by `assay attach` does not carry the field at all.
+`system update --no-intent-authority` clears the field back to the default.
+
+The built-in archetypes are `study`, `solve`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
+
+`research` is the old name of `study` and still loads: a manifest that records
+it resolves to `study`, and `assay update` rewrites the manifest to the current
+name. An archetype file you provide under that name takes precedence over the
+alias.
+
+`science`, `evaluation`, and `library` were removed in 0.4.0. Asking for one by
+name fails with a message that names the removal and what to use instead. A
+workspace whose manifest still records one keeps working: `check` and `status`
+report the base structure and say in one line why the archetype's own
+directories are missing from the report. To keep a removed shape, copy its
+directories into your own archetype YAML under `.assay/archetypes/`.
 
 When `.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory is
 present, `adr new` reports an advisory about parallel decision records and
 still creates the requested Assay ADR. The legacy `--force` option only
 suppresses that advisory; it is not required for creation.
 
+## Product intent
+
+Intent records what was actually asked for, kept separate from what was later built. It is an optional capability module; enable it with `assay capability add intent`.
+
+```bash
+assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force] [--root <dir>]
+assay intent promote <capture> --to requirement|decision [--title <title>] [--root <dir>]
+assay intent list [--system <name>] [--include-lineage] [--json] [--root <dir>]
+```
+
+`capture` writes `intent/original/<YYYYMMDD>-<sha256:12>.md` holding the text verbatim, plus the resolved system name, the full SHA-256 of the body, and the capture time. `--file` is resolved relative to the workspace root and refuses to leave it; pass text from elsewhere with `--text`.
+
+Captures are append-only:
+
+- Capturing identical text again is a no-op and writes no second record. `--source` and `--supersedes` passed to that repeat call cannot be applied to the record that already exists, so the command names them as ignored instead of reporting a change it did not make.
+- Capturing identical text against a different system, or with a different shadow marking, fails. A capture is scoped to one system, and letting the second call succeed would leave the text scoped to the first one.
+- `--supersedes` takes recorded capture ids. An id that is not one is refused and named, so a correction chain never points at a capture the workspace does not have.
+- Capturing text whose record was edited after it was written fails, naming the recorded and current digests. Restore the file, or record the corrected wording as a new capture with `--supersedes <capture-id>`.
+- `intent list` reports a record that no longer matches what was recorded as `[modified after recording]`, or `[unreadable record]` when it no longer parses at all, and keeps listing every other capture. The marker is in `--json` output as an `integrity` field.
+
+Every capture is scoped to one registered system. `--system` accepts a name or unique prefix and defaults to the current primary; the resolved name is written into the record, so a capture keeps naming the system it was about after `system promote` moves the primary pointer. `intent list --system <name> --include-lineage` follows the registry `supersedes` chain so captures made against a replaced system stay visible.
+
+If the named system records `intent_authority: external` or `none`, `capture` refuses and prints the pointer. `--force` records the text anyway, marked `shadow: true` in the record and flagged in `intent list`, so a convenience copy is never mistaken for the authoritative one.
+
+`promote --to requirement` writes `intent/requirements/<date>-<slug>.md` carrying `derives_from`. `promote --to decision` creates an ADR through the `adr` capability with `related_intent` and `system` set, so the decision points back at the words it answers.
+
+```bash
+assay capability add intent
+assay intent capture --text "Exports must match what the table shows." --source "kickoff call"
+assay intent promote 20260726-0a1b2c3d4e5f --to requirement --title "Full-fidelity export"
+assay intent list --system billing --include-lineage
+```
+
+Assay stores captured text as given. Redact credentials and personal data before capturing; see [Agent Instructions](agent-instructions.md).
+
+## Capability modules
+
+Capability modules are optional workspace features: `adr` enables the ADR commands and index, `intent` enables the intent commands and directories, `iteration` enables the iteration commands and templates. An archetype turns some of them on at init, and `capability add` turns the rest on later, so the archetype chosen at init does not lock the workspace out of a capability it needs afterwards.
+
+```bash
+assay capability add <module> [--root <dir>]
+assay capability list [--root <dir>] [--json]
+```
+
+`capability add` creates the module's directories and templates through the workspace layout — under `.assay/` in an overlay workspace, at the root in a standalone one — writes any state file the module needs (`adr` creates `.assay/adrs.json`), records the module in the manifest, and appends a `capability.added` event. Files that already exist are left alone, and a module the workspace already has reports that and changes nothing, so the command is safe to re-run.
+
+```bash
+assay capability add adr        # an explore workspace gains knowledge/decisions/ and adr commands
+assay adr new "Adopt overlay layout"
+```
+
+`capability list` shows every module with how the workspace obtained it: `archetype` for modules the archetype provides, `added` for modules enabled afterwards.
+
+Templates a capability scaffolds are managed files like any other, so `assay update` reconciles them and `assay check` reports the module's directories as required structure.
+
 ## Custom archetypes
 
-Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `iteration`), `dirs`, and `templates`.
+Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `intent`, `iteration`), `dirs`, and `templates`.
 
 Template entries can carry their own content, so an archetype pack does not depend on built-in templateIds:
 

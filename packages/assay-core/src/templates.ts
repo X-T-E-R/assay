@@ -1,7 +1,14 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
 import { FrameworkError } from "./errors.js";
 import { workspaceTemplateRelativePath } from "./layout.js";
-import { type Archetype, type ArchetypeLookupOptions, loadArchetype } from "./profile.js";
+import {
+  type Archetype,
+  type ArchetypeLookupOptions,
+  type ArchetypeTemplateEntry,
+  type CapabilityModule,
+  MODULE_SCAFFOLDS,
+  loadArchetype,
+} from "./profile.js";
 import type { WorkspaceLayout } from "./schemas/index.js";
 
 export interface TemplateFile {
@@ -64,8 +71,55 @@ export function archetypeTemplates(
   archetype: Archetype,
   layout?: WorkspaceLayout,
 ): TemplateFile[] {
+  return renderTemplateEntries(archetype.templates, project, mode, archetype, layout);
+}
+
+/**
+ * Template files the given capability modules contribute. `init` and
+ * `assay capability add` both render through here, so a module scaffolds the
+ * same files whenever it is enabled.
+ */
+export function capabilityTemplates(
+  project: string,
+  mode: "learning" | "absorption",
+  archetype: Archetype,
+  capabilities: readonly CapabilityModule[],
+  layout?: WorkspaceLayout,
+): TemplateFile[] {
+  return renderTemplateEntries(
+    capabilities.flatMap((capability) => MODULE_SCAFFOLDS[capability].templates),
+    project,
+    mode,
+    archetype,
+    layout,
+  );
+}
+
+/**
+ * Merge template lists by resolved path. Earlier lists win, so an archetype
+ * that declares a capability module's file keeps ownership of its content.
+ */
+export function mergeTemplateFiles(...lists: readonly (readonly TemplateFile[])[]): TemplateFile[] {
+  const merged = new Map<string, TemplateFile>();
+  for (const list of lists) {
+    for (const template of list) {
+      if (!merged.has(template.path)) {
+        merged.set(template.path, template);
+      }
+    }
+  }
+  return [...merged.values()];
+}
+
+function renderTemplateEntries(
+  entries: readonly ArchetypeTemplateEntry[],
+  project: string,
+  mode: "learning" | "absorption",
+  archetype: Archetype,
+  layout?: WorkspaceLayout,
+): TemplateFile[] {
   const result: TemplateFile[] = [];
-  for (const entry of archetype.templates) {
+  for (const entry of entries) {
     if (layout && skipTemplateForLayout(layout, entry.path)) {
       continue;
     }
@@ -145,6 +199,12 @@ function templateContentById(
       return iterationPlanTemplate();
     case "knowledge.readme":
       return knowledgeReadme();
+    case "intent.readme":
+      return intentReadme();
+    case "intent.original.readme":
+      return intentOriginalReadme();
+    case "intent.requirements.readme":
+      return intentRequirementsReadme();
     case "knowledge.decisions.readme":
       return knowledgeDecisionsReadme();
     case "knowledge.decisions.adr_template":
@@ -159,12 +219,14 @@ function templateContentById(
       return dataReadme();
     case "releases.readme":
       return releasesReadme();
+    case "solve.readme":
+      return solveReadme(project);
     case "solve.objective":
       return solveObjective(project);
     case "solve.current_attempt":
       return solveCurrentAttempt();
-    case "solve.runs.jsonl":
-      return solveRunsJsonl();
+    case "solve.problem.readme":
+      return solveProblemReadme();
     case "solve.intake.readme":
       return solveIntakeReadme();
     case "solve.benchmarks.readme":
@@ -173,22 +235,6 @@ function templateContentById(
       return solveAttemptsReadme();
     case "solve.tools.readme":
       return solveToolsReadme();
-    case "science.hypotheses.readme":
-      return scienceHypothesesReadme();
-    case "science.experiments.readme":
-      return scienceExperimentsReadme();
-    case "science.datasets.readme":
-      return scienceDatasetsReadme();
-    case "science.findings.readme":
-      return scienceFindingsReadme();
-    case "science.papers.readme":
-      return sciencePapersReadme();
-    case "evaluation.candidates.readme":
-      return evaluationCandidatesReadme();
-    case "evaluation.criteria":
-      return evaluationCriteria();
-    case "evaluation.scorecards.readme":
-      return evaluationScorecardsReadme();
     case "explore.approaches.readme":
       return exploreApproachesReadme();
     case "explore.trials.readme":
@@ -371,6 +417,53 @@ export function systemsReadme(): string {
 
 export function knowledgeReadme(): string {
   return "# knowledge/\n\nStore accepted reusable knowledge only. Work-in-progress analysis belongs in the archetype-specific working directories.\n";
+}
+
+export function intentReadme(): string {
+  return dedent(`
+    # intent/
+
+    Product intent as it was actually stated, kept separate from what was later
+    built. Every record is scoped to one registered system.
+
+    | Subdir | Purpose |
+    | --- | --- |
+    | \`original/\` | Verbatim captures, append-only and content-addressed |
+    | \`requirements/\` | Requirements derived from a capture |
+
+    Use \`assay intent capture\`, \`assay intent promote\`, and
+    \`assay intent list\`. Do not rename or edit files under \`original/\`: each
+    one carries the SHA-256 of its own body, and a later capture of the same
+    text is refused when the recorded body no longer matches.
+
+    Captured text is stored as given. Redact credentials and personal data
+    before capturing; Assay does not scan or filter what it is handed.
+    `);
+}
+
+export function intentOriginalReadme(): string {
+  return dedent(`
+    # intent/original/
+
+    Verbatim intent captures, one file per record, named
+    \`<YYYYMMDD>-<sha256:12>.md\`.
+
+    Records are append-only. To correct a capture, capture the new text with
+    \`--supersedes <capture-id>\` instead of editing the existing file.
+    `);
+}
+
+export function intentRequirementsReadme(): string {
+  return dedent(`
+    # intent/requirements/
+
+    Requirements derived from an intent capture. Each file records
+    \`derives_from\` so the requirement stays traceable to the words it came
+    from.
+
+    Write these with \`assay intent promote <capture-id> --to requirement\`.
+    Decisions go to ADRs instead, through \`--to decision\`.
+    `);
 }
 
 export function knowledgeDecisionsReadme(): string {
@@ -572,8 +665,49 @@ export function solveCurrentAttempt(): string {
   `);
 }
 
-export function solveRunsJsonl(): string {
-  return "";
+export function solveReadme(project: string): string {
+  return `${rootReadme(project)}${solveRunRecordsSection()}`;
+}
+
+/**
+ * Run-record convention for solve workspaces.
+ *
+ * Assay does not create `runs.jsonl` and no command writes to it. The format is
+ * documented here because harnesses that already exist — an evaluator, a judge
+ * script, a packaging step — can append to it in one line, which is the only
+ * way run logs have ever actually been filled.
+ */
+function solveRunRecordsSection(): string {
+  return dedent(`
+    ## Run records
+
+    Nothing in Assay writes a run log, and there is no command to run. If a
+    harness in \`tools/\` should keep one, append one JSON object per line to
+    \`runs.jsonl\` at the workspace root:
+
+    \`\`\`text
+    {"run_id": "2026-07-26-01", "benchmark": "local-v3", "attempt": "att-014", "score": 0.813, "started_at": "2026-07-26T09:12:00Z"}
+    \`\`\`
+
+    Suggested fields: \`run_id\`, \`started_at\`, \`benchmark\`, \`attempt\`,
+    \`score\`, \`params\`, \`artifact\`, \`notes\`. Nothing validates the shape, so
+    add whatever the harness already knows. Once the file exists,
+    \`assay status\` reports how many records it holds.
+    `);
+}
+
+export function solveProblemReadme(): string {
+  return dedent(`
+    # problem/
+
+    The objective exactly as it was handed to you: task statement, official
+    rules, scoring definition, data dictionaries, deadlines.
+
+    Keep this directory faithful to the source. Restatements, interpretations,
+    and plans derived from the rules belong in an iteration or an analysis, so
+    that when the rules change a clean copy of the new statement is the only
+    edit here.
+  `);
 }
 
 export function solveIntakeReadme(): string {
@@ -622,94 +756,6 @@ export function solveToolsReadme(): string {
     - \`tools/report/\` — objective-specific reporting helpers if benchmark output needs a repeatable publication format.
 
     Tools that are not objective-specific belong elsewhere, such as generic build scripts under the relevant system source.
-  `);
-}
-
-export function scienceHypothesesReadme(): string {
-  return dedent(`
-    # hypotheses/
-
-    Candidate claims before evidence is collected.
-
-    Each hypothesis should name the claim, expected observation, falsification condition, and linked experiment plan.
-  `);
-}
-
-export function scienceExperimentsReadme(): string {
-  return dedent(`
-    # experiments/
-
-    Experiment plans and execution notes.
-
-    Keep protocol, variables, environment, and result links together so evidence can be audited later.
-  `);
-}
-
-export function scienceDatasetsReadme(): string {
-  return dedent(`
-    # datasets/
-
-    Dataset cards, provenance, licenses, transformations, and quality notes.
-
-    Preserve enough detail for another run to understand what evidence was used.
-  `);
-}
-
-export function scienceFindingsReadme(): string {
-  return dedent(`
-    # findings/
-
-    Evidence-backed findings.
-
-    A finding should link to hypotheses, experiments, datasets, and limitations. Separate observed evidence from interpretation.
-  `);
-}
-
-export function sciencePapersReadme(): string {
-  return dedent(`
-    # papers/
-
-    Drafts, outlines, figures, and publication notes.
-
-    Keep claims traceable to findings and evidence instead of prose-only memory.
-  `);
-}
-
-export function evaluationCandidatesReadme(): string {
-  return dedent(`
-    # candidates/
-
-    External candidates under review.
-
-    Give each candidate a source, version, evaluation scope, and known constraints before scoring.
-  `);
-}
-
-export function evaluationCriteria(): string {
-  return dedent(`
-    # Evaluation Criteria
-
-    This file defines the decision matrix before scoring starts.
-
-    | Criterion | Weight | Measurement | Notes |
-    | --- | ---: | --- | --- |
-    | Fit | 1 | | |
-    | Risk | 1 | | |
-    | Operability | 1 | | |
-
-    ## Final selection
-
-    Record the final selection only after scorecards are complete and an ADR captures the decision.
-  `);
-}
-
-export function evaluationScorecardsReadme(): string {
-  return dedent(`
-    # scorecards/
-
-    Scorecards apply the decision matrix to each candidate.
-
-    Keep raw observations, criterion scores, weighting notes, and final selection rationale separate so tradeoffs stay visible.
   `);
 }
 

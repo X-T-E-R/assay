@@ -88,15 +88,25 @@ function snapshotFromFiles(
   });
 }
 
+/**
+ * Whether a repository-relative file path falls under a declared locator.
+ * `exact` names one file; `prefix` names a file or everything beneath it.
+ * Shared by snapshotting and by the upstream impact report, so both answer
+ * "does this change touch adopted material?" the same way.
+ */
+export function donorLocatorMatchesPath(locator: DonorPathLocator, filePath: string): boolean {
+  const normalized = filePath.replaceAll("\\", "/");
+  if (locator.match === "exact") {
+    return normalized === locator.path;
+  }
+  return normalized === locator.path || normalized.startsWith(`${locator.path}/`);
+}
+
 export function snapshotManifestLocator(
   manifest: z.infer<typeof sourceManifestSchema>,
   locator: DonorPathLocator,
 ): DonorLocatorSnapshot {
-  const files = manifest.files.filter((file) =>
-    locator.match === "exact"
-      ? file.path === locator.path
-      : file.path === locator.path || file.path.startsWith(`${locator.path}/`),
-  );
+  const files = manifest.files.filter((file) => donorLocatorMatchesPath(locator, file.path));
   return snapshotFromFiles(locator, files);
 }
 
