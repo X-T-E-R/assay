@@ -13,6 +13,8 @@ import {
 } from "./layout.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { relativeDisplayPath } from "./paths.js";
+import { reconcilePlugins } from "./plugins/reconcile.js";
+import { DECISION_GOVERNANCE_RESPONSIBILITY, TRELLIS_PLUGIN_ID } from "./plugins/registry.js";
 import type { FrameworkManifest, SystemRecord, WorkspaceLayout } from "./schemas/index.js";
 import { adrIndexSchema } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
@@ -111,7 +113,8 @@ export async function convertOverlayToStandalone(
       `convert --to standalone requires an overlay workspace; ${sourceRoot} is not overlay mode.`,
     );
   }
-
+  const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const decisionBinding = sourceManifest.bindings?.[DECISION_GOVERNANCE_RESPONSIBILITY];
   if (await exists(targetRoot)) {
     if (await exists(path.join(targetRoot, MANIFEST_FILE))) {
       throw new FrameworkError(
@@ -131,7 +134,7 @@ export async function convertOverlayToStandalone(
   // project-local archetypes/ makes every later command fail to load the
   // workspace archetype.
   const stateAreas: readonly WorkspaceArea[] = ["events", "backups"];
-  const stateDirectories: readonly string[] = ["donors", "archetypes", "migrations"];
+  const stateDirectories: readonly string[] = ["donors", "archetypes", "migrations", "trellis"];
   await mkdir(path.join(targetRoot, MANAGED_DIR), { recursive: true });
   await copyOrMoveFile(
     path.join(sourceRoot, sourceLayout.paths.manifest),
@@ -215,6 +218,18 @@ export async function convertOverlayToStandalone(
         ),
       ),
     ],
+    ...(decisionBinding?.provider === TRELLIS_PLUGIN_ID &&
+    decisionBinding.target.kind === "workspace"
+      ? {
+          bindings: {
+            ...(sourceManifest.bindings ?? {}),
+            [DECISION_GOVERNANCE_RESPONSIBILITY]: {
+              provider: TRELLIS_PLUGIN_ID,
+              target: { kind: "system", name: systemName },
+            },
+          },
+        }
+      : {}),
     updated_at: nowIso(now),
   };
   await saveManifest(targetRoot, targetManifest);
@@ -225,7 +240,6 @@ export async function convertOverlayToStandalone(
   // absolute when the path leaves the root, which we do not want here.
   const relativeSourcePath = toPosixPath(path.relative(targetRoot, sourceRoot));
   const registry = defaultSystemsRegistry();
-  const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const systemRecord: SystemRecord = {
     name: systemName,
     path: relativeSourcePath,
@@ -258,6 +272,15 @@ export async function convertOverlayToStandalone(
     ].join("\n"),
     "utf8",
   );
+
+  if (decisionBinding?.provider === TRELLIS_PLUGIN_ID) {
+    await reconcilePlugins({
+      root: targetRoot,
+      plugins: [TRELLIS_PLUGIN_ID],
+      apply: true,
+      now,
+    });
+  }
 
   const eventFile = await appendEvent(
     targetRoot,

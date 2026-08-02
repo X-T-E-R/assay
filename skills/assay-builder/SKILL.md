@@ -33,7 +33,7 @@ node <skill-root>/scripts/assay.mjs <command>
 
 ```bash
 # Workspace lifecycle
-assay init [target-dir] --name <project-name> [--archetype <name>]  # built-ins: study|solve|explore
+assay init [target-dir] --name <project-name> [--archetype <name>] [--plugin assay.intent|assay.trellis]  # built-ins: study|solve|explore
 assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # structure + persisted-record integrity
@@ -45,6 +45,22 @@ assay migrate-layout --dry-run               # always dry-run first; legacy layo
 # Capability modules (optional features the archetype may not have enabled)
 assay capability list [--json]               # which modules are enabled, and whether by archetype or added later
 assay capability add <module>                # built-ins: adr|intent|iteration; idempotent, safe to re-run
+
+# Workspace plugins (extend an existing Assay workspace)
+assay plugin add assay.intent
+assay plugin add assay.trellis
+assay trellis task create --title <title> --json
+assay trellis task current --json
+assay trellis protocol --json
+assay trellis task complete|cancel|list|show|archive ... --json
+assay trellis session|journal|config|channel|worker|mem ... --help
+assay trellis migrate legacy plan|apply|rollback|cleanup ... --json
+assay trellis context --host codex --json
+assay plugin disable assay.trellis                 # preserves runtime data
+assay plugin uninstall assay.trellis --purge --yes # backup, then purge
+assay plugin list [--json]
+assay plugin check [--json]
+assay reconcile [--plugin <id>...] [--dry-run | --apply] [--json]  # dry-run by default
 
 # Product intent (what was asked for, kept apart from what was built)
 assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force]
@@ -87,8 +103,8 @@ assay adr new "Title" [--from-analysis <path>] [--from-iteration <path>]
 assay adr accept <selector>
 assay adr supersede <old-selector> <new-selector>
 assay adr deprecate <selector>
-assay adr list [--status proposed|accepted|superseded|deprecated] [--json]
-assay adr show <selector> [--json]
+assay adr list [--status proposed|accepted|superseded|deprecated] [--native] [--json]
+assay adr show <selector> [--native] [--json]
 
 # System registry
 assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>] [--intent-authority inline|external|none] [--intent-pointer <pointer>]
@@ -116,12 +132,15 @@ Target projects use an archetype-specific layout over a shared base (`.assay/`, 
 
 ## Capability modules
 
-`adr`, `intent`, and `iteration` are optional capability modules. An archetype enables some of them at init — `study` ships `adr`, `solve` and `explore` ship `iteration`, and no archetype ships `intent` — and the rest can be enabled at any time.
+`adr`, `intent`, and `iteration` are optional capability modules. An archetype enables some of them at init — `study` ships `adr`, `solve` and `explore` ship `iteration`, and no archetype ships `intent` — and the rest can be enabled at any time. Intent's preferred entrance is now the built-in `assay.intent` plugin.
 
-- When a command reports `capability not enabled`, run `assay capability add <module>` instead of re-initializing the workspace or switching archetypes.
+- When an intent command reports `capability not enabled`, run `assay plugin add assay.intent`. For ADR or iteration, run `assay capability add <module>`.
 - `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.
 - `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming an ADR, intent, or iteration command is unavailable.
 - Capability-scaffolded files are managed files: `update` reconciles them and `check` treats their directories as required structure.
+- `plugin add assay.intent` declares desired plugin state, scaffolds only missing files, and records installation in `.assay/plugins.json`. `assay capability add intent` stays compatible for existing automation.
+- `reconcile` only operates on a workspace that already has `.assay/manifest.json`. It is a write-free preview unless `--apply` is present. A complete legacy intent scaffold is adopted without rewriting it; an incomplete one gets only its missing files. A converged apply does not update timestamps or append an event.
+- `plugin add assay.trellis` installs Assay's built-in operational v1 runtime under `.assay/trellis/`. It does not call a Trellis CLI or depend on `.trellis/`, and it does not replace Assay-native ADR or intent authority. Tasks, sessions, journal, config, channels/leases, and external-worker state are durable project-local domains; Codex memory is bounded and read-only. Optional session ids fail closed when an unscoped current task would be ambiguous. Built-in provider-process supervision is deferred: workers register and drive the CLI themselves.
 
 ## Product intent
 
@@ -143,7 +162,7 @@ An adopted project usually has its intent scattered across issues, chat logs, an
 ```bash
 assay adopt --apply --name <project> --analyze   # existing content lands in .old/<timestamp>/
 assay system register systems/<primary> --primary
-assay capability add intent
+assay plugin add assay.intent
 # then, for each distinct statement of intent found in the archive:
 assay intent capture --file .old/<timestamp>/docs/original-brief.md --source ".old/<timestamp>/docs/original-brief.md"
 assay intent capture --text "<quoted request from an issue or chat>" --source "issue #142"
@@ -173,7 +192,7 @@ Use ADRs for durable architecture decisions that need status, numbering, and sup
 - `adr supersede` records a bidirectional replacement chain between accepted ADRs.
 - `adr deprecate` closes a proposed or accepted ADR without replacement.
 - `check` validates dangling ADR links, non-bidirectional supersede chains, cycles, and missing ADR frontmatter.
-- External governance markers such as `.trellis/` and `.superpowers/` produce an advisory but never block an explicitly requested Assay ADR.
+- External governance markers such as `.trellis/` and `.superpowers/` may still produce the legacy advisory, but the built-in `assay.trellis` runtime is independent of those markers. Native ADR mutations, intent-to-decision promotion, and decision knowledge writes remain available.
 
 Never hand-edit `.assay/adrs.json`. Use `adr` commands for lifecycle transitions. Read `references/adr-workflow.md` before creating or changing ADRs.
 
@@ -205,7 +224,7 @@ absorb <source>                      # freeze + write case file + OPEN a pre-fil
 8. **Use `absorb <source> [--name <name>]`** when you intentionally want the old freeze-and-open-analysis flow. This freezes the source, writes a case file (`reference.yaml` in learning mode, `source.yaml` in absorption mode), AND opens a pre-filled analysis in one step. Prefer `absorb` over `reference add` followed by a separate `analysis new`, because `absorb` guarantees the analysis is opened in the same step and cannot be forgotten.
 9. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]` for living source observations, or `analysis new "Title" --for-reference <path>` for frozen references. When `--observation` is omitted, the latest observation for that source is used.
 10. **Fill the analysis body when the decision needs durable rationale**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next iteration`) with real content drawn from the source. `check --advisories` can list empty drafts; `analysis close` trusts the caller's explicit exit and does not block on section-content heuristics.
-11. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This marks a bound source observation `analysis_status: closed` and writes the decision exit. For `--exit adr`, follow up with `adr new`; for reusable non-ADR knowledge, use `knowledge add`.
+11. **Close the analysis** with `analysis close <path> --exit adopt|reject|experiment|adr`. This marks a bound source observation `analysis_status: closed` and writes the decision exit. For `--exit adr`, use Assay-native `adr new`; the built-in `assay.trellis` runtime never replaces decision authority. For reusable non-ADR knowledge, use `knowledge add`.
 12. Convert promising findings into a candidate pattern under `analyses/patterns/`; start an iteration against the primary system in `systems/` with `iteration start`.
 13. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered system's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, contract file, supersedes, or primary status.
 14. Close started iterations with `iteration close --result ...` when a result is known. `check --advisories` can list plans that still have `Status: open`.
@@ -224,6 +243,7 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 - Do not edit, rename, or delete files under `intent/original/`. Record a corrected capture with `--supersedes` instead.
 - Do not paraphrase intent while capturing it, and do not capture a whole transcript when one paragraph carries the request. Paraphrase in `promote`, not in `capture`.
 - Do not use `intent capture --force` to work around a system whose intent authority is external; record it where the authority says, unless the user explicitly wants a local shadow copy.
+- Do not treat a root `.trellis/` as `assay.trellis` state. The built-in plugin writes dynamic state only under `.assay/trellis/`; use native Assay ADR commands for decisions.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
 - Do not leave iterations open indefinitely; use `check --advisories` when you want a list of open plans.

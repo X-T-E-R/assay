@@ -53,12 +53,32 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | 模块 | 打开什么 | 启用方式 |
 | --- | --- | --- |
 | `adr` | 带状态和取代链的编号架构决策 | `assay capability add adr` |
-| `intent` | 原样记录当初提出的诉求，再推进为需求或 ADR | `assay capability add intent` |
+| `intent` | 原样记录当初提出的诉求，再推进为需求或 ADR | `assay plugin add assay.intent` |
 | `iteration` | 对自有系统的受控改动，可开启并按结果关闭 | `assay capability add iteration` |
 
-`assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。
+`assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。`assay capability add intent` 仍作为兼容入口保留；`assay reconcile --apply` 会接管已有文件并补写插件回执，不移动或改写 intent 记录。
 
 `intent` 是三者中最新的一个，也是仓库里最常缺失的一环：几个月后代码还在，当初为什么要做却已经找不到了。`assay intent capture` 按内容寻址、只追加地保存原始措辞，并绑定到已注册的系统，之后的需求或 ADR 就能指回它所依据的那段话。
+
+## 用插件扩展工作区，不增加新的 setup 生命周期
+
+插件扩展已有 Assay 工作区，不替代 `init`、`attach`，也不改变 Assay 作为证据工作台的职责。`assay.intent` 以叠加方式提供 `intent` 能力；`assay.trellis` 是随 Assay 发布的内建 operational plugin，协议、插件状态与专用 runtime state schema 均为 v1，动态状态位于 `.assay/trellis/`。原生 ADR 与 intent 保持可用。
+
+```bash
+# 创建或接入时顺便安装 intent。
+assay init ../product-assay --name Product --plugin assay.intent
+assay attach --name Product --plugin assay.intent
+
+# 也可以之后再添加。
+assay plugin add assay.intent
+assay plugin add assay.trellis
+assay plugin list
+assay plugin check
+```
+
+manifest 记录期望启用的插件和责任绑定，`.assay/plugins.json` 记录当前工作区实际安装的内容。`assay reconcile` 对照这些状态与现有文件并输出计划；默认只预览，只有加上 `--apply` 才会修改。它只收敛一个已经存在 manifest 的 Assay 工作区，不负责创建或 attach，不覆盖已有 intent 文件，也不会自动删除孤立回执。
+
+添加 `assay.trellis` 只创建缺失的 `.assay/trellis/` runtime state 和安装回执；它不调用 Trellis CLI，也不依赖根目录 `.trellis/`。operational v1 提供完整 task/session/journal/config/channel/worker/mem/legacy-migration 命令族、`protocol --json` 与 Codex hook registration。外部 worker 通过 CLI 驱动持久状态机；Assay 不伪装已启动 provider process。会话指针不一致时，无 scope 的 current/context 会 fail closed。
 
 ## 快速开始
 

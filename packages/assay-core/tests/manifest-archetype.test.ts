@@ -49,6 +49,23 @@ async function writeManifestJson(root: string, manifest: unknown): Promise<void>
 }
 
 describe("manifest archetype/mode contract", () => {
+  it("writes schema 2 with a minimum Assay version and rejects newer requirements", async () => {
+    const root = await tempDir();
+    const manifest = defaultManifest("Versioned");
+    expect(manifest).toEqual(
+      expect.objectContaining({
+        __schema: 2,
+        framework_version: "0.5.0",
+        minimum_assay_version: "0.5.0",
+      }),
+    );
+    await saveManifest(root, {
+      ...manifest,
+      minimum_assay_version: "999.0.0",
+    });
+    await expect(loadManifest(root)).rejects.toThrow(/requires Assay 999\.0\.0 or newer/);
+  });
+
   it("defaults legacy project schema fields without requiring core", () => {
     expect(frameworkProjectSchema.parse({ name: "Legacy", core: "legacy-core" })).toEqual({
       name: "Legacy",

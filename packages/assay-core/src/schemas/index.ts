@@ -15,6 +15,25 @@ export const projectArchetypeSchema = z.string().min(1);
 
 export const projectModeSchema = z.enum(["learning", "absorption"]);
 
+export const pluginDeclarationSchema = z
+  .object({
+    kind: z.string().trim().min(1),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
+export const providerTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("workspace") }).strict(),
+  z.object({ kind: z.literal("system"), name: z.string().trim().min(1) }).strict(),
+]);
+
+export const responsibilityBindingSchema = z
+  .object({
+    provider: z.string().trim().min(1),
+    target: providerTargetSchema,
+  })
+  .strict();
+
 export const frameworkProjectSchema = z
   .object({
     name: z.string().min(1),
@@ -155,8 +174,9 @@ export const workspaceLayoutSchema = z
 
 export const frameworkManifestSchema = z
   .object({
-    __schema: z.literal(1),
+    __schema: z.union([z.literal(1), z.literal(2)]),
     framework_version: z.string().min(1),
+    minimum_assay_version: z.string().min(1).optional(),
     layout_version: z.number().int().nonnegative(),
     created_at: z.string().min(1),
     updated_at: z.string().min(1),
@@ -164,12 +184,63 @@ export const frameworkManifestSchema = z
     managed_files: z.record(managedFileRecordSchema),
     user_deleted: z.array(z.string()),
     applied_migrations: z.array(z.string()),
+    // Desired Assay plugins. Operational installation state lives separately
+    // in `.assay/plugins.json`, so ordinary manifest reads never confuse a
+    // declaration with a successful install.
+    plugins: z.record(z.string().trim().min(1), pluginDeclarationSchema).optional(),
+    // Exclusive provider selections. Capability contributions remain additive;
+    // a responsibility binding replaces the native owner for that semantic
+    // area and therefore fail-closes while its provider is unavailable.
+    bindings: z.record(z.string().trim().min(1), responsibilityBindingSchema).optional(),
     // Layout v4+: path map and privacy policy. Optional so v3 manifests (which
     // have no layout block) still validate; resolveWorkspaceLayout fills in a
     // standalone fallback when this is absent.
     layout: workspaceLayoutSchema.optional(),
   })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.__schema === 1 && (manifest.minimum_assay_version || manifest.bindings)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "manifest schema 1 cannot carry minimum_assay_version or provider bindings",
+      });
+    }
+    if (manifest.__schema === 2 && !manifest.minimum_assay_version) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "manifest schema 2 requires minimum_assay_version",
+      });
+    }
+  });
+
+export const pluginInstallReceiptSchema = z
+  .object({
+    kind: z.string().trim().min(1),
+    state_version: z.number().int().positive(),
+    installed_at: z.string().min(1),
+    updated_at: z.string().min(1),
+    observations: z.record(z.string().trim().min(1), z.string()).optional(),
+  })
   .strict();
+
+export const pluginsStateSchema = z
+  .object({
+    __schema: z.union([z.literal(1), z.literal(2)]),
+    plugins: z.record(z.string().trim().min(1), pluginInstallReceiptSchema),
+    updated_at: z.string().min(1),
+  })
+  .strict()
+  .superRefine((state, context) => {
+    if (
+      state.__schema === 1 &&
+      Object.values(state.plugins).some((receipt) => receipt.observations !== undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "plugin state schema 1 cannot carry federated observations",
+      });
+    }
+  });
 
 export const eventEntrySchema = z
   .object({
@@ -308,6 +379,11 @@ export type ProjectArchetype = z.infer<typeof projectArchetypeSchema>;
 export type ProjectMode = z.infer<typeof projectModeSchema>;
 export type FrameworkProject = z.infer<typeof frameworkProjectSchema>;
 export type FrameworkManifest = z.infer<typeof frameworkManifestSchema>;
+export type PluginDeclaration = z.infer<typeof pluginDeclarationSchema>;
+export type ProviderTarget = z.infer<typeof providerTargetSchema>;
+export type ResponsibilityBinding = z.infer<typeof responsibilityBindingSchema>;
+export type PluginInstallReceipt = z.infer<typeof pluginInstallReceiptSchema>;
+export type PluginsState = z.infer<typeof pluginsStateSchema>;
 export type WorkspaceLayoutMode = z.infer<typeof workspaceLayoutModeSchema>;
 export type WorkspacePrivacy = z.infer<typeof workspacePrivacySchema>;
 export type WorkspaceLayoutPaths = z.infer<typeof workspaceLayoutPathsSchema>;

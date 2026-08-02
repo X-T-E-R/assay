@@ -43,6 +43,15 @@ import {
 } from "./manifest.js";
 import { relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
 import {
+  type DecisionGovernanceStatus,
+  getDecisionGovernanceStatus,
+  nativeDecisionGovernanceEnabled,
+  requireNativeDecisionGovernance,
+} from "./plugins/authority.js";
+import { collectPluginCheckRows } from "./plugins/reconcile.js";
+import { DECISION_GOVERNANCE_RESPONSIBILITY, pluginCapabilities } from "./plugins/registry.js";
+import { loadPluginsState } from "./plugins/state.js";
+import {
   type Archetype,
   type CapabilityModule,
   SUPPORTED_CAPABILITY_MODULES,
@@ -115,10 +124,23 @@ export async function desiredRuntimeTemplates(
     readonly root?: string;
     readonly layout?: WorkspaceLayout;
     readonly capabilities?: readonly string[];
+    readonly plugins?: FrameworkManifest["plugins"];
+    readonly bindings?: FrameworkManifest["bindings"];
   } = {},
 ) {
   const archetypeDefinition = await loadArchetype(archetype, options);
-  const capabilities = effectiveCapabilities(archetypeDefinition, options.capabilities);
+  const pluginState = options.root ? await loadPluginsState(options.root) : null;
+  const resolvedCapabilities = effectiveCapabilities(
+    archetypeDefinition,
+    options.capabilities,
+    options.plugins,
+    pluginState,
+  );
+  const decisionManifest =
+    options.bindings === undefined ? {} : ({ bindings: options.bindings } as const);
+  const capabilities = nativeDecisionGovernanceEnabled(decisionManifest)
+    ? resolvedCapabilities
+    : resolvedCapabilities.filter((capability) => capability !== "adr");
   return mergeTemplateFiles(
     archetypeTemplates(project, mode, archetypeDefinition, options.layout),
     capabilityTemplates(project, mode, archetypeDefinition, capabilities, options.layout),
@@ -145,7 +167,7 @@ export interface InitFrameworkResult {
 }
 
 /** How a capability module became available to a workspace. */
-export type CapabilitySource = "archetype" | "added";
+export type CapabilitySource = "archetype" | "added" | "plugin";
 
 export interface AddCapabilityOptions {
   readonly root: string;
@@ -274,6 +296,7 @@ export interface FrameworkStatusResult {
   readonly upstream?: UpstreamStatus;
   /** Sources whose latest change grade suggests recording a decision. */
   readonly adrSuggestions?: readonly SourceAdrSuggestion[];
+  readonly decisionGovernance?: DecisionGovernanceStatus;
   readonly donors?: FrameworkStatusDonors;
   readonly openIterations?: number;
   readonly knowledgeEntries?: number;
@@ -526,11 +549,28 @@ async function enabledCapabilities(
   if (!manifest) {
     return [];
   }
+  const pluginState = await loadPluginsState(root);
   try {
     const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
-    return effectiveCapabilities(archetypeDefinition, manifest.project.capabilities);
+    const capabilities = effectiveCapabilities(
+      archetypeDefinition,
+      manifest.project.capabilities,
+      manifest.plugins,
+      pluginState,
+    );
+    return nativeDecisionGovernanceEnabled(manifest)
+      ? capabilities
+      : capabilities.filter((capability) => capability !== "adr");
   } catch {
-    return declaredCapabilities(manifest);
+    const capabilities = effectiveCapabilities(
+      null,
+      manifest.project.capabilities,
+      manifest.plugins,
+      pluginState,
+    );
+    return nativeDecisionGovernanceEnabled(manifest)
+      ? capabilities
+      : capabilities.filter((capability) => capability !== "adr");
   }
 }
 
@@ -796,7 +836,16 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
 
   // `init` always writes a standalone workspace, so archetype and capability
   // paths need no layout translation here.
-  const capabilities = effectiveCapabilities(archetypeDefinition, manifest.project.capabilities);
+  const pluginState = await loadPluginsState(root);
+  const resolvedCapabilities = effectiveCapabilities(
+    archetypeDefinition,
+    manifest.project.capabilities,
+    manifest.plugins,
+    pluginState,
+  );
+  const capabilities = nativeDecisionGovernanceEnabled(manifest)
+    ? resolvedCapabilities
+    : resolvedCapabilities.filter((capability) => capability !== "adr");
   const directories = new Set([
     ...dirsForArchetype(archetypeDefinition, mode),
     ...capabilityDirs(capabilities),
@@ -868,19 +917,33 @@ export async function addCapability(options: AddCapabilityOptions): Promise<AddC
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
   const module = requireCapabilityModule(options.module);
+  if (module === "adr") {
+    await requireNativeDecisionGovernance(root);
+  }
   const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
   const layout = layoutForManifest(manifest);
   const report = createEmptyReport();
   const now = options.now ?? new Date();
+  const pluginState = await loadPluginsState(root);
 
   const alreadyDeclared = declaredCapabilities(manifest).includes(module);
-  if (archetypeHasCapability(archetypeDefinition, module) || alreadyDeclared) {
+  const providedByPlugin = pluginCapabilities(manifest.plugins, pluginState).includes(module);
+  if (archetypeHasCapability(archetypeDefinition, module) || alreadyDeclared || providedByPlugin) {
     return {
       root,
       module,
       alreadyEnabled: true,
-      source: alreadyDeclared ? "added" : "archetype",
-      capabilities: effectiveCapabilities(archetypeDefinition, manifest.project.capabilities),
+      source: archetypeHasCapability(archetypeDefinition, module)
+        ? "archetype"
+        : providedByPlugin
+          ? "plugin"
+          : "added",
+      capabilities: effectiveCapabilities(
+        archetypeDefinition,
+        manifest.project.capabilities,
+        manifest.plugins,
+        pluginState,
+      ),
       report,
     };
   }
@@ -933,7 +996,12 @@ export async function addCapability(options: AddCapabilityOptions): Promise<AddC
     module,
     alreadyEnabled: false,
     source: "added",
-    capabilities: effectiveCapabilities(archetypeDefinition, saved.project.capabilities),
+    capabilities: effectiveCapabilities(
+      archetypeDefinition,
+      saved.project.capabilities,
+      saved.plugins,
+      pluginState,
+    ),
     report,
     eventFile: relativeDisplayPath(eventFile, root),
   };
@@ -951,14 +1019,27 @@ export async function listCapabilities(
   const manifest = requireManifest(await loadManifest(root), root);
   const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
   const declared = new Set(manifest.project.capabilities ?? []);
+  const fromPlugins = new Set(pluginCapabilities(manifest.plugins, await loadPluginsState(root)));
+  const nativeDecisions = nativeDecisionGovernanceEnabled(manifest);
 
   const capabilities: CapabilityStatus[] = SUPPORTED_CAPABILITY_MODULES.map((module) => {
-    const fromArchetype = archetypeHasCapability(archetypeDefinition, module);
+    const fromArchetype =
+      archetypeHasCapability(archetypeDefinition, module) && (module !== "adr" || nativeDecisions);
     const added = declared.has(module);
+    const fromPlugin = fromPlugins.has(module);
     return {
       module,
-      enabled: fromArchetype || added,
-      source: fromArchetype ? "archetype" : added ? "added" : null,
+      enabled: (module !== "adr" || nativeDecisions) && (fromArchetype || added || fromPlugin),
+      source:
+        module === "adr" && !nativeDecisions
+          ? null
+          : fromArchetype
+            ? "archetype"
+            : fromPlugin
+              ? "plugin"
+              : added
+                ? "added"
+                : null,
       supported: true,
     };
   });
@@ -1041,7 +1122,24 @@ export async function checkFramework(
   // coverage: an overlay workspace may legitimately never have scaffolded
   // them, and reporting those as missing would be a false failure.
   const existingTargets = new Set(checkTargets.map(([, target]) => target));
-  for (const capability of declaredCapabilities(manifestForLayout)) {
+  const explicitlyEnabledCapabilities = new Set<CapabilityModule>(
+    declaredCapabilities(manifestForLayout),
+  );
+  if (manifestForLayout && !nativeDecisionGovernanceEnabled(manifestForLayout)) {
+    explicitlyEnabledCapabilities.delete("adr");
+  }
+  let pluginStateForChecks = null;
+  try {
+    pluginStateForChecks = await loadPluginsState(root);
+  } catch {
+    // collectPluginCheckRows reports malformed plugin state; grant no module here
+  }
+  for (const capability of pluginCapabilities(manifestForLayout?.plugins, pluginStateForChecks)) {
+    if (isCapabilityModule(capability)) {
+      explicitlyEnabledCapabilities.add(capability);
+    }
+  }
+  for (const capability of explicitlyEnabledCapabilities) {
     for (const directory of capabilityDirs([capability])) {
       const target = workspaceTemplateRelativePath(layout, directory);
       if (!existingTargets.has(target)) {
@@ -1080,6 +1178,13 @@ export async function checkFramework(
 
     // Semantic check 1: managed file existence + hash consistency
     for (const [filePath, record] of Object.entries(manifest.managed_files)) {
+      if (
+        !nativeDecisionGovernanceEnabled(manifest) &&
+        (record.template_id === "knowledge.decisions.readme" ||
+          record.template_id === "knowledge.decisions.adr_template")
+      ) {
+        continue;
+      }
       const absolutePath = path.join(root, filePath);
       if (!(await exists(absolutePath))) {
         rows.push({
@@ -1108,6 +1213,10 @@ export async function checkFramework(
     }
   } else if (!rows.some((row) => row.path === MANIFEST_FILE && row.status === "error")) {
     rows.push({ path: MANIFEST_FILE, status: "missing", message: "readable manifest" });
+  }
+
+  if (manifest) {
+    rows.push(...(await collectPluginCheckRows(root)));
   }
 
   // Semantic check 2: systems registry consistency
@@ -1563,7 +1672,12 @@ async function collectUndeclaredDirectoryRows(
     return [];
   }
 
-  const capabilities = effectiveCapabilities(archetype, manifest.project.capabilities);
+  const capabilities = effectiveCapabilities(
+    archetype,
+    manifest.project.capabilities,
+    manifest.plugins,
+    await loadPluginsState(root),
+  );
   const declared = new Set<string>(NON_ZONE_WORK_ROOT_ENTRIES);
   for (const directory of [
     ...dirsForArchetype(archetype, manifest.project.mode),
@@ -2033,6 +2147,9 @@ export async function getFrameworkStatus(
 ): Promise<FrameworkStatusResult> {
   const root = path.resolve(options.root);
   const manifest = await loadManifest(root);
+  const decisionGovernance = manifest
+    ? await getDecisionGovernanceStatus(root, manifest)
+    : undefined;
   const layout = layoutForManifest(manifest);
   // Zones come from the installed archetype plus the modules the workspace has
   // actually enabled, so a solve workspace stops being told about study's
@@ -2096,7 +2213,10 @@ export async function getFrameworkStatus(
         (source) => source.latestChangeClass === "major" && source.analysisStatus !== "closed",
       ).length,
     };
-    const suggestions = adrSuggestionsForSources(sources);
+    const suggestions = adrSuggestionsForSources(
+      sources,
+      decisionGovernance?.activeProvider ?? decisionGovernance?.desiredProvider,
+    );
     adrSuggestions = suggestions.length > 0 ? suggestions : undefined;
   } catch {
     // sources may not exist or may be mid-migration; status omits the summary
@@ -2160,6 +2280,7 @@ export async function getFrameworkStatus(
     ...(livingSources ? { livingSources } : {}),
     ...(upstream ? { upstream } : {}),
     ...(adrSuggestions ? { adrSuggestions } : {}),
+    ...(decisionGovernance ? { decisionGovernance } : {}),
     ...(donors ? { donors } : {}),
     ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
@@ -3022,6 +3143,9 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
 export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKnowledgeResult> {
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
+  if (options.type === "decision") {
+    await requireNativeDecisionGovernance(root);
+  }
   const layout = layoutForManifest(manifest);
   const now = options.now ?? new Date();
   const date = dateStamp(now);

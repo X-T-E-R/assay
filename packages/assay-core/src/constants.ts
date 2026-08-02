@@ -1,4 +1,4 @@
-export const CURRENT_VERSION = "0.4.0";
+export const CURRENT_VERSION = "0.5.0";
 
 /**
  * Layout version written by this build of Assay. New workspaces always carry
@@ -27,6 +27,7 @@ export const EVENTS_DIR = `${MANAGED_DIR}/events`;
 export const BACKUPS_DIR = `${MANAGED_DIR}/backups`;
 export const SYSTEMS_REGISTRY_FILE = `${MANAGED_DIR}/systems-registry.json`;
 export const ADRS_FILE = `${MANAGED_DIR}/adrs.json`;
+export const PLUGINS_STATE_FILE = `${MANAGED_DIR}/plugins.json`;
 
 // Legacy v3 mirror constants, used by migration and discovery fallback only.
 export const LEGACY_VERSION_FILE = `${LEGACY_MANAGED_DIR}/VERSION`;

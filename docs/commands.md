@@ -5,8 +5,8 @@ Run workspace commands from inside an Assay workspace. Commands discover the wor
 ## Workspace lifecycle
 
 ```bash
-assay init [target-dir] --name <project> --archetype <name> [--git] [--force] [--create-new] [--no-track] [--no-agents]
-assay attach [--root <dir>] --name <project> --archetype <name> [--privacy private|private-git|tracked] [--no-track] [--no-agents]
+assay init [target-dir] --name <project> --archetype <name> [--plugin <id...>] [--git] [--force] [--create-new] [--no-track] [--no-agents]
+assay attach [--root <dir>] --name <project> --archetype <name> [--plugin <id...>] [--privacy private|private-git|tracked] [--no-track] [--no-agents]
 assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overlay]
 assay check [--advisories] [--root <dir>]
 assay status [--root <dir>] [--json] [--fetch]
@@ -17,6 +17,11 @@ assay archetype list [--root <dir>] [--json]
 ```
 
 `init` creates a standalone workspace: Assay state in `.assay/`, work folders at the root. `attach` creates an overlay inside an existing product repository: everything Assay-owned lives under `.assay/`, product files stay where they are, and product Git ignores `.assay/` by default. `convert --to standalone` detaches an overlay into a sibling standalone workbench without moving the product repo.
+
+`--plugin assay.intent` installs the intent module after a successful `init` or
+`attach`. `--plugin assay.trellis` installs the built-in workspace runtime under
+`.assay/trellis/`; it has no external sidecar preflight. Both remain options on
+the existing lifecycle verbs, not a third setup operation.
 
 `init`, successful `update`, and successful `adopt --apply` write a user-local project registry under `~/.assay/projects` by default. Use `--no-track` on those commands, or set `ASSAY_NO_TRACK=1`, to skip registry writes. The `assay projects` commands manage registry metadata only; they never delete workspace files.
 
@@ -76,7 +81,100 @@ Next: assay source sync qwen-agent
   it is reported rather than pointed at a command that would fail.
 
 `status` also prints a `Decision records` line for a source whose latest change
-was graded `major` or `replacement`, suggesting an ADR. Nothing is blocked.
+was graded `major` or `replacement`. The built-in Trellis runtime does not
+replace native decision governance, so the next action continues to name the
+Assay ADR workflow. Nothing is blocked.
+
+## Workspace plugins and reconcile
+
+```bash
+assay plugin add <id> [--root <dir>]
+assay plugin list [--root <dir>] [--json]
+assay plugin check [--root <dir>] [--json]
+assay reconcile [--root <dir>] [--plugin <id...>] [--dry-run | --apply] [--json]
+```
+
+`assay.intent` (alias: `intent`) contributes the additive `intent` capability.
+`plugin add` declares it in `.assay/manifest.json`, creates only missing intent
+scaffold files, and writes an installation receipt to `.assay/plugins.json`.
+Existing files are never overwritten.
+
+`assay.trellis` (alias: `trellis`) is a built-in `workspace-runtime` plugin.
+Its protocol version, per-plugin receipt `state_version`, and dedicated runtime
+state schema are all exactly `1`. Dynamic task state is stored only in
+`.assay/trellis/`; no Trellis CLI or root `.trellis/` sidecar is used. It
+declares task-store, context-provider, and host-hook-registration runtime
+capabilities while Assay native ADR and intent remain active.
+
+```bash
+assay trellis task create --title "Implement slice" [--session-id <id>] --json
+assay trellis task current [--session-id <id>] --json
+assay trellis task complete|cancel|list|show|archive ... --json
+assay trellis session start|current|end|rebind ... --json
+assay trellis journal append|list|show ... --json
+assay trellis config show|set ... --json
+assay trellis channel create|send|read|watch-once|cursor|repair ... --json
+assay trellis channel lease acquire|renew|release ... --json
+assay trellis worker register|claim|heartbeat|complete|stop|list ... --json
+assay trellis mem list|show|search|context ... --json
+assay trellis migrate legacy plan|apply|rollback|cleanup ... --json
+assay trellis protocol --json
+assay trellis context --host codex [--session-id <id>] --json
+assay trellis hook install --host codex [--dry-run | --apply] --json
+assay plugin disable|uninstall assay.trellis [--purge --yes] --json
+```
+
+`ASSAY_TRELLIS_SESSION_ID` and then `CODEX_SESSION_ID` are session-id fallbacks
+for the ordinary API. The Codex SessionStart adapter reads hook stdin first and
+falls back to `CODEX_THREAD_ID`.
+When session pointers disagree, unscoped `current` and `context` fail instead
+of selecting the newest task. The Codex hook installer edits only the
+proven-owned command entry in project `.codex/hooks.json`, preserves neighboring
+hooks, and registers an absolute Node + Assay CLI invocation of
+`trellis context --host codex --hook-adapter`
+directly; it does not copy a script. Ownership marker and fingerprint live in
+`.assay/trellis/state.json`. A matching unreceipted canonical entry is adopted;
+modified or duplicated candidates fail as conflicts without being removed.
+
+All mutation domains share reparse-safe workspace paths, PID-aware stale locks,
+atomic JSON/JSONL replacement, and a recoverable v1 WAL. Existing `state.json`
+and task-record byte contracts stay strict v1; every added domain file declares
+its own `__schema: 1`. Tasks close current pointers on terminal transitions.
+Channel sequence numbers and cursors are monotonic, idempotency keys are durable,
+and active leases are unique until release or expiry. External workers register
+and drive this CLI state machine; Assay does not claim to spawn a provider.
+
+`trellis mem` is bounded and read-only over `~/.codex/sessions` or an explicit
+fixture root; it never ingests transcripts. Legacy migration reads explicit
+roots, preserves sources, records hashes/provenance/backups, rejects rollback
+after subsequent target writes, and requires `--yes` for cleanup. Plugin
+disable/uninstall preserves `.assay/trellis` by default. Disable keeps a
+manifest declaration marked `enabled: false`, while uninstall removes the
+declaration. Purge is uninstall-only, requires `--purge --yes`, validates a
+full backup first, and records recoverable lifecycle phases outside the runtime
+before deletion.
+
+`reconcile` is state convergence for an existing Assay workspace. It compares
+the desired plugin declarations, legacy archetype/capability declarations,
+installation receipts, and filesystem or provider state. Its actions are
+`install`, `adopt`, `repair`, `refresh`, `noop`, and `blocked`. `refresh`
+updates only Assay's recorded provider observations. It is a dry-run by
+default; `--apply`
+is required to write. `--plugin` filters plugins the workspace already desires
+and does not install a new one.
+
+A complete workspace created with the legacy `assay capability add intent`
+path is adopted by writing a receipt only. An incomplete scaffold is repaired
+by creating missing files only. Reconcile never creates a workspace, changes
+its standalone/overlay mode, rewrites intent captures, removes declarations,
+or purges orphaned receipts. Re-running `--apply` after convergence is an exact
+no-op: it does not refresh timestamps or append another event.
+
+Responsibility bindings remain distinct from capability contributions. The
+built-in `assay.trellis` runtime does not claim `decision-governance`;
+`assay.native` continues to own ADRs. Reconcile migrates the 0.5 preview's
+legacy `federated-provider` declaration/receipt and removes its obsolete
+`decision-governance` binding without reading or modifying `.trellis/`.
 
 ## Attach an existing repository
 
@@ -100,7 +198,7 @@ cd /path/to/existing-repo
 assay convert --to standalone --target ../existing-repo-assay
 ```
 
-The new workbench hoists `.assay/references` to `references`, `.assay/analyses` to `analyses`, and so on. Assay state travels with it: manifest, systems registry, ADR index (with ADR paths rewritten to the new layout), events, backups, donor records, and project-local archetypes. The original product repo is registered as the primary independent system by relative path (`../existing-repo`). Use `--move` to move instead of copy. `--no-keep-overlay` removes the emptied `.assay/` from the source and requires `--move`; with a copy the overlay is still the only holder of that state. The product repo and its `.git/` are never modified.
+The new workbench hoists `.assay/references` to `references`, `.assay/analyses` to `analyses`, and so on. Assay state travels with it: manifest, systems registry, ADR index (with ADR paths rewritten to the new layout), events, backups, donor records, project-local archetypes, and `.assay/trellis` runtime state. The original product repo is registered as the primary independent system by relative path (`../existing-repo`). Use `--move` to move instead of copy. `--no-keep-overlay` removes the emptied `.assay/` from the source and requires `--move`; with a copy the overlay is still the only holder of that state. The product repo and its `.git/` are never modified.
 
 `assay update` follows the workspace layout. In an overlay workspace, managed templates are written under `.assay/`, and root `README.md`, `.gitignore`, and `AGENTS.md` are never created or replaced — including with `--force`.
 
@@ -189,8 +287,8 @@ assay adr new <title> [--from-analysis <path>] [--from-iteration <path>] [--forc
 assay adr accept <selector> [--root <dir>]
 assay adr supersede <old-selector> <new-selector> [--root <dir>]
 assay adr deprecate <selector> [--root <dir>]
-assay adr list [--root <dir>] [--status proposed|accepted|superseded|deprecated] [--json]
-assay adr show <selector> [--root <dir>] [--json]
+assay adr list [--root <dir>] [--status proposed|accepted|superseded|deprecated] [--native] [--json]
+assay adr show <selector> [--root <dir>] [--native] [--json]
 assay projects
 assay projects list [--json] [--all] [--status active|missing|uninstalled]
 assay projects scan <roots...> [--json]
@@ -225,14 +323,17 @@ report the base structure and say in one line why the archetype's own
 directories are missing from the report. To keep a removed shape, copy its
 directories into your own archetype YAML under `.assay/archetypes/`.
 
-When `.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory is
-present, `adr new` reports an advisory about parallel decision records and
-still creates the requested Assay ADR. The legacy `--force` option only
-suppresses that advisory; it is not required for creation.
+`.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory can produce
+the legacy parallel-governance advisory, but native ADR creation remains
+available. Installing `assay.trellis` does not bind or replace decision
+governance: `adr new|accept|supersede|deprecate`,
+`intent promote --to decision`, and `knowledge add decision` continue through
+the Assay-native ADR workflow. `adr list --native` and `adr show --native`
+remain explicit aliases for reading that same native archive.
 
 ## Product intent
 
-Intent records what was actually asked for, kept separate from what was later built. It is an optional capability module; enable it with `assay capability add intent`.
+Intent records what was actually asked for, kept separate from what was later built. It is an optional capability module; enable it with `assay plugin add assay.intent`. The older `assay capability add intent` path remains compatible.
 
 ```bash
 assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force] [--root <dir>]
@@ -257,7 +358,7 @@ If the named system records `intent_authority: external` or `none`, `capture` re
 `promote --to requirement` writes `intent/requirements/<date>-<slug>.md` carrying `derives_from`. `promote --to decision` creates an ADR through the `adr` capability with `related_intent` and `system` set, so the decision points back at the words it answers.
 
 ```bash
-assay capability add intent
+assay plugin add assay.intent
 assay intent capture --text "Exports must match what the table shows." --source "kickoff call"
 assay intent promote 20260726-0a1b2c3d4e5f --to requirement --title "Full-fidelity export"
 assay intent list --system billing --include-lineage

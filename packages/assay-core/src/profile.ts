@@ -8,7 +8,14 @@ import { parse } from "yaml";
 import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
-import type { FrameworkManifest, ProjectArchetype, ProjectMode } from "./schemas/index.js";
+import { pluginCapabilities } from "./plugins/registry.js";
+import { loadPluginsState } from "./plugins/state.js";
+import type {
+  FrameworkManifest,
+  PluginsState,
+  ProjectArchetype,
+  ProjectMode,
+} from "./schemas/index.js";
 
 export interface ArchetypeTemplateEntry {
   readonly path: string;
@@ -190,9 +197,11 @@ export function declaredCapabilities(
 export function effectiveCapabilities(
   archetype: Pick<Archetype, "modules"> | null | undefined,
   capabilities: readonly string[] | undefined,
+  plugins?: FrameworkManifest["plugins"],
+  pluginState?: PluginsState | null,
 ): CapabilityModule[] {
   const modules = new Set<CapabilityModule>(archetype?.modules ?? []);
-  for (const value of capabilities ?? []) {
+  for (const value of [...(capabilities ?? []), ...pluginCapabilities(plugins, pluginState)]) {
     if (isCapabilityModule(value)) {
       modules.add(value);
     }
@@ -674,7 +683,13 @@ export async function installedArchetypeHasCapability(
     return false;
   }
   const archetype = await loadArchetype(manifest.project.archetype, { root });
-  return effectiveCapabilities(archetype, manifest.project.capabilities).includes(capability);
+  const state = await loadPluginsState(root);
+  return effectiveCapabilities(
+    archetype,
+    manifest.project.capabilities,
+    manifest.plugins,
+    state,
+  ).includes(capability);
 }
 
 export const isCapabilityEnabled = installedArchetypeHasCapability;
@@ -690,9 +705,21 @@ export async function requireCapability(
     );
   }
   const archetype = await loadArchetype(manifest.project.archetype, { root });
-  if (!effectiveCapabilities(archetype, manifest.project.capabilities).includes(capability)) {
+  const state = await loadPluginsState(root);
+  if (
+    !effectiveCapabilities(
+      archetype,
+      manifest.project.capabilities,
+      manifest.plugins,
+      state,
+    ).includes(capability)
+  ) {
+    const enableCommand =
+      capability === "intent"
+        ? "assay plugin add assay.intent"
+        : `assay capability add ${capability}`;
     throw new FrameworkError(
-      `capability not enabled in archetype ${manifest.project.archetype}: ${capability}. Run \`assay capability add ${capability}\` to enable it in this workspace.`,
+      `capability not enabled in archetype ${manifest.project.archetype}: ${capability}. Run \`${enableCommand}\` to enable it in this workspace.`,
     );
   }
   return archetype;

@@ -246,7 +246,7 @@ describe("checkFramework and getFrameworkStatus", () => {
       project: "Demo",
       archetype: "study",
       mode: "learning",
-      manifestFormat: "schema 1; archetype study; mode learning",
+      manifestFormat: "schema 2; archetype study; mode learning",
       managedFiles: (await desiredRuntimeTemplates("Demo", "study", "learning")).length,
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);

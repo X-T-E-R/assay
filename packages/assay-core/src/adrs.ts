@@ -8,6 +8,7 @@ import { detectExternalGovernance } from "./governance.js";
 import { defaultStandaloneLayout, resolveWorkspaceLayout, workspaceSubpath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
+import { requireNativeDecisionGovernance } from "./plugins/authority.js";
 import { requireCapability } from "./profile.js";
 import type { FrameworkManifest, WorkspaceLayout } from "./schemas/index.js";
 import { type AdrIndex, type AdrRecord, type AdrStatus, adrIndexSchema } from "./schemas/index.js";
@@ -21,6 +22,11 @@ export interface AdrIndexOptions {
   readonly force?: boolean;
   /** Receive non-blocking governance warnings without letting core write to stderr. */
   readonly onWarning?: (message: string) => void;
+}
+
+export interface AdrReadOptions {
+  /** Read the inactive Assay-native ADR archive even when another provider owns decisions. */
+  readonly native?: boolean;
 }
 
 export interface CreateAdrInput {
@@ -98,7 +104,13 @@ export async function saveAdrIndex(root: string, index: AdrIndex): Promise<AdrIn
   return next;
 }
 
-export async function requireAdrIndex(root: string): Promise<AdrIndex> {
+export async function requireAdrIndex(
+  root: string,
+  options: AdrReadOptions = {},
+): Promise<AdrIndex> {
+  if (!options.native) {
+    await requireNativeDecisionGovernance(root);
+  }
   await requireCapability(root, "adr");
   const index = await loadAdrIndex(root);
   if (!index) {
@@ -241,6 +253,7 @@ export async function createAdr(
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
   const manifest = await requireFrameworkManifest(root);
+  await requireNativeDecisionGovernance(root);
   await requireCapability(root, "adr");
 
   // External governance is useful context, not authority over an explicit
@@ -322,9 +335,10 @@ export async function acceptAdr(
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+  await requireNativeDecisionGovernance(root);
   await requireCapability(root, "adr");
   const now = options.now ?? new Date();
-  const index = await requireAdrIndex(root);
+  const index = await requireAdrIndex(root, { native: true });
   const adr = findAdr(index, selector);
   assertTransition(adr, ["proposed"], "accept");
 
@@ -353,9 +367,10 @@ export async function supersedeAdr(
 ): Promise<SupersedeAdrResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+  await requireNativeDecisionGovernance(root);
   await requireCapability(root, "adr");
   const now = options.now ?? new Date();
-  const index = await requireAdrIndex(root);
+  const index = await requireAdrIndex(root, { native: true });
   const oldAdr = findAdr(index, oldSelector);
   const newAdr = findAdr(index, newSelector);
 
@@ -411,9 +426,10 @@ export async function deprecateAdr(
 ): Promise<AdrMutationResult> {
   const root = path.resolve(rootInput);
   await requireFrameworkManifest(root);
+  await requireNativeDecisionGovernance(root);
   await requireCapability(root, "adr");
   const now = options.now ?? new Date();
-  const index = await requireAdrIndex(root);
+  const index = await requireAdrIndex(root, { native: true });
   const adr = findAdr(index, selector);
   assertTransition(adr, ["proposed", "accepted"], "deprecate");
 
@@ -437,9 +453,10 @@ export async function deprecateAdr(
 export async function listAdrs(
   rootInput: string,
   status?: AdrStatus,
+  options: AdrReadOptions = {},
 ): Promise<{ readonly index: AdrIndex; readonly adrs: AdrRecord[] }> {
   const root = path.resolve(rootInput);
-  const index = await requireAdrIndex(root);
+  const index = await requireAdrIndex(root, options);
   const adrs = Object.values(index.adrs)
     .filter((adr) => status === undefined || adr.status === status)
     .sort((a, b) => a.number - b.number || a.id.localeCompare(b.id));

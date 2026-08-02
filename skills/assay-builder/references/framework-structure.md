@@ -4,7 +4,7 @@ Every current Assay workspace has a shared base, then the selected archetype add
 
 ```text
 <project-root>/
-├── .assay/       # version, manifest, registries, events, migrations, backups
+├── .assay/       # version, manifest, plugin receipts, registries, events, migrations, backups
 ├── systems/          # registered systems and local implementations
 │   ├── <name>/             # active system (system.yaml + source; may be independent git repo)
 │   └── archive/            # archived prior systems, copy-first move
@@ -80,14 +80,21 @@ reminders are useful:
 The CLI writes and maintains these files automatically:
 
 - `.assay/VERSION` — installed framework template version.
-- `.assay/manifest.json` — managed file manifest with template IDs and SHA-256 hashes.
+- `.assay/manifest.json` — managed file manifest with template IDs, hashes, desired plugins, and exclusive provider bindings.
+- `.assay/plugins.json` — installed plugin receipts.
+- `.assay/trellis/` — built-in operational v1 task/session/journal/config/channel/worker state, WAL, terminal archive, and migration receipts. Codex sessions remain external and read-only.
 - `.assay/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain.
 - `.assay/adrs.json` — ADR index: number allocator, status, supersedes chain, and file paths.
 - `.assay/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
 - `.assay/backups/` — pre-update and pre-migration backups.
 - `.assay/migrations/` — migration records.
 
-Do not edit these files manually; use the CLI for all manifest, registry, ADR, and event operations.
+Do not edit these files manually; use the CLI for all manifest, plugin, registry, ADR, and event operations.
+
+`.trellis/` is not an Assay-managed path and is not used by the built-in
+`assay.trellis` plugin. Its operational task/session/journal/config/channel/worker state lives under
+`.assay/trellis/`; hook registration calls the installed Assay command directly
+and does not copy a project hook script.
 
 ## `systems/` and version control
 

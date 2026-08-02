@@ -1,5 +1,6 @@
 import type {
   AddCapabilityResult,
+  AddPluginResult,
   AdoptExistingProjectResult,
   AdrRecord,
   ApplyUpdateResult,
@@ -7,6 +8,7 @@ import type {
   AttachResult,
   CaptureIntentResult,
   CheckFrameworkResult,
+  CheckPluginsResult,
   ConvertOverlayResult,
   DonorAdoptionListResult,
   DonorAdoptionResult,
@@ -18,14 +20,19 @@ import type {
   InitFrameworkResult,
   ListCapabilitiesResult,
   ListIntentResult,
+  ListPluginsResult,
   MigrateLayoutResult,
   OperationReport,
   PromoteIntentResult,
+  ReconcilePluginsResult,
   SourceDiffResult,
   SourceLogResult,
   SourceStatusResult,
   SourceSyncResult,
   SystemRecord,
+  TrellisContextResult,
+  TrellisHookInstallResult,
+  TrellisTaskResult,
   UpdateAnalysis,
   UpdatePlan,
   VerifyDonorInspectionResult,
@@ -128,7 +135,11 @@ export function formatCapabilityAdd(result: AddCapabilityResult): string {
   const enabled = `Enabled capabilities: ${result.capabilities.join(", ") || "(none)"}`;
   if (result.alreadyEnabled) {
     const origin =
-      result.source === "archetype" ? "provided by archetype" : "already added to this workspace";
+      result.source === "archetype"
+        ? "provided by archetype"
+        : result.source === "plugin"
+          ? "provided by plugin"
+          : "already added to this workspace";
     return [`Capability already enabled: ${result.module} (${origin})`, enabled].join("\n");
   }
   return [
@@ -149,6 +160,126 @@ export function formatCapabilityList(result: ListCapabilitiesResult): string {
   return [
     `Capability modules for ${result.project} (archetype ${result.archetype}):`,
     ...lines.map((line) => `  - ${line}`),
+  ].join("\n");
+}
+
+function formatPluginActions(result: ReconcilePluginsResult): string[] {
+  if (result.plugins.length === 0) {
+    return ["  - (no desired plugins)"];
+  }
+  return result.plugins.flatMap((plugin) => {
+    const sources =
+      plugin.desiredSources.length > 0 ? `; desired by ${plugin.desiredSources.join(", ")}` : "";
+    const missing =
+      plugin.missingPaths.length > 0
+        ? plugin.missingPaths.map((file) => `      missing: ${file}`)
+        : [];
+    return [
+      `  - [${plugin.action}] ${plugin.id} (${plugin.kind}${sources}; health ${plugin.health}) - ${plugin.message}`,
+      ...missing,
+    ];
+  });
+}
+
+export function formatPluginAdd(result: AddPluginResult): string {
+  return [
+    result.alreadyDeclared
+      ? `Plugin already declared: ${result.plugin}`
+      : `Added plugin: ${result.plugin}`,
+    "Reconcile:",
+    ...formatPluginActions(result),
+    formatReport(result.report),
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+  ].join("\n");
+}
+
+export function formatPluginList(result: ListPluginsResult): string {
+  return [
+    `Plugins for ${result.project}:`,
+    ...result.plugins.map((plugin) => {
+      const desired = plugin.desired
+        ? `desired by ${plugin.desiredSources.join(", ")}`
+        : "not desired";
+      const installed = plugin.installed ? "installed" : "not installed";
+      const versions = `${plugin.protocolVersion === null ? "" : `; protocol v${plugin.protocolVersion}`}; state v${plugin.stateVersion ?? "unknown"}`;
+      const support = plugin.supported ? "" : "; unsupported";
+      const contributions =
+        plugin.contributedCapabilities.length > 0
+          ? `; contributes ${plugin.contributedCapabilities.join(", ")}`
+          : "";
+      const runtime =
+        plugin.runtimeCapabilities.length > 0
+          ? `; runtime ${plugin.runtimeCapabilities.join(", ")}`
+          : "";
+      const operations =
+        plugin.operationalResponsibilities.length > 0
+          ? `; operates ${plugin.operationalResponsibilities.join(", ")}`
+          : "";
+      const responsibilities =
+        plugin.providedResponsibilities.length > 0
+          ? `; provides ${plugin.providedResponsibilities.join(", ")}`
+          : "";
+      const active =
+        plugin.activeResponsibilities.length > 0
+          ? `; active for ${plugin.activeResponsibilities.join(", ")}`
+          : "";
+      return `  - ${plugin.id} (${plugin.kind}): ${desired}; ${installed}${versions}; ${plugin.action}; health ${plugin.health}${contributions}${runtime}${operations}${responsibilities}${active}${support}`;
+    }),
+    "Responsibilities:",
+    ...result.responsibilities.map(
+      (responsibility) =>
+        `  - ${responsibility.id}: desired ${responsibility.desiredProvider}; active ${responsibility.activeProvider ?? "(none)"}; ${responsibility.state}`,
+    ),
+  ].join("\n");
+}
+
+export function formatTrellisTask(result: TrellisTaskResult): string {
+  if (!result.task) return "Current Trellis task: (none)";
+  return [
+    `Trellis task: ${result.task.id}`,
+    `Title: ${result.task.title}`,
+    `Status: ${result.task.status}`,
+    `Session: ${result.session_id ?? "(workspace)"}`,
+  ].join("\n");
+}
+
+export function formatTrellisContext(result: TrellisContextResult): string {
+  return [
+    `Trellis context for ${result.host}:`,
+    `Root: ${result.workspace_root}`,
+    formatTrellisTask(result),
+  ].join("\n");
+}
+
+export function formatTrellisHookInstall(result: TrellisHookInstallResult): string {
+  return [
+    `Trellis ${result.host} hook: ${result.action}`,
+    `Target: ${result.target}`,
+    `Command: ${result.command}`,
+    `Applied: ${result.applied ? "yes" : "no"}`,
+  ].join("\n");
+}
+
+export function formatPluginCheck(result: CheckPluginsResult): string {
+  const rows =
+    result.rows.length > 0
+      ? result.rows.map(
+          (row) => `[${row.status}] ${row.path}${row.message ? ` - ${row.message}` : ""}`,
+        )
+      : ["[ok] no desired or installed plugins"];
+  return [`Plugin check: ${result.ok ? "ok" : "failed"}`, `Root: ${result.root}`, ...rows].join(
+    "\n",
+  );
+}
+
+export function formatPluginReconcile(result: ReconcilePluginsResult): string {
+  return [
+    `Plugin reconcile: ${result.dryRun ? "dry-run" : "applied"}`,
+    `Root: ${result.root}`,
+    "Plan:",
+    ...formatPluginActions(result),
+    formatReport(result.report),
+    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
   ].join("\n");
 }
 
@@ -315,6 +446,15 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
       ]
     : ["Manifest: missing", "Managed files: 0"];
   const archetypeNotice = result.archetypeNotice ? [`Archetype: ${result.archetypeNotice}`] : [];
+  const governance = result.decisionGovernance
+    ? [
+        "Decision governance",
+        `  - desired provider: ${result.decisionGovernance.desiredProvider}`,
+        `  - active provider: ${result.decisionGovernance.activeProvider ?? "(none)"}`,
+        `  - state: ${result.decisionGovernance.state}`,
+        `  - ${result.decisionGovernance.message}`,
+      ]
+    : [];
   const zones = zoneLines(result.zones);
 
   const systems =
@@ -368,6 +508,7 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     ...header,
     ...manifest,
     ...archetypeNotice,
+    ...governance,
     ...zones,
     ...systems,
     ...livingSources,

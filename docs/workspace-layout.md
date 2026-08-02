@@ -7,7 +7,7 @@ Assay has two layout modes. Both use `.assay/` as the Assay-owned state director
 Use standalone when the Assay workbench is the project: studying external systems, solving a measurable target, exploring directions, or cross-system learning.
 
 ```text
-.assay/     manifest, version, events, migrations, backups, registries, archetypes
+.assay/     manifest, plugin receipts, version, events, migrations, backups, registries, archetypes
 systems/    registered systems and system metadata
 knowledge/  accepted reusable decisions, patterns, guides, and troubleshooting notes
 ```
@@ -65,9 +65,43 @@ the same convention.
 
 Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
 
-## Capability module structure
+## Capability and plugin structure
 
 Capability modules own a small, fixed part of the layout. An archetype that declares a module scaffolds it at init; `assay capability add <module>` scaffolds the same structure in a workspace that did not start with it and records the module under `project.capabilities` in the manifest.
+
+`assay.intent` provides the intent module through the plugin substrate. The
+manifest's top-level `plugins` map is desired state; `.assay/plugins.json` is
+the operational install receipt. Capability access requires both a matching
+declaration and compatible receipt. This separation lets `assay reconcile`
+detect an absent, legacy, partial, or already-converged scaffold without
+rewriting intent content. Legacy `project.capabilities: ["intent"]` remains a
+valid desired-state source and can be adopted in place.
+
+The manifest's `bindings` map remains available for genuinely exclusive
+providers. `assay.trellis` no longer uses it: the built-in operational plugin
+stores v1 runtime state under `.assay/trellis/` and declares additive runtime
+capabilities. A legacy preview binding is ignored for ADR authority and removed
+on reconcile, so `assay.native` remains the decision owner.
+
+Operational v1 remains entirely project-local:
+
+```text
+.assay/trellis/
+  state.json                 strict task/current/hook state v1
+  tasks/                     active strict task records
+  archive/{tasks,index.json} terminal task archive
+  sessions.json              external session reducer v1
+  journal/events.jsonl       structured journal v1
+  config.json                allowlisted configuration v1
+  channels/<name>/           events, cursors, leases, sequence metadata v1
+  workers.json               external worker reducer v1
+  wal/active.json            recoverable multi-file mutation journal
+  migrations/<generation>/   legacy provenance, backups, and receipts
+```
+
+No second global project registry is created. Codex sessions stay in the host
+store and are read only. Plugin removal preserves this tree unless separately
+confirmed with `--purge --yes` after backup.
 
 | Module | Adds |
 | --- | --- |
@@ -75,7 +109,7 @@ Capability modules own a small, fixed part of the layout. An archetype that decl
 | `intent` | `intent/`, `intent/original/`, and `intent/requirements/`, each with a `README.md`. |
 | `iteration` | `iterations/` and `iterations/templates/` with `README.md` and `iteration-plan.md`. |
 
-These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them.
+These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them; run `assay plugin list` to compare desired and installed plugin state.
 
 ## Intent records
 
@@ -90,7 +124,10 @@ intent/requirements/<date>-<slug>.md         requirement carrying derives_from
 
 The capture filename is derived from the SHA-256 of its own body, and the full digest is recorded in the frontmatter. That is what makes captures append-only: a re-capture of the same text lands on the same path and changes nothing, while a record whose body no longer matches its digest is reported instead of silently replaced. Corrections are new captures with `supersedes: [<capture-id>]`, never edits.
 
-Decisions have no directory here. `assay intent promote --to decision` creates an ADR through the `adr` module with `related_intent` and `system` set.
+Decisions have no directory here. `assay intent promote --to decision` creates
+an ADR through the native `adr` module with `related_intent` and `system` set.
+The built-in Trellis task/context runtime does not replace or dual-write that
+decision authority.
 
 `assay status` counts both intent directories as zones once the module is enabled.
 
@@ -144,4 +181,4 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, carrying `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.

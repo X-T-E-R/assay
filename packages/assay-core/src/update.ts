@@ -242,10 +242,16 @@ function layoutForManifest(manifest: FrameworkManifest | null): WorkspaceLayout 
  */
 function manifestCapabilities(manifest: FrameworkManifest): {
   readonly capabilities?: readonly string[];
+  readonly plugins?: FrameworkManifest["plugins"];
+  readonly bindings?: FrameworkManifest["bindings"];
 } {
-  return manifest.project.capabilities === undefined
-    ? {}
-    : { capabilities: manifest.project.capabilities };
+  return {
+    ...(manifest.project.capabilities === undefined
+      ? {}
+      : { capabilities: manifest.project.capabilities }),
+    ...(manifest.plugins === undefined ? {} : { plugins: manifest.plugins }),
+    ...(manifest.bindings === undefined ? {} : { bindings: manifest.bindings }),
+  };
 }
 
 function projectNameFromManifest(

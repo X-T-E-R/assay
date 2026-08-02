@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  BACKUPS_DIR,
   CURRENT_VERSION,
   LAYOUT_VERSION,
   LEGACY_MANIFEST_FILE,
@@ -19,6 +20,7 @@ import {
 } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
 import { nowIso } from "./time.js";
+import { assertSupportedAssayVersion } from "./versioning.js";
 
 export interface TemplateLike {
   readonly path: string;
@@ -56,8 +58,9 @@ export function defaultManifest(
 ): FrameworkManifest {
   const createdAt = nowIso();
   return {
-    __schema: 1,
+    __schema: 2,
     framework_version: CURRENT_VERSION,
+    minimum_assay_version: CURRENT_VERSION,
     layout_version: LAYOUT_VERSION,
     created_at: createdAt,
     updated_at: createdAt,
@@ -83,6 +86,7 @@ function parseManifest(data: unknown, manifestFile: string): FrameworkManifest {
       cause: result.error,
     });
   }
+  assertSupportedAssayVersion(result.data.minimum_assay_version);
   return result.data;
 }
 
@@ -129,6 +133,33 @@ export async function saveManifest(
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, stringifySortedJson(nextManifest), "utf8");
   return nextManifest;
+}
+
+function backupStamp(date: Date): string {
+  return date
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
+}
+
+/**
+ * Preserve the exact pre-upgrade manifest before a schema-1 workspace gains
+ * provider bindings. The caller still owns the subsequent manifest write.
+ */
+export async function backupManifestForSchemaUpgrade(root: string, now: Date): Promise<string> {
+  const relative = `${BACKUPS_DIR}/${backupStamp(now)}/manifest.json`;
+  const destination = path.join(root, relative);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await copyFile(manifestPath(root), destination);
+  return relative;
+}
+
+export function upgradeManifestForProviderBindings(manifest: FrameworkManifest): boolean {
+  if (manifest.__schema === 2) return false;
+  manifest.__schema = 2;
+  manifest.framework_version = CURRENT_VERSION;
+  manifest.minimum_assay_version = CURRENT_VERSION;
+  return true;
 }
 
 export function recordManagedFile(

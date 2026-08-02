@@ -327,15 +327,22 @@ export interface SourceAdrSuggestion {
  */
 export function adrSuggestionsForSources(
   sources: readonly SourceStatusEntry[],
+  decisionProvider = "assay.native",
 ): SourceAdrSuggestion[] {
   return sources
     .filter(
       (source) =>
         source.latestChangeClass === "major" || source.latestChangeClass === "replacement",
     )
-    .map((source) => ({
-      source: source.alias,
-      changeClass: source.latestChangeClass as SourceChangeClass,
-      message: `source '${source.alias}' last changed at grade '${source.latestChangeClass}'. If that changed an architectural assumption, record it: assay adr new "<decision>"`,
-    }));
+    .map((source) => {
+      const next =
+        decisionProvider === "assay.native"
+          ? 'record it: assay adr new "<decision>"'
+          : "restore the configured decision provider before recording it";
+      return {
+        source: source.alias,
+        changeClass: source.latestChangeClass as SourceChangeClass,
+        message: `source '${source.alias}' last changed at grade '${source.latestChangeClass}'. If that changed an architectural assumption, ${next}`,
+      };
+    });
 }

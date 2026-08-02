@@ -587,6 +587,142 @@ describe("assay capability CLI", () => {
   });
 });
 
+describe("assay plugin CLI", () => {
+  it("installs intent during init without changing the init verb", async () => {
+    const root = path.join(await tempDir(), "InitIntentPlugin");
+    await writeBareArchetype(root);
+
+    const result = await runCli([
+      "init",
+      root,
+      "--name",
+      "InitIntentPlugin",
+      "--archetype",
+      BARE_ARCHETYPE,
+      "--plugin",
+      "assay.intent",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Initialized framework:");
+    expect(result.stdout).toContain("Added plugin: assay.intent");
+    expect(await exists(path.join(root, "intent", "original", "README.md"))).toBe(true);
+
+    const manifest = JSON.parse(
+      await readFile(path.join(root, ".assay", "manifest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(manifest.plugins).toEqual({
+      "assay.intent": { kind: "workspace-module" },
+    });
+    expect(JSON.parse(await readFile(path.join(root, ".assay", "plugins.json"), "utf8"))).toEqual(
+      expect.objectContaining({
+        __schema: 1,
+        plugins: {
+          "assay.intent": expect.objectContaining({
+            kind: "workspace-module",
+            state_version: 1,
+          }),
+        },
+      }),
+    );
+  });
+
+  it("keeps reconcile dry-run by default and applies legacy adoption explicitly", async () => {
+    const root = await initWorkspace("ReconcileLegacy", BARE_ARCHETYPE);
+    await runCli(["capability", "add", "intent", "--root", root]);
+
+    const preview = await runCli(["reconcile", "--root", root]);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain("Plugin reconcile: dry-run");
+    expect(preview.stdout).toContain("[adopt] assay.intent");
+    expect(await exists(path.join(root, ".assay", "plugins.json"))).toBe(false);
+
+    const applied = await runCli(["reconcile", "--root", root, "--apply"]);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.stdout).toContain("Plugin reconcile: applied");
+    expect(await exists(path.join(root, ".assay", "plugins.json"))).toBe(true);
+
+    const listed = await runCli(["plugin", "list", "--root", root, "--json"]);
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout).plugins).toContainEqual(
+      expect.objectContaining({
+        id: "assay.intent",
+        desired: true,
+        installed: true,
+        action: "noop",
+      }),
+    );
+    const checked = await runCli(["plugin", "check", "--root", root]);
+    expect(checked.exitCode).toBe(0);
+    expect(checked.stdout).toContain("Plugin check: ok");
+  });
+
+  it("rejects an unknown plugin before init creates a workspace", async () => {
+    const root = path.join(await tempDir(), "UnknownPlugin");
+
+    const result = await runCli(["init", root, "--plugin", "assay.unknown"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unsupported plugin 'assay.unknown'");
+    expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(false);
+  });
+
+  it("installs the built-in Trellis runtime without an external sidecar", async () => {
+    const root = path.join(await tempDir(), "BuiltInTrellis");
+
+    const result = await runCli([
+      "init",
+      root,
+      "--name",
+      "BuiltInTrellis",
+      "--plugin",
+      "assay.trellis",
+    ]);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(await exists(path.join(root, ".assay", "trellis", "state.json"))).toBe(true);
+    expect(await exists(path.join(root, ".trellis"))).toBe(false);
+  });
+
+  it("shows Trellis runtime capabilities while native decision governance stays active", async () => {
+    const root = path.join(await tempDir(), "CliTrellis");
+
+    const initialized = await runCli(["init", root, "--name", "CliTrellis", "--plugin", "trellis"]);
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    expect(initialized.stdout).toContain("Added plugin: assay.trellis");
+
+    const plugins = await runCli(["plugin", "list", "--root", root]);
+    expect(plugins.exitCode, plugins.stderr).toBe(0);
+    expect(plugins.stdout).toContain("workspace-runtime");
+    expect(plugins.stdout).toContain(
+      "runtime task-store, session-store, journal-store, runtime-config, durable-channel, external-worker-protocol, codex-memory-reader, legacy-migration, context-provider, host-hook-registration",
+    );
+    expect(plugins.stdout).toContain("decision-governance: desired assay.native");
+
+    const status = await runCli(["status", "--root", root]);
+    expect(status.exitCode, status.stderr).toBe(0);
+    expect(status.stdout).toContain("Decision governance");
+    expect(status.stdout).toContain("active provider: assay.native");
+
+    const analysis = await runCli(["analysis", "new", "Provider decision", "--root", root]);
+    const analysisPath = analysis.stdout.match(/Created analysis: (.+)/)?.[1]?.trim();
+    expect(analysisPath).toBeDefined();
+    const closed = await runCli([
+      "analysis",
+      "close",
+      analysisPath as string,
+      "--exit",
+      "adr",
+      "--allow-empty",
+      "--root",
+      root,
+    ]);
+    expect(closed.exitCode, closed.stderr).toBe(0);
+    expect(closed.stdout).toContain("Next: `assay adr new");
+  });
+});
+
 /**
  * Every write command an agent actually reaches for ends by naming the command
  * that continues the loop. The lines are the only in-product guidance most

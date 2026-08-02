@@ -53,12 +53,47 @@ Capability modules are optional features. An archetype enables some at init; the
 | Module | Turns on | Enable it with |
 | --- | --- | --- |
 | `adr` | Numbered architecture decisions with status and supersede chains | `assay capability add adr` |
-| `intent` | Verbatim capture of what was asked for, promoted into requirements or ADRs | `assay capability add intent` |
+| `intent` | Verbatim capture of what was asked for, promoted into requirements or ADRs | `assay plugin add assay.intent` |
 | `iteration` | Planned changes to your own systems, opened and closed with a result | `assay capability add iteration` |
 
-`assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run.
+`assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run. `assay capability add intent` remains a compatible legacy entrance; `assay reconcile --apply` adopts its existing files into the plugin receipt without moving or rewriting intent records.
 
 Intent is the newest of the three, and the one most often missing from a repo: months later the code is still there but the reason for it is not. `assay intent capture` stores the original wording, content-addressed and append-only, scoped to a registered system, so a requirement or an ADR can point back at the words it came from.
+
+## Add workspace plugins without another setup lifecycle
+
+Plugins extend an existing Assay workspace; they do not replace `init`,
+`attach`, or the evidence workbench itself. `assay.intent` contributes the
+additive `intent` capability. `assay.trellis` is an in-package operational
+plugin with protocol and workspace-state schema version 1. Its dynamic state
+lives under `.assay/trellis/`; native Assay ADR and intent workflows remain active.
+
+```bash
+# Create or attach, then install intent in the same command.
+assay init ../product-assay --name Product --plugin assay.intent
+assay attach --name Product --plugin assay.intent
+
+# Or add it later.
+assay plugin add assay.intent
+assay plugin add assay.trellis
+assay plugin list
+assay plugin check
+```
+
+The manifest records desired plugins. `.assay/plugins.json` records what this
+workspace has actually installed. `assay reconcile` compares those two layers
+with the existing files and prints a plan; it is a dry-run unless `--apply` is
+given. Reconcile only converges plugins in a workspace that already has an
+Assay manifest. It never creates or attaches a workspace, overwrites existing
+intent files, or removes an orphaned plugin receipt.
+
+Adding `assay.trellis` creates only its missing `.assay/trellis/` runtime state
+and installation receipt. It does not invoke a Trellis CLI or depend on a root
+`.trellis/` sidecar. Operational v1 includes task/session/journal/config,
+durable channels and external-worker leases, bounded read-only Codex memory,
+legacy migration, and `protocol --json`, in addition to `context --host codex`.
+External workers invoke the CLI; Assay does not pretend to spawn a provider.
+Optional session ids fail closed when an unscoped lookup is ambiguous.
 
 ## Quick start
 

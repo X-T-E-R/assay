@@ -26,8 +26,12 @@ import {
   initFramework,
   listAdrs,
   listIntent,
+  loadManifest,
   promoteIntent,
+  reconcilePlugins,
   registerSystem,
+  saveManifest,
+  savePluginsState,
   switchSource,
   syncSource,
 } from "../src/index.js";
@@ -425,6 +429,53 @@ describe("update respects the overlay layout", () => {
 });
 
 describe("convert carries the full workspace state to the new standalone root", () => {
+  it("keeps native ADR templates through legacy Trellis reconcile and conversion", async () => {
+    const root = await overlayWorkspace("ConvertLegacyTrellisAdr");
+    const manifest = await loadManifest(root);
+    if (!manifest) throw new Error("manifest missing");
+    manifest.plugins = { "assay.trellis": { kind: "federated-provider" } };
+    manifest.bindings = {
+      "decision-governance": {
+        provider: "assay.trellis",
+        target: { kind: "workspace" },
+      },
+    };
+    await saveManifest(root, manifest);
+    await savePluginsState(root, {
+      __schema: 2,
+      plugins: {
+        "assay.trellis": {
+          kind: "federated-provider",
+          state_version: 1,
+          installed_at: "2026-07-28T00:00:00+00:00",
+          updated_at: "2026-07-28T00:00:00+00:00",
+        },
+      },
+      updated_at: "2026-07-28T00:00:00+00:00",
+    });
+
+    await applyUpdate({ root });
+    const overlayAdrTemplate = path.join(
+      root,
+      ".assay",
+      "knowledge",
+      "decisions",
+      "ADR-TEMPLATE.md",
+    );
+    expect(await exists(overlayAdrTemplate)).toBe(true);
+    await reconcilePlugins({ root, apply: true });
+    await applyUpdate({ root });
+    expect(await exists(overlayAdrTemplate)).toBe(true);
+
+    const target = path.join(path.dirname(root), "converted-legacy-trellis-adr");
+    await convertOverlayToStandalone({ root, target });
+    await applyUpdate({ root: target });
+    expect(await exists(path.join(target, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
+    expect((await createAdr(target, { title: "Native After Convert" })).adr.id).toBe(
+      "ADR-0001-native-after-convert",
+    );
+  });
+
   it("copies the ADR index so ADR numbering continues instead of restarting", async () => {
     const root = await overlayWorkspace("ConvertAdrs");
     const first = await createAdr(root, { title: "Overlay Decision" });

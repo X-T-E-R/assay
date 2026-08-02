@@ -111,7 +111,7 @@ describe("assay intent CLI", () => {
     expect(result.stderr).toContain(
       `capability not enabled in archetype ${BARE_ARCHETYPE}: intent`,
     );
-    expect(result.stderr).toContain("assay capability add intent");
+    expect(result.stderr).toContain("assay plugin add assay.intent");
   });
 
   it("refuses capture when the system's intent authority is external, and shadows with --force", async () => {

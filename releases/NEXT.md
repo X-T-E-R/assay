@@ -1,7 +1,74 @@
 # Next Release Draft
 
 This draft tracks user-visible changes that should be reviewed before the next
-Assay release version is chosen. Planned version: `0.4.0`.
+Assay release version is chosen. Planned version: `0.5.0`.
+
+## Workspace Plugin Substrate
+
+Assay now has a small built-in plugin substrate while remaining an evidence
+workbench rather than a generic plugin runtime.
+
+- `assay.intent` is the first built-in plugin. `assay plugin add
+  assay.intent` declares it in the manifest, scaffolds only missing intent
+  files, and writes operational installation state to `.assay/plugins.json`.
+- `assay plugin list` and `assay plugin check` expose desired, installed, and
+  filesystem state.
+- `assay init ... --plugin assay.intent` and `assay attach ... --plugin
+  assay.intent` keep the existing lifecycle verbs while installing intent in
+  the same invocation.
+- `assay reconcile` compares desired declarations, legacy capability or
+  archetype state, install receipts, and files. It previews by default and
+  writes only with `--apply`; its actions are `install`, `adopt`, `repair`,
+  `noop`, and `blocked`.
+- A second `reconcile --apply` on a converged workspace is byte-for-byte
+  idempotent: no timestamp refresh and no extra event.
+- Existing `project.capabilities: ["intent"]` workspaces keep working.
+  Reconcile adopts a complete legacy scaffold by adding the receipt only and
+  repairs an incomplete scaffold without moving or overwriting intent records.
+- Reconcile does not initialize or attach workspaces, remove plugins, purge
+  orphaned state, resolve dependencies, or load remote plugin code.
+
+## Built-in Trellis Runtime
+
+- `assay.trellis` (alias `trellis`) is an in-package `workspace-runtime`
+  plugin. Protocol, receipt state, and dedicated runtime state schemas are v1.
+- Operational v1 covers task lifecycle/archive, explicit sessions, structured
+  journals, strict config, durable channels/cursors/leases, external-worker
+  reducers, bounded read-only Codex memory, protocol reporting, and legacy migration.
+- Mutations use reparse-safe paths, PID/stale locks, atomic JSON/JSONL, and a
+  recoverable WAL. Existing strict state/task contracts remain schema 1; every
+  added domain independently declares schema 1.
+- Optional session pointers fail closed when an unscoped current/context lookup
+  is ambiguous. Task creation uses safe generated ids, a workspace lock, and a
+  recoverable v1 write-ahead transaction spanning the task record and pointer.
+- Codex hook plan/apply preserves neighboring hooks and registers the installed
+  `assay trellis context --host codex --hook-adapter` command without copying a
+  script. The adapter emits Codex `SessionStart` `hookSpecificOutput` and resolves
+  session identity from hook stdin or `CODEX_THREAD_ID`.
+- Hook ownership is proven by a marker and SHA-256 fingerprint stored in
+  `.assay/trellis/state.json`; an unreceipted matching command is adopted only
+  when canonical and unique, otherwise it is preserved as a conflict.
+- Legacy preview `federated-provider` metadata migrates on reconcile: the stale
+  decision-governance binding is removed and native Assay ADR/intent remains active.
+- Plugin disable removes the owned hook and receipt while retaining a manifest
+  declaration marked `enabled: false`; uninstall also removes the declaration.
+  Both preserve data by default. Purge is uninstall-only, requires
+  `--purge --yes`, and validates a backup before deletion.
+- GUI, forum/thread/cloud surfaces and built-in provider-process supervision are
+  deferred. External workers invoke the CLI; no fake process-spawn success is reported.
+
+## Persistence Compatibility
+
+- Fresh manifests use schema 2 with `minimum_assay_version: "0.5.0"`. Schema 1
+  remains readable and is upgraded only when the first provider binding is
+  written; the exact prior manifest is copied under `.assay/backups/`.
+- Generic plugin-state schema 2 remains readable for legacy federated receipts;
+  reconcile migrates the `assay.trellis` receipt to kind `workspace-runtime`,
+  per-plugin `state_version: 1`, without observations.
+- Workspace layout remains version 4. ADR indexes and systems registries remain
+  schema 1.
+- Assay releases older than 0.5.0 cannot load manifest schema 2 or federated
+  plugin-state schema 2. There is no schema downgrade command.
 
 ## Capability Modules
 
@@ -27,7 +94,9 @@ Enabling a capability is no longer tied to the archetype chosen at init.
 ## Product Intent
 
 `intent` is the third capability module, alongside `adr` and `iteration`. No
-archetype enables it by default; turn it on with `assay capability add intent`.
+archetype enables it by default; turn it on with `assay plugin add
+assay.intent`. The legacy `assay capability add intent` entrance remains
+compatible.
 
 ```bash
 assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force]
