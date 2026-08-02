@@ -91,7 +91,9 @@ Adding `assay.trellis` creates only its missing `.assay/trellis/` runtime state
 and installation receipt. It does not invoke a Trellis CLI or depend on a root
 `.trellis/` sidecar. Operational v1 includes task/session/journal/config,
 durable channels and external-worker leases, bounded read-only Codex memory,
-legacy migration, and `protocol --json`, in addition to `context --host codex`.
+legacy migration (including strictly read-only explicit external channel sources),
+receipt-governed legacy Codex writer-hook scrubbing, and `protocol --json`, in
+addition to `context --host codex`.
 External workers invoke the CLI; Assay does not pretend to spawn a provider.
 Optional session ids fail closed when an unscoped lookup is ambiguous.
 

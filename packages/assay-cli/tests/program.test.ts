@@ -117,6 +117,22 @@ describe("assay Commander registration", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("exposes legacy hook plan/apply/restore help", async () => {
+    const parent = await runCli(["trellis", "hook", "legacy", "--help"]);
+    expect(parent.exitCode, parent.stderr).toBe(0);
+    expect(parent.stdout).toContain("plan");
+    expect(parent.stdout).toContain("apply");
+    expect(parent.stdout).toContain("restore");
+    for (const operation of ["plan", "apply", "restore"]) {
+      const result = await runCli(["trellis", "hook", "legacy", operation, "--help"]);
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain(`Usage: assay trellis hook legacy ${operation} [options]`);
+      expect(result.stdout).toContain("--host <host>");
+      expect(result.stdout).toContain("--root <target-dir>");
+      expect(result.stdout).toContain("--json");
+    }
+  });
+
   it("prints init help with archetype options and no core option", async () => {
     const result = await runCli(["init", "--help"]);
     const removedProfileFlag = `--${"profile"}`;

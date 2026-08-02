@@ -121,7 +121,7 @@ describe("archetype loader", () => {
 
     for (const removed of ["science", "evaluation", "library"]) {
       await expect(loadArchetype(removed, { userArchetypesDir })).rejects.toThrow(
-        new RegExp(`archetype '${removed}' was removed in Assay`),
+        new RegExp(`archetype '${removed}' was removed in Assay 0\\.4\\.0`),
       );
       await expect(loadArchetype(removed, { userArchetypesDir })).rejects.toThrow(
         /Available archetypes:/,

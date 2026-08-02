@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
-import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
+import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
 import { pluginCapabilities } from "./plugins/registry.js";
@@ -226,10 +226,25 @@ const ARCHETYPE_ALIASES = new Map<string, ProjectArchetype>([["research", "study
  * science` copied out of an older document failing for a reason the reader can
  * act on, instead of looking like a typo.
  */
-const REMOVED_ARCHETYPES = new Map<string, string>([
-  ["science", "use `study` for evidence work, or declare a custom archetype"],
-  ["evaluation", "use `study` and record the choice with `assay capability add adr`"],
-  ["library", "use `study`, or declare a custom archetype for a bare core"],
+const REMOVED_ARCHETYPES = new Map<string, { removedIn: string; hint: string }>([
+  [
+    "science",
+    {
+      removedIn: "0.4.0",
+      hint: "use `study` for evidence work, or declare a custom archetype",
+    },
+  ],
+  [
+    "evaluation",
+    {
+      removedIn: "0.4.0",
+      hint: "use `study` and record the choice with `assay capability add adr`",
+    },
+  ],
+  [
+    "library",
+    { removedIn: "0.4.0", hint: "use `study`, or declare a custom archetype for a bare core" },
+  ],
 ]);
 
 /** The current name of an archetype recorded under a previous one. */
@@ -791,9 +806,9 @@ async function archetypeNotFoundError(
     available.length === 0
       ? "none"
       : available.map((archetype) => `${archetype.name} (${archetype.source})`).join(", ");
-  const removalHint = REMOVED_ARCHETYPES.get(name);
-  const headline = removalHint
-    ? `archetype '${name}' was removed in Assay ${CURRENT_VERSION} (${removalHint})`
+  const removal = REMOVED_ARCHETYPES.get(name);
+  const headline = removal
+    ? `archetype '${name}' was removed in Assay ${removal.removedIn} (${removal.hint})`
     : `archetype not found: ${name}`;
   return new FrameworkError(`${headline}. Available archetypes: ${availableText}`, {
     code: "IO_ERROR",

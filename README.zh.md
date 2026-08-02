@@ -78,7 +78,7 @@ assay plugin check
 
 manifest 记录期望启用的插件和责任绑定，`.assay/plugins.json` 记录当前工作区实际安装的内容。`assay reconcile` 对照这些状态与现有文件并输出计划；默认只预览，只有加上 `--apply` 才会修改。它只收敛一个已经存在 manifest 的 Assay 工作区，不负责创建或 attach，不覆盖已有 intent 文件，也不会自动删除孤立回执。
 
-添加 `assay.trellis` 只创建缺失的 `.assay/trellis/` runtime state 和安装回执；它不调用 Trellis CLI，也不依赖根目录 `.trellis/`。operational v1 提供完整 task/session/journal/config/channel/worker/mem/legacy-migration 命令族、`protocol --json` 与 Codex hook registration。外部 worker 通过 CLI 驱动持久状态机；Assay 不伪装已启动 provider process。会话指针不一致时，无 scope 的 current/context 会 fail closed。
+添加 `assay.trellis` 只创建缺失的 `.assay/trellis/` runtime state 和安装回执；它不调用 Trellis CLI，也不依赖根目录 `.trellis/`。operational v1 提供完整 task/session/journal/config/channel/worker/mem/legacy-migration 命令族、只读外部 Channel 源迁移、带回执的旧 Codex writer hook 清理、`protocol --json` 与 Codex hook registration。外部 worker 通过 CLI 驱动持久状态机；Assay 不伪装已启动 provider process。会话指针不一致时，无 scope 的 current/context 会 fail closed。
 
 ## 快速开始
 

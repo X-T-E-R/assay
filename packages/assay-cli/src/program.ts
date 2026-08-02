@@ -29,6 +29,7 @@ import {
   addSource,
   adoptExistingProject,
   appendTrellisJournal,
+  applyTrellisLegacyHookScrub,
   applyTrellisLegacyMigration,
   applyUpdate,
   archiveSystem,
@@ -90,6 +91,7 @@ import {
   migrateLayout,
   mutateTrellisLease,
   parseTrellisJson,
+  planTrellisLegacyHookScrub,
   planTrellisLegacyMigration,
   pluginDeclarationFor,
   preflightFederatedPlugin,
@@ -110,6 +112,7 @@ import {
   repairTrellisChannel,
   requireAdrIndex,
   requireSystemsRegistry,
+  restoreTrellisLegacyHookScrub,
   rollbackTrellisLegacyMigration,
   scanForProjects,
   searchTrellisMemory,
@@ -1692,7 +1695,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   const trellisHook = trellis
     .command("hook")
-    .description("Install host registration for assay.trellis context");
+    .description("Manage current and legacy assay.trellis host hooks");
 
   trellisHook
     .command("install")
@@ -1714,6 +1717,55 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         return;
       }
       writeLine(output, "stdout", formatTrellisHookInstall(result));
+    });
+
+  const trellisHookLegacy = trellisHook
+    .command("legacy")
+    .description("Remove exact allowlisted legacy Trellis Codex writer hooks");
+  trellisHookLegacy
+    .command("plan")
+    .description("Read-only plan for removing exact legacy writer hook groups")
+    .requiredOption("--host <host>", "hook host (codex)")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      writeJson(
+        output,
+        await planTrellisLegacyHookScrub({
+          root: await discoveredRoot(commandOptions.root),
+          host: commandOptions.host,
+        }),
+      );
+    });
+  trellisHookLegacy
+    .command("apply")
+    .description("Transactionally remove exact legacy writer hook groups")
+    .requiredOption("--host <host>", "hook host (codex)")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      writeJson(
+        output,
+        await applyTrellisLegacyHookScrub({
+          root: await discoveredRoot(commandOptions.root),
+          host: commandOptions.host,
+        }),
+      );
+    });
+  trellisHookLegacy
+    .command("restore")
+    .description("Explicitly restore the exact receipt-governed pre-scrub hook file")
+    .requiredOption("--host <host>", "hook host (codex)")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      writeJson(
+        output,
+        await restoreTrellisLegacyHookScrub({
+          root: await discoveredRoot(commandOptions.root),
+          host: commandOptions.host,
+        }),
+      );
     });
 
   program

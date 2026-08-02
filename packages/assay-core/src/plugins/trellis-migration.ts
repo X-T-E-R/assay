@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { z } from "zod";
@@ -7,11 +7,17 @@ import { z } from "zod";
 import { FrameworkError } from "../errors.js";
 import { stringifySortedJson } from "../serialization.js";
 import { nowIso } from "../time.js";
+import {
+  type ConfinedReadFile,
+  type ConfinedReadRoot,
+  listConfinedReadFiles,
+  openConfinedReadRoot,
+  readConfinedFile,
+} from "./confined-reader.js";
 import { TRELLIS_PLUGIN_ID } from "./registry.js";
 import {
   TRELLIS_PROTOCOL_VERSION,
   TRELLIS_RUNTIME_STATE_FILE,
-  requireInstalledTrellisRuntime,
   requireInstalledTrellisRuntimeReadOnly,
   trellisRuntimeStateSchema,
   trellisTaskRecordSchema,
@@ -21,8 +27,6 @@ import {
   type VerifiedRemoveReceipt,
   applyTrellisWal,
   atomicWriteJson,
-  atomicWriteText,
-  listSafeFiles,
   pathExists,
   prepareVerifiedRemove,
   readJson,
@@ -37,10 +41,25 @@ const operationSchema = z
     applied_at: z.string(),
     source_root: z.string(),
     channel_root: z.string().nullable(),
+    source_roots: z.array(
+      z
+        .object({
+          kind: z.enum(["legacy", "channel"]),
+          requested_path: z.string(),
+          canonical_path: z.string(),
+          identity: z.object({ dev: z.number(), ino: z.number() }).strict(),
+        })
+        .strict(),
+    ),
     entries: z.array(
       z
         .object({
           source: z.string(),
+          source_kind: z.enum(["legacy", "channel"]),
+          relative_path: z.string(),
+          source_path: z.string(),
+          source_root_identity: z.object({ dev: z.number(), ino: z.number() }).strict(),
+          source_identity: z.object({ dev: z.number(), ino: z.number() }).strict(),
           category: z.enum([
             "dynamic-convert",
             "static-discard",
@@ -60,6 +79,26 @@ const operationSchema = z
   })
   .strict();
 export type TrellisLegacyMigrationOperation = z.infer<typeof operationSchema>;
+
+type MigrationSourceKind = "legacy" | "channel";
+interface PlannedSource {
+  readonly kind: MigrationSourceKind;
+  readonly root: ConfinedReadRoot;
+  readonly file: ConfinedReadFile;
+  readonly source: string;
+}
+
+export type TrellisMigrationProbePhase = "apply-after-plan" | "apply-before-final-revalidation";
+let migrationProbe:
+  | ((phase: TrellisMigrationProbePhase, target: string) => void | Promise<void>)
+  | null = null;
+
+/** Deterministic plan/apply race barrier for migration tests. */
+export function setTrellisMigrationProbeForTests(
+  probe: ((phase: TrellisMigrationProbePhase, target: string) => void | Promise<void>) | null,
+): void {
+  migrationProbe = probe;
+}
 
 function sha(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
@@ -88,10 +127,89 @@ async function explicitLegacyRoot(workspaceRoot: string, value?: string): Promis
     throw new FrameworkError("legacy migration only reads the explicit root .trellis directory");
   if (target === path.parse(target).root || target === path.resolve(workspaceRoot))
     throw new FrameworkError("unsafe legacy migration source root");
-  const info = await stat(target);
-  if (!info.isDirectory()) throw new FrameworkError("legacy Trellis source is not a directory");
   await safeTrellisPath(workspaceRoot, path.relative(workspaceRoot, target), false);
   return target;
+}
+
+function displayedSource(root: string, kind: MigrationSourceKind, file: ConfinedReadFile): string {
+  if (kind === "legacy") {
+    return path.relative(root, file.canonical_path).replaceAll("\\", "/");
+  }
+  return file.canonical_path;
+}
+
+function canonicalKey(value: string): string {
+  return process.platform === "win32" ? value.toLowerCase() : value;
+}
+
+function rootsOverlap(left: string, right: string): boolean {
+  const leftKey = canonicalKey(left);
+  const rightKey = canonicalKey(right);
+  return (
+    leftKey === rightKey ||
+    leftKey.startsWith(`${rightKey}${path.sep}`) ||
+    rightKey.startsWith(`${leftKey}${path.sep}`)
+  );
+}
+
+async function migrationSources(options: {
+  readonly root: string;
+  readonly legacyRoot?: string;
+  readonly channelRoot?: string;
+}): Promise<{
+  readonly legacy: ConfinedReadRoot;
+  readonly channel: ConfinedReadRoot | null;
+  readonly files: PlannedSource[];
+}> {
+  const legacyPath = await explicitLegacyRoot(options.root, options.legacyRoot);
+  const legacy = await openConfinedReadRoot(path.resolve(legacyPath));
+  const channel = options.channelRoot
+    ? await openConfinedReadRoot(path.resolve(options.root, options.channelRoot))
+    : null;
+  if (
+    channel &&
+    (rootsOverlap(legacy.canonical_path, channel.canonical_path) ||
+      (legacy.identity.dev === channel.identity.dev &&
+        legacy.identity.ino === channel.identity.ino))
+  ) {
+    throw new FrameworkError(
+      "legacy and channel source roots overlap; use distinct physical source trees",
+    );
+  }
+  const files: PlannedSource[] = [];
+  const physicalFiles = new Set<string>();
+  const append = (planned: PlannedSource): void => {
+    const key =
+      planned.file.identity.ino === 0
+        ? `path:${canonicalKey(planned.file.canonical_path)}`
+        : `identity:${planned.file.identity.dev}:${planned.file.identity.ino}`;
+    if (physicalFiles.has(key)) {
+      throw new FrameworkError(
+        `legacy migration source file has ambiguous duplicate provenance: '${planned.file.canonical_path}'`,
+      );
+    }
+    physicalFiles.add(key);
+    files.push(planned);
+  };
+  for (const file of await listConfinedReadFiles(legacy)) {
+    append({
+      kind: "legacy",
+      root: legacy,
+      file,
+      source: displayedSource(options.root, "legacy", file),
+    });
+  }
+  if (channel && channel.canonical_path !== legacy.canonical_path) {
+    for (const file of await listConfinedReadFiles(channel)) {
+      append({
+        kind: "channel",
+        root: channel,
+        file,
+        source: displayedSource(options.root, "channel", file),
+      });
+    }
+  }
+  return { legacy, channel, files };
 }
 
 export async function planTrellisLegacyMigration(options: {
@@ -101,19 +219,22 @@ export async function planTrellisLegacyMigration(options: {
 }) {
   const root = path.resolve(options.root);
   await requireInstalledTrellisRuntimeReadOnly(root);
-  const source = await explicitLegacyRoot(root, options.legacyRoot);
-  const files = await listSafeFiles(root, path.relative(root, source));
-  const channelRoot = options.channelRoot
-    ? await explicitLegacyRoot(root, options.channelRoot)
-    : null;
-  if (channelRoot && channelRoot !== source)
-    files.push(...(await listSafeFiles(root, path.relative(root, channelRoot))));
+  const sources = await migrationSources({ ...options, root });
   const entries = [];
-  for (const sourceFile of [...new Set(files)].sort()) {
-    const content = await readFile(await safeTrellisPath(root, sourceFile, false));
+  for (const planned of sources.files.sort((left, right) =>
+    left.source.localeCompare(right.source),
+  )) {
+    const content = await readConfinedFile(planned.root, planned.file);
+    const logical =
+      planned.kind === "channel" ? `channels/${planned.file.relative_path}` : planned.source;
     entries.push({
-      source: sourceFile,
-      category: classify(sourceFile),
+      source: planned.source,
+      source_kind: planned.kind,
+      relative_path: planned.file.relative_path,
+      source_path: planned.file.canonical_path,
+      source_root_identity: planned.root.identity,
+      source_identity: planned.file.identity,
+      category: classify(logical),
       sha256: sha(content),
       size: content.byteLength,
       target: null,
@@ -123,8 +244,12 @@ export async function planTrellisLegacyMigration(options: {
     protocol_version: TRELLIS_PROTOCOL_VERSION,
     plugin: TRELLIS_PLUGIN_ID,
     read_only: true,
-    source_root: path.relative(root, source).replaceAll("\\", "/"),
-    channel_root: channelRoot ? path.relative(root, channelRoot).replaceAll("\\", "/") : null,
+    source_root: path.relative(root, sources.legacy.canonical_path).replaceAll("\\", "/"),
+    channel_root: sources.channel?.canonical_path ?? null,
+    source_roots: [
+      { kind: "legacy" as const, ...sources.legacy },
+      ...(sources.channel ? [{ kind: "channel" as const, ...sources.channel }] : []),
+    ],
     entries,
   };
 }
@@ -140,6 +265,15 @@ function scrub(value: unknown): unknown {
   );
 }
 
+function sourceArtifactName(source: string): string {
+  const base =
+    path
+      .basename(source)
+      .replace(/[^A-Za-z0-9._-]/g, "-")
+      .slice(0, 80) || "source";
+  return `${sha(source).slice(0, 16)}-${base}`;
+}
+
 export async function applyTrellisLegacyMigration(options: {
   root: string;
   legacyRoot?: string;
@@ -147,10 +281,18 @@ export async function applyTrellisLegacyMigration(options: {
   now?: Date;
 }) {
   const root = path.resolve(options.root);
-  const plan = await planTrellisLegacyMigration(options);
+  const initialPlan = await planTrellisLegacyMigration(options);
+  await migrationProbe?.("apply-after-plan", root);
   const generation = randomUUID();
   const base = `.assay/trellis/migrations/${generation}`;
   return withInstalledTrellisMutation(root, async () => {
+    const plan = await planTrellisLegacyMigration(options);
+    if (sha(stringifySortedJson(plan)) !== sha(stringifySortedJson(initialPlan))) {
+      throw new FrameworkError("legacy migration source set changed after plan");
+    }
+    const roots = new Map(
+      plan.source_roots.map((sourceRoot) => [sourceRoot.kind, sourceRoot] as const),
+    );
     const writes: { path: string; value: unknown; jsonl?: boolean }[] = [];
     const createdTargets: string[] = [];
     const entries = [];
@@ -158,12 +300,19 @@ export async function applyTrellisLegacyMigration(options: {
     const openLegacyTaskIds = new Set<string>();
     const dynamicValues: Array<{ source: string; value: unknown }> = [];
     for (const entry of plan.entries) {
-      const bytes = await readFile(await safeTrellisPath(root, entry.source, false));
+      const sourceRoot = roots.get(entry.source_kind);
+      if (!sourceRoot) throw new FrameworkError(`migration source root vanished: ${entry.source}`);
+      const bytes = await readConfinedFile(sourceRoot, {
+        relative_path: entry.relative_path,
+        canonical_path: entry.source_path,
+        identity: entry.source_identity,
+        size: entry.size,
+      });
       if (sha(bytes) !== entry.sha256)
         throw new FrameworkError(`legacy source changed after plan: ${entry.source}`);
       let target: string | null = null;
       if (entry.category === "modified-or-unknown-archive") {
-        target = `${base}/archive/${entry.source.replaceAll("/", "__")}.json`;
+        target = `${base}/archive/${sourceArtifactName(entry.source)}.json`;
         writes.push({
           path: target,
           value: {
@@ -176,12 +325,26 @@ export async function applyTrellisLegacyMigration(options: {
         });
         createdTargets.push(target);
       } else if (entry.category === "structured-scrub") {
-        target = `${base}/scrubbed/${entry.source.replaceAll("/", "__")}.json`;
+        target = `${base}/scrubbed/${sourceArtifactName(entry.source)}.json`;
         let value: unknown;
         try {
           value = JSON.parse(bytes.toString("utf8"));
         } catch {
-          value = { source: entry.source, diagnostic: "unparseable structured record" };
+          target = `${base}/archive/${sourceArtifactName(entry.source)}.json`;
+          writes.push({
+            path: target,
+            value: {
+              __schema: 1,
+              source: entry.source,
+              sha256: entry.sha256,
+              encoding: "base64",
+              diagnostic: "unparseable structured record",
+              content: bytes.toString("base64"),
+            },
+          });
+          createdTargets.push(target);
+          entries.push({ ...entry, category: "modified-or-unknown-archive", target });
+          continue;
         }
         writes.push({
           path: target,
@@ -199,7 +362,21 @@ export async function applyTrellisLegacyMigration(options: {
                 .map((line) => JSON.parse(line))
             : JSON.parse(bytes.toString("utf8"));
         } catch {
-          value = { diagnostic: "unparseable known-shape record", raw_sha256: entry.sha256 };
+          target = `${base}/archive/${sourceArtifactName(entry.source)}.json`;
+          writes.push({
+            path: target,
+            value: {
+              __schema: 1,
+              source: entry.source,
+              sha256: entry.sha256,
+              encoding: "base64",
+              diagnostic: "unparseable known-shape record",
+              content: bytes.toString("base64"),
+            },
+          });
+          createdTargets.push(target);
+          entries.push({ ...entry, category: "modified-or-unknown-archive", target });
+          continue;
         }
         dynamicValues.push({ source: entry.source, value });
         const record =
@@ -291,7 +468,7 @@ export async function applyTrellisLegacyMigration(options: {
           writes.push({ path: target, value: records, jsonl: true });
           createdTargets.push(target);
         } else {
-          target = `${base}/converted/${entry.source.replaceAll("/", "__")}.json`;
+          target = `${base}/converted/${sourceArtifactName(entry.source)}.json`;
           writes.push({
             path: target,
             value: {
@@ -389,12 +566,18 @@ export async function applyTrellisLegacyMigration(options: {
       applied_at: nowIso(options.now ?? new Date()),
       source_root: plan.source_root,
       channel_root: plan.channel_root,
+      source_roots: plan.source_roots,
       entries,
       created_targets: createdTargets,
       target_hashes: targetHashes,
       backups,
       rolled_back_at: null,
     });
+    await migrationProbe?.("apply-before-final-revalidation", root);
+    const finalPlan = await planTrellisLegacyMigration(options);
+    if (sha(stringifySortedJson(finalPlan)) !== sha(stringifySortedJson(plan))) {
+      throw new FrameworkError("legacy migration source changed before commit");
+    }
     writes.push(
       { path: `${base}/operation.json`, value: operation },
       { path: ".assay/trellis/migrations/current.json", value: { __schema: 1, generation } },

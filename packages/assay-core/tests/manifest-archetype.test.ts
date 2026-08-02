@@ -55,8 +55,8 @@ describe("manifest archetype/mode contract", () => {
     expect(manifest).toEqual(
       expect.objectContaining({
         __schema: 2,
-        framework_version: "0.5.0",
-        minimum_assay_version: "0.5.0",
+        framework_version: "0.6.0",
+        minimum_assay_version: "0.6.0",
       }),
     );
     await saveManifest(root, {

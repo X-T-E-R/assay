@@ -66,7 +66,17 @@ export type TrellisStorageProbePhase =
   | "lock-before-stale-takeover"
   | "remove-before-rename"
   | "remove-after-rename"
-  | "wal-after-active-remove";
+  | "wal-after-active-remove"
+  | "exchange-before-stage-open"
+  | "exchange-after-stage-sync"
+  | "exchange-before-target-move"
+  | "exchange-after-target-move"
+  | "exchange-before-target-link"
+  | "exchange-after-target-link"
+  | "exchange-before-stage-unlink"
+  | "exchange-after-stage-unlink"
+  | "exchange-before-rollback-cleanup"
+  | "exchange-after-rollback-cleanup";
 let storageProbe:
   | ((phase: TrellisStorageProbePhase, target: string) => void | Promise<void>)
   | null = null;
@@ -220,6 +230,395 @@ export async function atomicWriteJson(
   value: unknown,
 ): Promise<void> {
   await atomicWriteText(root, relative, stringifySortedJson(value));
+}
+
+export interface AtomicTextExchangeIntent {
+  readonly target: string;
+  readonly stage: string;
+  readonly rollback: string;
+  readonly expected_identity: FileIdentity;
+  readonly expected_sha256: string;
+  readonly replacement_sha256: string;
+}
+
+export interface PreparedAtomicTextExchange extends AtomicTextExchangeIntent {
+  readonly replacement_identity: FileIdentity;
+}
+
+function digest(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function verifiedFileSnapshot(
+  file: string,
+  options: { readonly allowHardlink?: boolean } = {},
+): Promise<{ readonly identity: FileIdentity; readonly sha256: string; readonly nlink: number }> {
+  const handle = await open(file, "r");
+  try {
+    const opened = await handle.stat();
+    const bytes = await handle.readFile();
+    const named = await lstat(file);
+    if (
+      !opened.isFile() ||
+      !sameIdentity(opened, named) ||
+      (options.allowHardlink !== true && opened.nlink > 1)
+    ) {
+      throw new FrameworkError(`Trellis exchange file identity changed: '${file}'`);
+    }
+    return {
+      identity: { dev: opened.dev, ino: opened.ino },
+      sha256: digest(bytes),
+      nlink: opened.nlink,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+function exchangeChild(relative: string, transactionId: string, suffix: string): string {
+  const normalized = relative.replaceAll("\\", "/");
+  const directory = path.posix.dirname(normalized);
+  const base = path.posix.basename(normalized);
+  const safeId = transactionId.replace(/[^A-Za-z0-9._-]/g, "-");
+  return `${directory}/.${base}.${safeId}.${suffix}`;
+}
+
+async function exchangeLexicalPath(root: string, relative: string): Promise<string> {
+  const normalized = relative.replaceAll("\\", "/");
+  if (!normalized || path.posix.isAbsolute(normalized) || normalized.includes("\0")) {
+    throw new FrameworkError(`unsafe Trellis exchange path '${relative}'`);
+  }
+  const directory = path.posix.dirname(normalized);
+  const parent = await safeTrellisPath(root, directory, false);
+  const target = path.resolve(parent, path.posix.basename(normalized));
+  if (path.dirname(target) !== parent) {
+    throw new FrameworkError(`Trellis exchange path escapes its parent: '${relative}'`);
+  }
+  return target;
+}
+
+/**
+ * Prepare a same-parent replacement whose inode is known before the owner
+ * persists its transaction receipt. Commit uses a no-clobber hardlink install
+ * after moving the expected target aside, so a non-cooperating writer is never
+ * overwritten by the exchange.
+ */
+export function createAtomicTextExchangeIntent(
+  relative: string,
+  content: string,
+  options: {
+    readonly transactionId: string;
+    readonly expectedIdentity: FileIdentity;
+    readonly expectedSha256: string;
+  },
+): AtomicTextExchangeIntent {
+  const stageRelative = exchangeChild(relative, options.transactionId, "stage");
+  const rollbackRelative = exchangeChild(relative, options.transactionId, "rollback");
+  return {
+    target: relative.replaceAll("\\", "/"),
+    stage: stageRelative,
+    rollback: rollbackRelative,
+    expected_identity: options.expectedIdentity,
+    expected_sha256: options.expectedSha256,
+    replacement_sha256: digest(content),
+  };
+}
+
+export async function prepareAtomicTextExchange(
+  rootValue: string,
+  intent: AtomicTextExchangeIntent,
+  content: string,
+): Promise<PreparedAtomicTextExchange> {
+  const root = path.resolve(rootValue);
+  const target = await safeTrellisPath(root, intent.target, false);
+  const stage = await safeTrellisPath(root, intent.stage);
+  const rollback = await safeTrellisPath(root, intent.rollback);
+  if (
+    path.dirname(target) !== path.dirname(stage) ||
+    path.dirname(target) !== path.dirname(rollback)
+  ) {
+    throw new FrameworkError("Trellis exchange artifacts must share the target parent");
+  }
+  const parentPath = path.dirname(target);
+  const parent = await verifiedDirectory(root, parentPath);
+  const rollbackInfo = await lstat(rollback).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (rollbackInfo) {
+    throw new FrameworkError("Trellis exchange cannot prepare after target isolation");
+  }
+  const existingStage = await lstat(stage).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (existingStage) {
+    const snapshot = await verifiedFileSnapshot(stage);
+    if (snapshot.sha256 !== intent.replacement_sha256) {
+      throw new FrameworkError("Trellis exchange existing stage does not match its intent");
+    }
+    return { ...intent, replacement_identity: snapshot.identity };
+  }
+  await assertDirectoryIdentity(root, parentPath, parent);
+  const canonicalStage = path.join(parent.canonical, path.basename(stage));
+  await storageProbe?.("exchange-before-stage-open", canonicalStage);
+  const handle = await open(canonicalStage, "wx");
+  let durable = false;
+  try {
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+    const info = await handle.stat();
+    if (!info.isFile() || info.nlink !== 1) {
+      throw new FrameworkError(
+        `Trellis exchange stage is not an ordinary file: '${intent.target}'`,
+      );
+    }
+    if (digest(content) !== intent.replacement_sha256) {
+      throw new FrameworkError("Trellis exchange content does not match its intent");
+    }
+    durable = true;
+    await storageProbe?.("exchange-after-stage-sync", canonicalStage);
+    return {
+      ...intent,
+      replacement_identity: { dev: info.dev, ino: info.ino },
+    };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    if (!durable) await rm(canonicalStage, { force: true });
+    throw error;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+function matchesSnapshot(
+  snapshot: { readonly identity: FileIdentity; readonly sha256: string },
+  identity: FileIdentity,
+  sha256: string,
+): boolean {
+  return sameIdentity(snapshot.identity, identity) && snapshot.sha256 === sha256;
+}
+
+async function optionalVerifiedFileSnapshot(
+  file: string,
+  allowHardlink = false,
+): Promise<Awaited<ReturnType<typeof verifiedFileSnapshot>> | null> {
+  return verifiedFileSnapshot(file, { allowHardlink }).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+}
+
+/** Read-only validation used before a receipt owner acquires its mutation lock. */
+export async function validateAtomicTextExchangeState(
+  rootValue: string,
+  exchange: AtomicTextExchangeIntent & { readonly replacement_identity?: FileIdentity | null },
+): Promise<void> {
+  const root = path.resolve(rootValue);
+  const target = await exchangeLexicalPath(root, exchange.target);
+  const stage = await exchangeLexicalPath(root, exchange.stage);
+  const rollback = await exchangeLexicalPath(root, exchange.rollback);
+  if (
+    path.dirname(target) !== path.dirname(stage) ||
+    path.dirname(target) !== path.dirname(rollback)
+  ) {
+    throw new FrameworkError("Trellis exchange receipt crosses target parents");
+  }
+  const current = await optionalVerifiedFileSnapshot(target, true);
+  const staged = await optionalVerifiedFileSnapshot(stage, true);
+  const rollbackSnapshot = await optionalVerifiedFileSnapshot(rollback);
+  if (
+    rollbackSnapshot &&
+    !matchesSnapshot(rollbackSnapshot, exchange.expected_identity, exchange.expected_sha256)
+  ) {
+    throw new FrameworkError("Trellis exchange rollback does not match its receipt");
+  }
+  if (exchange.replacement_identity === null || exchange.replacement_identity === undefined) {
+    if (
+      rollbackSnapshot ||
+      !current ||
+      !matchesSnapshot(current, exchange.expected_identity, exchange.expected_sha256) ||
+      (staged && (staged.sha256 !== exchange.replacement_sha256 || staged.nlink !== 1))
+    ) {
+      throw new FrameworkError("Trellis exchange intent artifacts are not in a resumable state");
+    }
+    return;
+  }
+  if (
+    staged &&
+    !matchesSnapshot(staged, exchange.replacement_identity, exchange.replacement_sha256)
+  ) {
+    throw new FrameworkError("Trellis exchange stage does not match its receipt");
+  }
+  const currentExpected =
+    current && matchesSnapshot(current, exchange.expected_identity, exchange.expected_sha256);
+  const currentReplacement =
+    current && matchesSnapshot(current, exchange.replacement_identity, exchange.replacement_sha256);
+  const legal =
+    (!rollbackSnapshot && currentExpected && staged?.nlink === 1) ||
+    (!rollbackSnapshot && currentReplacement && !staged && current?.nlink === 1) ||
+    (rollbackSnapshot && !current && staged?.nlink === 1) ||
+    (rollbackSnapshot && currentReplacement && staged?.nlink === 2 && current?.nlink === 2) ||
+    (rollbackSnapshot && currentReplacement && !staged && current?.nlink === 1) ||
+    // A non-cooperating writer may have recreated the active target; preserve it and the rollback.
+    (rollbackSnapshot && current && !currentExpected && !currentReplacement && staged?.nlink === 1);
+  if (!legal) {
+    throw new FrameworkError("Trellis exchange artifacts are not in a resumable receipt state");
+  }
+}
+
+export async function commitAtomicTextExchange(
+  rootValue: string,
+  exchange: PreparedAtomicTextExchange,
+): Promise<void> {
+  const root = path.resolve(rootValue);
+  const target = await exchangeLexicalPath(root, exchange.target);
+  const stage = await exchangeLexicalPath(root, exchange.stage);
+  const rollback = await exchangeLexicalPath(root, exchange.rollback);
+  if (
+    path.dirname(target) !== path.dirname(stage) ||
+    path.dirname(target) !== path.dirname(rollback)
+  ) {
+    throw new FrameworkError("Trellis exchange receipt crosses target parents");
+  }
+  const parentPath = path.dirname(target);
+  const parent = await verifiedDirectory(root, parentPath);
+  const canonicalTarget = path.join(parent.canonical, path.basename(target));
+  const canonicalStage = path.join(parent.canonical, path.basename(stage));
+  const canonicalRollback = path.join(parent.canonical, path.basename(rollback));
+  for (let step = 0; step < 4; step += 1) {
+    const current = await optionalVerifiedFileSnapshot(canonicalTarget, true);
+    const staged = await optionalVerifiedFileSnapshot(canonicalStage, true);
+    const rollbackSnapshot = await optionalVerifiedFileSnapshot(canonicalRollback);
+    if (
+      rollbackSnapshot &&
+      !matchesSnapshot(rollbackSnapshot, exchange.expected_identity, exchange.expected_sha256)
+    ) {
+      throw new FrameworkError("Trellis exchange rollback does not match its receipt");
+    }
+    if (
+      staged &&
+      !matchesSnapshot(staged, exchange.replacement_identity, exchange.replacement_sha256)
+    ) {
+      throw new FrameworkError("Trellis exchange stage does not match its receipt");
+    }
+    if (!rollbackSnapshot) {
+      if (
+        !current ||
+        !staged ||
+        !matchesSnapshot(current, exchange.expected_identity, exchange.expected_sha256) ||
+        staged.nlink !== 1
+      ) {
+        throw new FrameworkError("Trellis exchange target failed its initial CAS");
+      }
+      await storageProbe?.("atomic-before-rename", canonicalTarget);
+      await storageProbe?.("exchange-before-target-move", canonicalTarget);
+      await assertDirectoryIdentity(root, parentPath, parent);
+      const finalCurrent = await verifiedFileSnapshot(canonicalTarget);
+      if (!matchesSnapshot(finalCurrent, exchange.expected_identity, exchange.expected_sha256)) {
+        throw new FrameworkError("Trellis exchange target failed its final CAS");
+      }
+      await rename(canonicalTarget, canonicalRollback);
+      await storageProbe?.("exchange-after-target-move", canonicalRollback);
+      continue;
+    }
+    if (!current) {
+      if (!staged || staged.nlink !== 1) {
+        throw new FrameworkError(
+          "Trellis exchange target is absent without its staged replacement",
+        );
+      }
+      await storageProbe?.("exchange-before-target-link", canonicalTarget);
+      try {
+        await link(canonicalStage, canonicalTarget);
+      } catch (error) {
+        throw new FrameworkError(
+          "Trellis exchange target was concurrently recreated; rollback is preserved",
+          { cause: error },
+        );
+      }
+      await storageProbe?.("exchange-after-target-link", canonicalTarget);
+      continue;
+    }
+    if (!matchesSnapshot(current, exchange.replacement_identity, exchange.replacement_sha256)) {
+      throw new FrameworkError(
+        "Trellis exchange target is a concurrent replacement; rollback is preserved",
+      );
+    }
+    if (staged) {
+      if (current.nlink !== 2 || staged.nlink !== 2) {
+        throw new FrameworkError("Trellis exchange linked stage has an invalid link count");
+      }
+      await storageProbe?.("exchange-before-stage-unlink", canonicalStage);
+      await rm(canonicalStage, { force: false });
+      await storageProbe?.("exchange-after-stage-unlink", canonicalTarget);
+      continue;
+    }
+    if (current.nlink !== 1) {
+      throw new FrameworkError("Trellis exchange installed target remains multiply linked");
+    }
+    return;
+  }
+  throw new FrameworkError("Trellis exchange did not reach a terminal installed state");
+}
+
+export async function cleanupAtomicTextExchange(
+  rootValue: string,
+  exchange: PreparedAtomicTextExchange,
+): Promise<void> {
+  const root = path.resolve(rootValue);
+  const target = await exchangeLexicalPath(root, exchange.target);
+  const installed = await verifiedFileSnapshot(target);
+  if (!matchesSnapshot(installed, exchange.replacement_identity, exchange.replacement_sha256)) {
+    throw new FrameworkError("Trellis exchange cleanup refuses a changed target");
+  }
+  const rollback = await exchangeLexicalPath(root, exchange.rollback);
+  const rollbackInfo = await lstat(rollback).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (rollbackInfo) {
+    const original = await verifiedFileSnapshot(rollback);
+    if (!matchesSnapshot(original, exchange.expected_identity, exchange.expected_sha256)) {
+      throw new FrameworkError("Trellis exchange cleanup refuses a changed rollback artifact");
+    }
+    await storageProbe?.("exchange-before-rollback-cleanup", rollback);
+    await rm(rollback, { force: false });
+    await storageProbe?.("exchange-after-rollback-cleanup", rollback);
+  }
+  const stage = await exchangeLexicalPath(root, exchange.stage);
+  const stageInfo = await lstat(stage).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (stageInfo) {
+    const staged = await verifiedFileSnapshot(stage);
+    if (!matchesSnapshot(staged, exchange.replacement_identity, exchange.replacement_sha256)) {
+      throw new FrameworkError("Trellis exchange cleanup refuses a changed stage artifact");
+    }
+    await rm(stage, { force: false });
+  }
+  const cleanedTarget = await verifiedFileSnapshot(
+    await exchangeLexicalPath(root, exchange.target),
+  );
+  if (!matchesSnapshot(cleanedTarget, exchange.replacement_identity, exchange.replacement_sha256)) {
+    throw new FrameworkError("Trellis exchange cleanup verification found a changed target");
+  }
+  const verifiedRollback = await exchangeLexicalPath(root, exchange.rollback);
+  const verifiedStage = await exchangeLexicalPath(root, exchange.stage);
+  const [remainingRollback, remainingStage] = await Promise.all([
+    lstat(verifiedRollback).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+      throw error;
+    }),
+    lstat(verifiedStage).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+      throw error;
+    }),
+  ]);
+  if (remainingRollback || remainingStage) {
+    throw new FrameworkError("Trellis exchange cleanup verification found remaining artifacts");
+  }
 }
 
 /**

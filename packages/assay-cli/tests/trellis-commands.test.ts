@@ -276,6 +276,108 @@ describe("assay trellis CLI", () => {
     );
   });
 
+  it("plans, applies, idempotently reapplies, and explicitly restores legacy Codex hooks as JSON", async () => {
+    const root = await workspace("trellis-hook-legacy");
+    const hookFile = path.join(root, ".codex", "hooks.json");
+    await mkdir(path.dirname(hookFile), { recursive: true });
+    const original = JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: "python -X utf8 .codex/hooks/inject-workflow-state.py",
+              },
+            ],
+          },
+          { hooks: [{ type: "command", command: "neighbor" }] },
+        ],
+        SubagentStart: [
+          {
+            matcher: "^trellis_",
+            hooks: [
+              {
+                type: "command",
+                command: "python -X utf8 .codex/hooks/inject-subagent-context.py",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await writeFile(hookFile, original, "utf8");
+
+    const plan = await cliRunner.runCli([
+      "trellis",
+      "hook",
+      "legacy",
+      "plan",
+      "--host",
+      "codex",
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(plan.exitCode, plan.stderr).toBe(0);
+    expect(JSON.parse(plan.stdout)).toEqual(
+      expect.objectContaining({
+        action: "remove",
+        read_only: true,
+        contract_version: 1,
+        removed_groups: expect.any(Array),
+      }),
+    );
+    expect(await readFile(hookFile, "utf8")).toBe(original);
+
+    const apply = await cliRunner.runCli([
+      "trellis",
+      "hook",
+      "legacy",
+      "apply",
+      "--host",
+      "codex",
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(apply.exitCode, apply.stderr).toBe(0);
+    expect(JSON.parse(apply.stdout)).toEqual(
+      expect.objectContaining({ applied: true, recovered: false }),
+    );
+    expect(await readFile(hookFile, "utf8")).toContain("neighbor");
+    expect(await readFile(hookFile, "utf8")).not.toContain("inject-workflow-state.py");
+
+    const repeated = await cliRunner.runCli([
+      "trellis",
+      "hook",
+      "legacy",
+      "apply",
+      "--host",
+      "codex",
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(repeated.exitCode, repeated.stderr).toBe(0);
+    expect(JSON.parse(repeated.stdout)).toEqual(expect.objectContaining({ applied: false }));
+
+    const restore = await cliRunner.runCli([
+      "trellis",
+      "hook",
+      "legacy",
+      "restore",
+      "--host",
+      "codex",
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(restore.exitCode, restore.stderr).toBe(0);
+    expect(JSON.parse(restore.stdout)).toEqual(expect.objectContaining({ restored: true }));
+    expect(await readFile(hookFile, "utf8")).toBe(original);
+  });
+
   it("exposes protocol, task lifecycle, journal, channel, and external-worker commands", async () => {
     const root = await workspace("trellis-operational-cli");
     const protocol = await cliRunner.runCli(["trellis", "protocol", "--root", root, "--json"]);

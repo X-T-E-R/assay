@@ -121,6 +121,7 @@ assay trellis migrate legacy plan|apply|rollback|cleanup ... --json
 assay trellis protocol --json
 assay trellis context --host codex [--session-id <id>] --json
 assay trellis hook install --host codex [--dry-run | --apply] --json
+assay trellis hook legacy plan|apply|restore --host codex --json
 assay plugin disable|uninstall assay.trellis [--purge --yes] --json
 ```
 
@@ -144,11 +145,29 @@ Channel sequence numbers and cursors are monotonic, idempotency keys are durable
 and active leases are unique until release or expiry. External workers register
 and drive this CLI state machine; Assay does not claim to spawn a provider.
 
+`trellis hook legacy plan` recognizes only the two v1 legacy writer groups
+(`UserPromptSubmit` workflow-state injection and `SubagentStart` Trellis-subagent
+context injection) with exact event, matcher, command, and group structure.
+`apply` removes only those exact groups under the project hook lock, using
+whole-file hash and identity CAS, an atomic replacement, a backup, and a durable
+receipt. Modified, duplicated, ambiguous, reparse, hardlink, or concurrently
+changed hook files fail closed. `restore` is explicit and requires the exact
+receipted post-scrub file; later neighboring edits are preserved by refusal,
+never overwritten. The current Assay-owned SessionStart hook is not a legacy
+candidate.
+
 `trellis mem` is bounded and read-only over `~/.codex/sessions` or an explicit
 fixture root; it never ingests transcripts. Legacy migration reads explicit
-roots, preserves sources, records hashes/provenance/backups, rejects rollback
-after subsequent target writes, and requires `--yes` for cleanup. Plugin
-disable/uninstall preserves `.assay/trellis` by default. Disable keeps a
+roots, preserves sources, records hashes/provenance/identity/backups, rejects
+rollback after subsequent target writes, and requires `--yes` for cleanup. An explicitly
+supplied absolute `--channel-root` may be outside the workspace; it is a strictly
+read-only source with canonical-root, reparse, hardlink, opened-handle identity,
+containment, enumeration, item-size, and total-byte checks. Every converted or
+archived target and receipt remains under the bound workspace `.assay/trellis`.
+Unknown or malformed records are archived rather than silently discarded, and
+apply revalidates the complete source set against its plan before committing.
+
+Plugin disable/uninstall preserves `.assay/trellis` by default. Disable keeps a
 manifest declaration marked `enabled: false`, while uninstall removes the
 declaration. Purge is uninstall-only, requires `--purge --yes`, validates a
 full backup first, and records recoverable lifecycle phases outside the runtime

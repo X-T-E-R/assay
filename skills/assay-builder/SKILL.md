@@ -56,6 +56,8 @@ assay trellis task complete|cancel|list|show|archive ... --json
 assay trellis session|journal|config|channel|worker|mem ... --help
 assay trellis migrate legacy plan|apply|rollback|cleanup ... --json
 assay trellis context --host codex --json
+assay trellis hook install --host codex [--dry-run | --apply] --json
+assay trellis hook legacy plan|apply|restore --host codex --json
 assay plugin disable assay.trellis                 # preserves runtime data
 assay plugin uninstall assay.trellis --purge --yes # backup, then purge
 assay plugin list [--json]
