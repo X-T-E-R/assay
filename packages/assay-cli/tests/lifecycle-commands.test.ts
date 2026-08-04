@@ -503,6 +503,23 @@ describe("assay knowledge add CLI", () => {
 });
 
 describe("assay capability CLI", () => {
+  it("adds Project Authority through the generic capability command", async () => {
+    const root = await initWorkspace("ProjectAuthorityCli", BARE_ARCHETYPE);
+
+    const help = await runCli(["capability", "add", "--help"]);
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).toContain("project-authority");
+
+    const added = await runCli(["capability", "add", "project-authority", "--root", root]);
+    expect(added.exitCode, added.stderr).toBe(0);
+    expect(added.stdout).toContain("Added capability: project-authority");
+    expect(added.stdout).toContain("project-owned facts, policies, norms, specs, or Relay records");
+    expect(await exists(path.join(root, "project-authority", "relay", "README.md"))).toBe(true);
+    expect(await exists(path.join(root, "project-authority", "relay", "activation.json"))).toBe(
+      false,
+    );
+  });
+
   it("adds a module the archetype lacks and reports the scaffolded files", async () => {
     const root = await initWorkspace("CapAdd", BARE_ARCHETYPE);
 
@@ -553,7 +570,7 @@ describe("assay capability CLI", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: unsupported capability module 'telepathy'");
-    expect(result.stderr).toContain("supported modules: adr, intent, iteration");
+    expect(result.stderr).toContain("supported modules: adr, intent, iteration, project-authority");
   });
 
   it("lists modules and distinguishes archetype-provided from added", async () => {
@@ -566,6 +583,7 @@ describe("assay capability CLI", () => {
     expect(listed.stdout).toContain("adr: enabled (archetype)");
     expect(listed.stdout).toContain("intent: not enabled");
     expect(listed.stdout).toContain("iteration: enabled (added)");
+    expect(listed.stdout).toContain("project-authority: not enabled");
 
     const json = await runCli(["capability", "list", "--root", root, "--json"]);
     expect(json.exitCode).toBe(0);
@@ -573,6 +591,7 @@ describe("assay capability CLI", () => {
       { module: "adr", enabled: true, source: "archetype", supported: true },
       { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: true, source: "added", supported: true },
+      { module: "project-authority", enabled: false, source: null, supported: true },
     ]);
   });
 
@@ -584,6 +603,7 @@ describe("assay capability CLI", () => {
     expect(listed.exitCode).toBe(0);
     expect(listed.stdout).toContain("adr: not enabled");
     expect(listed.stdout).toContain("iteration: not enabled");
+    expect(listed.stdout).toContain("project-authority: not enabled");
   });
 });
 

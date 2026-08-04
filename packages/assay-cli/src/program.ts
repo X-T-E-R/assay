@@ -428,6 +428,8 @@ function capabilityAddNextLine(module: string): string {
       return 'Next: `assay intent capture --text "<what the product is for>"`.';
     case "iteration":
       return 'Next: `assay iteration start "<what you are changing>"`.';
+    case "project-authority":
+      return "Next: add project-owned facts, policies, norms, specs, or Relay records in the scaffolded Project Authority directory.";
     default:
       return "Next: `assay capability list` shows what this workspace now has.";
   }

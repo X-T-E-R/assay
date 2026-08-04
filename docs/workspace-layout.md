@@ -108,8 +108,11 @@ confirmed with `--purge --yes` after backup.
 | `adr` | `knowledge/decisions/` with `README.md` and `ADR-TEMPLATE.md`, plus the `.assay/adrs.json` index. |
 | `intent` | `intent/`, `intent/original/`, and `intent/requirements/`, each with a `README.md`. |
 | `iteration` | `iterations/` and `iterations/templates/` with `README.md` and `iteration-plan.md`. |
+| `project-authority` | `project-authority/` with project-owned `facts/`, `policy/`, `norms/`, `specs/`, and `relay/` areas and managed README placeholders. |
 
 These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them; run `assay plugin list` to compare desired and installed plugin state.
+
+Project Authority follows the same work-root rule: `project-authority/` in standalone and `.assay/project-authority/` in every overlay privacy mode. The project owns the records and their meaning. Assay only manages the location, README placeholders, structural checks, updates, and conversion; it does not interpret facts, Policy, Norms, Specs, or Relay schemas. The Relay directory starts with a README only. Relay's explicit activation flow creates real activation documents when a project actually selects a workflow.
 
 ## Intent records
 
@@ -181,4 +184,4 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, carrying `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, `.assay/project-authority` to `project-authority`, carrying `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Project Authority bytes are preserved and a non-empty target authority directory is rejected before any target state is written. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.

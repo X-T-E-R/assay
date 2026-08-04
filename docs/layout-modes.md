@@ -39,7 +39,7 @@ The manifest carries a `layout` block so runtime code asks "where is `references
 }
 ```
 
-In overlay mode, `references`, `analyses`, `iterations`, `knowledge`, and `systems_contracts` all resolve under `.assay/`.
+In overlay mode, `references`, `analyses`, `iterations`, `knowledge`, optional `project-authority`, and `systems_contracts` all resolve under `.assay/`.
 
 ### Standalone
 
@@ -200,9 +200,10 @@ It should:
 3. Copy `.assay/analyses` to `../product-assay/analyses`.
 4. Copy `.assay/iterations` to `../product-assay/iterations`.
 5. Copy `.assay/knowledge` to `../product-assay/knowledge`.
-6. Keep Assay state under `../product-assay/.assay`.
-7. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
-8. Leave the product repo and its `.git/` untouched.
+6. Copy optional `.assay/project-authority` to `../product-assay/project-authority` without changing bytes or merging a non-empty target.
+7. Keep Assay state under `../product-assay/.assay`.
+8. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
+9. Leave the product repo and its `.git/` untouched.
 
 In-place conversion is allowed only with an explicit destructive flag, because it would have to move product root files into `systems/<name>/` or otherwise change the meaning of the product Git repository.
 
@@ -211,6 +212,8 @@ In-place conversion is allowed only with an explicit destructive flag, because i
 ## Update in overlay mode
 
 `assay update` resolves managed template paths through the layout path map. In overlay mode every managed template is written under `.assay/`, and the root files `attach` promises not to touch — `README.md`, `.gitignore`, `AGENTS.md` — are never created or overwritten, including with `--force`.
+
+This includes the optional Project Authority capability: it lives under `.assay/project-authority/` for `private`, `private-git`, and `tracked` overlays. Publishing or projecting it into the product root would be a separate explicit action and is not part of `capability add`.
 
 ## Validation loop
 

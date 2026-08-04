@@ -55,7 +55,11 @@ async function standaloneWorkspace(name: string, archetype = "study"): Promise<s
   return root;
 }
 
-async function overlayWorkspace(name: string, archetype = BARE_ARCHETYPE): Promise<string> {
+async function overlayWorkspace(
+  name: string,
+  archetype = BARE_ARCHETYPE,
+  privacy: "private" | "private-git" | "tracked" = "private",
+): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
   await mkdir(root, { recursive: true });
   if (archetype === BARE_ARCHETYPE) {
@@ -67,7 +71,7 @@ async function overlayWorkspace(name: string, archetype = BARE_ARCHETYPE): Promi
   await git(root, ["config", "user.name", "Assay Test"]);
   await git(root, ["add", "package.json"]);
   await git(root, ["commit", "-m", "initial"]);
-  await attachExistingRepo({ root, name, archetype, privacy: "private", noTrack: true });
+  await attachExistingRepo({ root, name, archetype, privacy, noTrack: true });
   return root;
 }
 
@@ -182,7 +186,7 @@ describe("addCapability", () => {
 
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(FrameworkError);
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(
-      /supported modules: adr, intent, iteration/,
+      /supported modules: adr, intent, iteration, project-authority/,
     );
     expect((await loadManifest(root))?.project.capabilities).toBeUndefined();
   });
@@ -226,6 +230,102 @@ describe("addCapability", () => {
 
     const archetype = await loadArchetype("study");
     expect(await requireCapability(root, "iteration")).toEqual(archetype);
+  });
+
+  it("scaffolds Project Authority in a standalone workspace and is idempotent", async () => {
+    const root = await standaloneWorkspace("ProjectAuthority", BARE_ARCHETYPE);
+
+    const added = await addCapability({ root, module: "project-authority" });
+
+    expect(added.alreadyEnabled).toBe(false);
+    expect(added.capabilities).toEqual(["project-authority"]);
+    for (const relativePath of [
+      "README.md",
+      "facts/README.md",
+      "policy/README.md",
+      "norms/README.md",
+      "specs/README.md",
+      "relay/README.md",
+    ]) {
+      expect(await exists(path.join(root, "project-authority", relativePath))).toBe(true);
+    }
+    expect(await exists(path.join(root, "project-authority", "acceptance"))).toBe(false);
+    expect(await exists(path.join(root, "project-authority", "relay", "activation.json"))).toBe(
+      false,
+    );
+    expect((await checkFramework({ root })).ok).toBe(true);
+
+    const rerun = await addCapability({ root, module: "project-authority" });
+    expect(rerun.alreadyEnabled).toBe(true);
+    expect(rerun.report.created_files).toEqual([]);
+    expect(rerun.eventFile).toBeUndefined();
+  });
+
+  it.each(["private", "private-git", "tracked"] as const)(
+    "keeps Project Authority under .assay in a %s overlay",
+    async (privacy) => {
+      const root = await overlayWorkspace(`ProjectAuthority-${privacy}`, BARE_ARCHETYPE, privacy);
+
+      await addCapability({ root, module: "project-authority" });
+
+      expect(
+        await exists(path.join(root, ".assay", "project-authority", "relay", "README.md")),
+      ).toBe(true);
+      expect(await exists(path.join(root, "project-authority"))).toBe(false);
+      const manifest = await loadManifest(root);
+      expect(Object.keys(manifest?.managed_files ?? {})).toContain(
+        ".assay/project-authority/README.md",
+      );
+      expect((await checkFramework({ root })).ok).toBe(true);
+    },
+  );
+
+  it("preserves pre-existing Project Authority content and user-modified templates", async () => {
+    const root = await standaloneWorkspace("ProjectAuthorityPreserve", BARE_ARCHETYPE);
+    const authorityRoot = path.join(root, "project-authority");
+    await mkdir(path.join(authorityRoot, "facts"), { recursive: true });
+    await writeFile(path.join(authorityRoot, "facts", "project.json"), '{"owner":"project"}\n');
+    await writeFile(path.join(authorityRoot, "README.md"), "# Existing project authority\n");
+
+    const added = await addCapability({ root, module: "project-authority" });
+
+    expect(added.report.skipped_files).toContain("project-authority/README.md");
+    expect(await readFile(path.join(authorityRoot, "README.md"), "utf8")).toBe(
+      "# Existing project authority\n",
+    );
+    expect(await readFile(path.join(authorityRoot, "facts", "project.json"), "utf8")).toBe(
+      '{"owner":"project"}\n',
+    );
+
+    const policyReadme = path.join(authorityRoot, "policy", "README.md");
+    await writeFile(policyReadme, "# Project-owned policy guidance\n", "utf8");
+    const updated = await applyUpdate({ root, action: "skip" });
+    expect(updated.analysis.changes.modified_by_user.map((change) => change.path)).toContain(
+      "project-authority/policy/README.md",
+    );
+    expect(updated.analysis.changes.untracked_existing.map((change) => change.path)).toContain(
+      "project-authority/README.md",
+    );
+    expect(await readFile(policyReadme, "utf8")).toBe("# Project-owned policy guidance\n");
+    expect(await readFile(path.join(authorityRoot, "facts", "project.json"), "utf8")).toBe(
+      '{"owner":"project"}\n',
+    );
+  });
+
+  it("reports missing Project Authority structure without interpreting its contents", async () => {
+    const root = await standaloneWorkspace("ProjectAuthorityCheck", BARE_ARCHETYPE);
+    await addCapability({ root, module: "project-authority" });
+    await rm(path.join(root, "project-authority", "relay"), { recursive: true });
+
+    const check = await checkFramework({ root });
+
+    expect(check.ok).toBe(false);
+    expect(check.rows).toContainEqual(
+      expect.objectContaining({ path: "project-authority/relay", status: "missing" }),
+    );
+    expect(check.rows.some((row) => row.message?.toLowerCase().includes("relay schema"))).toBe(
+      false,
+    );
   });
 });
 
@@ -310,6 +410,7 @@ describe("listCapabilities", () => {
       { module: "adr", enabled: true, source: "archetype", supported: true },
       { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: true, source: "added", supported: true },
+      { module: "project-authority", enabled: false, source: null, supported: true },
     ]);
   });
 
@@ -322,6 +423,7 @@ describe("listCapabilities", () => {
       { module: "adr", enabled: false, source: null, supported: true },
       { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: false, source: null, supported: true },
+      { module: "project-authority", enabled: false, source: null, supported: true },
     ]);
   });
 });

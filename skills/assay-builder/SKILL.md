@@ -44,7 +44,7 @@ assay migrate-layout --dry-run               # always dry-run first; legacy layo
 
 # Capability modules (optional features the archetype may not have enabled)
 assay capability list [--json]               # which modules are enabled, and whether by archetype or added later
-assay capability add <module>                # built-ins: adr|intent|iteration; idempotent, safe to re-run
+assay capability add <module>                # built-ins: adr|intent|iteration|project-authority; idempotent, safe to re-run
 
 # Workspace plugins (extend an existing Assay workspace)
 assay plugin add assay.intent
@@ -134,12 +134,13 @@ Target projects use an archetype-specific layout over a shared base (`.assay/`, 
 
 ## Capability modules
 
-`adr`, `intent`, and `iteration` are optional capability modules. An archetype enables some of them at init — `study` ships `adr`, `solve` and `explore` ship `iteration`, and no archetype ships `intent` — and the rest can be enabled at any time. Intent's preferred entrance is now the built-in `assay.intent` plugin.
+`adr`, `intent`, `iteration`, and `project-authority` are optional capability modules. An archetype enables some of them at init — `study` ships `adr`, `solve` and `explore` ship `iteration`, and no archetype ships `intent` or `project-authority` — and the rest can be enabled at any time. Intent's preferred entrance is now the built-in `assay.intent` plugin.
 
-- When an intent command reports `capability not enabled`, run `assay plugin add assay.intent`. For ADR or iteration, run `assay capability add <module>`.
+- When an intent command reports `capability not enabled`, run `assay plugin add assay.intent`. For ADR, iteration, or Project Authority, run `assay capability add <module>`.
 - `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.
-- `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming an ADR, intent, or iteration command is unavailable.
+- `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming ADR, intent, iteration, or Project Authority is unavailable.
 - Capability-scaffolded files are managed files: `update` reconciles them and `check` treats their directories as required structure.
+- `assay capability add project-authority` creates `facts/`, `policy/`, `norms/`, `specs/`, and `relay/` under the workspace work root. The project owns its facts and constraints and owns and selects activation, fork, and promotion records; Relay interprets Relay documents and schemas. Assay only creates and protects the location: it creates no empty Relay activation, parses no Relay schema, and decides no fact, constraint, permission, or acceptance result. Standalone uses `project-authority/`; every overlay privacy mode uses `.assay/project-authority/` and never writes the product root implicitly.
 - `plugin add assay.intent` declares desired plugin state, scaffolds only missing files, and records installation in `.assay/plugins.json`. `assay capability add intent` stays compatible for existing automation.
 - `reconcile` only operates on a workspace that already has `.assay/manifest.json`. It is a write-free preview unless `--apply` is present. A complete legacy intent scaffold is adopted without rewriting it; an incomplete one gets only its missing files. A converged apply does not update timestamps or append an event.
 - `plugin add assay.trellis` installs Assay's built-in operational v1 runtime under `.assay/trellis/`. It does not call a Trellis CLI or depend on `.trellis/`, and it does not replace Assay-native ADR or intent authority. Tasks, sessions, journal, config, channels/leases, and external-worker state are durable project-local domains; Codex memory is bounded and read-only. Optional session ids fail closed when an unscoped current task would be ambiguous. Built-in provider-process supervision is deferred: workers register and drive the CLI themselves.

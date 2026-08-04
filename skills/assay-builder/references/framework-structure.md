@@ -17,6 +17,7 @@ Every current Assay workspace has a shared base, then the selected archetype add
 ├── analyses/         # study analysis cards, when enabled
 ├── problem/          # solve/absorption-mode source materials, when enabled
 ├── iterations/       # solve/explore iteration plans, when enabled
+├── project-authority/ # optional project-owned facts, Policy, Norms, Specs, Relay records
 └── approaches/       # explore alternatives, when enabled
 ```
 
@@ -74,6 +75,9 @@ reminders are useful:
 | build local systems | `systems/` |
 | iterate local systems | `iterations/` |
 | promote accepted findings | `knowledge/` |
+| record project-owned facts and constraints | `project-authority/` |
+
+`project-authority/` is optional and follows the work root: it is at the standalone root, or under `.assay/` in every overlay privacy mode. Assay manages the scaffold and file integrity but does not interpret or decide its content. The project owns facts, Policy, Norms, Specs, and Relay activation records; Relay interprets Relay documents when the project explicitly creates them.
 
 ## `.assay/` managed files
 
