@@ -4,6 +4,11 @@
 planning authority. Use a Roadmap item for a durable direction or outcome. Use
 a Task for bounded work that contributes to it.
 
+Roadmap and Spec are separate authorities. Roadmap records milestones and
+ordering; Spec records current normative constraints and acceptance contracts.
+Realizing or retiring a Roadmap item never changes a Spec, and Phase 1 adds no
+Spec references to Roadmap envelopes.
+
 ## Files and identity
 
 Standalone workspaces store items in `project/roadmap/`; overlays use

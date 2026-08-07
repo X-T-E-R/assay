@@ -72,6 +72,13 @@ Use `design.md` and `research/` for material that belongs only to this Task.
 Put project-wide facts, specifications, decisions, and reusable knowledge in
 their project-owned locations instead.
 
+When a current normative contract should outlive the Task, promote it explicitly
+with `assay spec promote --from-task <id> --task-file <allowed-file> --body
+<clean-specification>`. Promotion records exact provenance but does not edit,
+finish, archive, or add a back-reference to the Task. Task lifecycle never
+activates, retires, replaces, or archives a Spec; Phase 1 adds no `spec_refs` to
+Task records.
+
 ## Create the durable boundary, not every attempt
 
 Create a Task when all of these are true:

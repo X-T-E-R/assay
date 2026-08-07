@@ -1,4 +1,10 @@
-import { FrameworkError, type FrameworkErrorCode, RoadmapError, TaskError } from "assay-core";
+import {
+  FrameworkError,
+  type FrameworkErrorCode,
+  RoadmapError,
+  SpecError,
+  TaskError,
+} from "assay-core";
 
 /**
  * Codes that mean "Assay itself misbehaved", printed with the `Runtime error:`
@@ -29,6 +35,9 @@ export interface CliFailure {
 }
 
 export function mapCliError(error: unknown): CliFailure {
+  if (error instanceof SpecError) {
+    return { exitCode: 1, message: `Error [${error.code}]: ${error.message}` };
+  }
   if (error instanceof RoadmapError) {
     return { exitCode: 1, message: `Error [${error.code}]: ${error.message}` };
   }

@@ -57,6 +57,8 @@ This is the workspace's single native Project authority. The Project owns its ad
 
 Semantic locations such as \`specs/\`, \`relay/\`, and \`extensions/\` are created only when the Project adopts material that belongs there. Their absence is healthy.
 
+Native Specs under \`specs/<id>/{spec.yaml,specification.md}\` own current normative constraints and acceptance contracts. They are not approvals, Roadmap state, Task state, System state, or ADR replacements; promotion and lifecycle commands do not propagate across those authorities.
+
 Authority remains separate elsewhere:
 
 - \`references/\` owns living and frozen external evidence.
@@ -226,11 +228,11 @@ async function preflightNativeProjectPath(root: string, layout: WorkspaceLayout)
     false,
   );
   if (await assertOrdinaryDirectory(projectRoot, "native Project", true)) {
-    // Roadmap descendants are validated item-by-item so one corrupt item does
-    // not hide healthy siblings. The Roadmap root itself is still checked
-    // below, and every Roadmap operation enforces its own reparse boundary.
+    // Roadmap and Spec descendants are validated item-by-item so one corrupt
+    // record does not hide healthy siblings. Their roots are checked by the
+    // owning modules, and every operation enforces its own reparse boundary.
     for (const entry of await readdir(projectRoot, { withFileTypes: true })) {
-      if (entry.name === "roadmap") continue;
+      if (entry.name === "roadmap" || entry.name === "specs") continue;
       const entryPath = path.join(projectRoot, entry.name);
       const stats = await lstat(entryPath);
       if (stats.isSymbolicLink()) {

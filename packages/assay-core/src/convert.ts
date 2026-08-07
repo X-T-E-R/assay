@@ -21,6 +21,7 @@ import { withRoadmapGlobalCoordination } from "./roadmap.js";
 import type { FrameworkManifest, SystemRecord, WorkspaceLayout } from "./schemas/index.js";
 import { adrIndexSchema } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
+import { withSpecGlobalCoordination } from "./spec.js";
 import { defaultSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
 import { nowIso } from "./time.js";
 
@@ -115,7 +116,7 @@ export async function convertOverlayToStandalone(
     );
   }
   const result = await withRoadmapGlobalCoordination(sourceRoot, () =>
-    convertOverlayToStandaloneLocked(options),
+    withSpecGlobalCoordination(sourceRoot, () => convertOverlayToStandaloneLocked(options)),
   );
   if (options.keepOverlay === false) {
     return {

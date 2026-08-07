@@ -210,8 +210,11 @@ human `Task storage issues:` section), and exits 1 when any issue exists. Use
 the valid rows for discovery, but do not report the storage as healthy until
 the issues are repaired.
 
-Keep roadmaps, specifications, and acceptance in the native Project. Keep agent
-DAGs, dispatch, ownership, and permissions in the host. Relay owns fork and
+Keep roadmaps, specifications, and acceptance in the native Project. Use
+`assay spec` for closed envelopes plus reader-owned specification prose, and
+use explicit `spec promote` only with an independent clean body and an Analysis
+or Task provenance source. Activation validates structure; it is not approval
+or Project acceptance. Keep agent DAGs, dispatch, ownership, and permissions in the host. Relay owns fork and
 promotion semantics. Keep product learning and durable decisions in analyses,
 ADRs, and `knowledge/`. A Task never grants permission or proves acceptance.
 
@@ -223,7 +226,7 @@ ADRs, and `knowledge/`. A Task never grants permission or proves acceptance.
 - `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.
 - `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming ADR, intent, or iteration is unavailable.
 - Capability-scaffolded files are managed files: `update` reconciles them and `check` treats their directories as required structure.
-- The native Project starts with `project.yaml`, `README.md`, and explanatory `roadmap/README.md`. Use `assay roadmap` for native items under `roadmap/<id>/{item.yaml,outcome.md}`. Task links live only in Roadmap `task_refs`; neither lifecycle synchronizes automatically. `specs/`, Project-selected `relay/`, and `extensions/` are lazy. Migrate the retired capability explicitly with `assay project migrate-authority --dry-run`, then `--apply`; migration never merges a non-empty target or deletes the source.
+- The native Project starts with `project.yaml`, `README.md`, and explanatory `roadmap/README.md`. Use `assay roadmap` for native items under `roadmap/<id>/{item.yaml,outcome.md}`. Task links live only in Roadmap `task_refs`; neither lifecycle synchronizes automatically. Native Spec storage is lazy under `specs/<id>/{spec.yaml,specification.md}` and has an explicit, non-propagating lifecycle. Project-selected `relay/` and `extensions/` are also lazy. Migrate the retired capability explicitly with `assay project migrate-authority --dry-run`, then `--apply`; migration never merges a non-empty target or deletes the source.
 - `plugin add assay.intent` declares desired plugin state, scaffolds only missing files, and records installation in `.assay/plugins.json`. `assay capability add intent` stays compatible for existing automation.
 - `reconcile` only operates on a workspace that already has `.assay/manifest.json`. It is a write-free preview unless `--apply` is present. A complete legacy intent scaffold is adopted without rewriting it; an incomplete one gets only its missing files. A converged apply does not update timestamps or append an event.
 - `assay.trellis` remains a legacy operational surface under `.assay/trellis/`. Native Tasks do not delete, rewrite, import, or automatically migrate existing Trellis state. When a workspace still uses the plugin, it does not call a Trellis CLI or depend on a root `.trellis/`, and it does not replace Assay-native Task, ADR, or intent authority.

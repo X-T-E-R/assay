@@ -79,7 +79,7 @@ reminders are useful:
 | promote accepted findings | `knowledge/` |
 | record the adopted charter, roadmap, specifications, and selected extensions | `project/` |
 
-`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap records are added under `roadmap/<id>/`. Specifications, Project-selected Relay records, and extensions are lazy; Reference, Analysis, Task, System, and runtime state keep separate authority.
+`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap records are added under `roadmap/<id>/`. Native Specifications are lazy under `specs/<id>/{spec.yaml,specification.md}` and promotion never changes its Analysis or Task source. Project-selected Relay records and extensions are also lazy; Reference, Analysis, Task, System, and runtime state keep separate authority.
 
 Native Task follows the same work root: `tasks/` in standalone and
 `.assay/tasks/` in overlay. Each stable-id directory requires a machine

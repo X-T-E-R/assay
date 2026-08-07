@@ -145,7 +145,7 @@ confirmed with `--purge --yes` after backup.
 
 These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them; run `assay plugin list` to compare desired and installed plugin state.
 
-Every workspace has a native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`; `assay roadmap create` then adds `roadmap/<id>/{item.yaml,outcome.md}`. The root Roadmap README stays explanatory and never becomes a dynamic index. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. Reference, Analysis, Task, System, ADR/knowledge, and `.assay/` runtime records remain independent authorities.
+Every workspace has a native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`; `assay roadmap create` then adds `roadmap/<id>/{item.yaml,outcome.md}`. The root Roadmap README stays explanatory and never becomes a dynamic index. Native Spec storage remains lazy: the first successful Spec write creates `specs/README.md` plus `specs/<spec-id>/{spec.yaml,specification.md}`; retired records may move unchanged to `specs/archive/<id>/`. The Spec README is explanatory, never a dynamic index. Project-selected `relay/` and `extensions/` are also lazy. Reference, Analysis, Task, System, ADR/knowledge, and `.assay/` runtime records remain independent authorities.
 
 ```yaml
 __schema: 1

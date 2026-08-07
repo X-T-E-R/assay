@@ -8,6 +8,8 @@
   bindings, relationships, and authority boundaries.
 - `roadmap.md` explains native Roadmap item storage, lifecycle, Task links, and
   graph constraints.
+- `spec.md` explains native Spec storage, explicit Analysis/Task promotion,
+  lifecycle, provenance integrity, and authority boundaries.
 - `donor-adoption.md` explains the donor relationship, evidence, and decision
   lifecycle for tracking adopted source material across target systems.
 - `workspace-layout.md` describes the base and archetype-specific directory structure.

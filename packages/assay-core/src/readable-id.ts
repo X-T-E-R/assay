@@ -1,6 +1,6 @@
 /** Stable, path-safe identifiers used by Assay-native semantic records. */
 
-export type ReadableIdKind = "project" | "task" | "roadmap";
+export type ReadableIdKind = "project" | "task" | "roadmap" | "spec";
 
 const SLUG_MAX_LENGTH = 48;
 
@@ -29,7 +29,10 @@ export function projectReadableId(name: string): string {
   return `project-${readableIdSlug(name) || "main"}`;
 }
 
-export function readableSequence(id: string, kind: "task" | "roadmap"): number | undefined {
+export function readableSequence(
+  id: string,
+  kind: "task" | "roadmap" | "spec",
+): number | undefined {
   const match = new RegExp(`^${kind}-(\\d{4,})(?:-|$)`).exec(id.toLowerCase());
   if (!match) return undefined;
   const sequence = Number(match[1]);
@@ -37,7 +40,7 @@ export function readableSequence(id: string, kind: "task" | "roadmap"): number |
 }
 
 export function allocateReadableId(
-  kind: "task" | "roadmap",
+  kind: "task" | "roadmap" | "spec",
   title: string,
   existingIds: Iterable<string>,
 ): string {

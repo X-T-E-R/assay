@@ -211,6 +211,22 @@ lifecycle commands never update each other. `list`, `validate`, and `assay
 check` report malformed items, graph errors, and unresolved Task references
 without hiding healthy siblings. See [Roadmap items](roadmap.md).
 
+## Specifications
+
+```text
+assay spec create --title <text> --scope project|system:<id> --strength required|recommended [--root <dir>] [--json]
+assay spec promote --title <text> --scope project|system:<id> --strength required|recommended --body <file> (--from-analysis <analyses/...> | --from-task <task-id> --task-file prd.md|handoff.md|design.md|research/*.md) [--root <dir>] [--json]
+assay spec show <id> [--root <dir>] [--json]
+assay spec list [--state draft|active|retired] [--scope project|system:<id>] [--strength required|recommended] [--archived live|archived|all] [--limit <n>] [--cursor <id>] [--root <dir>] [--json]
+assay spec update <id> [--title <text>] [--scope project|system:<id>] [--strength required|recommended] [--expected-revision <n>] [--root <dir>] [--json]
+assay spec activate|retire <id> [--expected-revision <n>] [--root <dir>] [--json]
+assay spec replace <old-id> --with <active-successor...> [--expected-revision <n>] [--root <dir>] [--json]
+assay spec archive <id> [--root <dir>] [--json]
+assay spec validate [id] [--root <dir>] [--json]
+```
+
+Spec storage is lazy. Creation starts a draft; promotion pins exact Analysis or Task bytes while copying only the independent `--body` file. Activation validates body structure but is not approval or Project acceptance. No Task, Roadmap, System, Analysis, or ADR state is propagated. See [Native specifications](spec.md).
+
 ## Workspace plugins and reconcile
 
 ```bash
@@ -488,6 +504,10 @@ assay projects prune [--dry-run] [--json]
 ```
 
 Use `system register` only for first-time registration; it rejects duplicate names so accidental re-registration is visible. Use `system update <selector>` to correct metadata on an existing record, such as changing `vcs` from `embedded` to `independent-git` and setting `--vcs-ref main`. Omitted update fields are preserved. `--primary` uses the same one-primary behavior as `system promote`, and archived systems are read-only.
+
+A Spec may use `system:<exact-registered-name>` as its scope, but the registry
+remains the System authority. System update, promote, and archive never change
+Spec state or bytes; Phase 1 adds no `spec_refs` to System records.
 
 `--intent-authority` records where a system's product intent is authoritative:
 `inline` (the default when the field is absent) means this workspace owns it,

@@ -93,6 +93,7 @@ import {
   getSourceStatus,
   resolveSourceObservation,
 } from "./sources.js";
+import { SpecError, validateSpecs } from "./spec.js";
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
 import { TaskError, validateTasks } from "./task.js";
 import { archetypeTemplates, capabilityTemplates, mergeTemplateFiles } from "./templates.js";
@@ -1711,7 +1712,40 @@ export async function checkFramework(
     });
   }
 
-  // Semantic check 9: native Task history. Task storage is optional, and one
+  // Semantic check 9: native Spec envelopes, scope, provenance, and replacement graph.
+  // Spec storage is lazy; partial validation keeps healthy siblings visible.
+  try {
+    const specValidation = await validateSpecs({ root });
+    for (const item of specValidation.items) {
+      rows.push({
+        path: item.path,
+        status: item.valid ? "ok" : "error",
+        message: item.valid
+          ? "native spec is valid"
+          : item.issues.map((issue) => `${issue.code}: ${issue.message}`).join("; "),
+      });
+    }
+    for (const issue of specValidation.issues.filter((candidate) => candidate.id === undefined)) {
+      rows.push({
+        path: issue.path ?? `${projectRootRelativePath(layout)}/specs`,
+        status: "error",
+        message: `${issue.code}: ${issue.message}`,
+      });
+    }
+  } catch (error) {
+    rows.push({
+      path: `${projectRootRelativePath(layout)}/specs`,
+      status: "error",
+      message:
+        error instanceof SpecError
+          ? `${error.code}: ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : "native specs failed validation",
+    });
+  }
+
+  // Semantic check 10: native Task history. Task storage is optional, and one
   // malformed historical record must not hide validation results for others.
   try {
     const taskValidation = await validateTasks({ root });
