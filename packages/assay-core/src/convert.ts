@@ -16,6 +16,7 @@ import { loadManifest, saveManifest } from "./manifest.js";
 import { relativeDisplayPath } from "./paths.js";
 import { reconcilePlugins } from "./plugins/reconcile.js";
 import { DECISION_GOVERNANCE_RESPONSIBILITY, TRELLIS_PLUGIN_ID } from "./plugins/registry.js";
+import { dirsForArchetype, loadArchetype } from "./profile.js";
 import type { FrameworkManifest, SystemRecord, WorkspaceLayout } from "./schemas/index.js";
 import { adrIndexSchema } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
@@ -53,7 +54,7 @@ const OVERLAY_WORK_AREAS = ["references", "analyses", "iterations", "knowledge"]
  * is missing from both the hoist and the managed-path rewrite would be
  * stranded in the source overlay after a move.
  */
-const OVERLAY_WORK_DIRECTORIES = ["intent", "project-authority", "tasks"] as const;
+const OVERLAY_WORK_DIRECTORIES = ["intent", "project", "project-authority", "tasks"] as const;
 
 /**
  * Layout `paths` keys whose location differs between overlay and standalone.
@@ -115,12 +116,37 @@ export async function convertOverlayToStandalone(
     );
   }
   const targetLayout = defaultStandaloneLayout();
+  const archetype = await loadArchetype(sourceManifest.project.archetype, { root: sourceRoot });
+  const additionalWorkDirectories = [
+    ...new Set(
+      dirsForArchetype(archetype, archetype.mode).flatMap((directory) => {
+        const first = directory.split("/")[0];
+        return first ? [first] : [];
+      }),
+    ),
+  ].filter(
+    (directory) =>
+      !directory.startsWith(".") &&
+      !OVERLAY_WORK_AREAS.includes(directory as (typeof OVERLAY_WORK_AREAS)[number]) &&
+      !OVERLAY_WORK_DIRECTORIES.includes(directory as (typeof OVERLAY_WORK_DIRECTORIES)[number]) &&
+      directory !== "systems",
+  );
   const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const decisionBinding = sourceManifest.bindings?.[DECISION_GOVERNANCE_RESPONSIBILITY];
   const targetExists = await exists(targetRoot);
   await assertTaskContextTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   await assertTaskTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
+  await assertNativeProjectTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   await assertProjectAuthorityTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
+  for (const directory of additionalWorkDirectories) {
+    await assertWorkDirectoryTransferPathsSafe(
+      sourceRoot,
+      sourceLayout,
+      targetRoot,
+      targetLayout,
+      directory,
+    );
+  }
   if (targetExists) {
     if (await exists(path.join(targetRoot, MANIFEST_FILE))) {
       throw new FrameworkError(
@@ -194,6 +220,14 @@ export async function convertOverlayToStandalone(
       }
     }
   }
+  for (const directory of additionalWorkDirectories) {
+    const from = path.join(sourceRoot, workspaceWorkRelativePath(sourceLayout, directory));
+    const to = path.join(targetRoot, workspaceWorkRelativePath(targetLayout, directory));
+    if (await exists(from)) {
+      await mkdir(path.dirname(to), { recursive: true });
+      await copyOrMoveDir(from, to, move);
+    }
+  }
 
   // Root system sidecar contracts under .assay/systems/ in overlay move to
   // target .assay/systems/ (kept as contracts; the original repo is now an
@@ -219,11 +253,12 @@ export async function convertOverlayToStandalone(
       sourceManifest.managed_files,
       sourceLayout,
       targetLayout,
+      additionalWorkDirectories,
     ),
     user_deleted: [
       ...new Set(
         sourceManifest.user_deleted.map((entry) =>
-          relayoutWorkPath(entry, sourceLayout, targetLayout),
+          relayoutWorkPath(entry, sourceLayout, targetLayout, additionalWorkDirectories),
         ),
       ),
     ],
@@ -425,6 +460,46 @@ async function assertProjectAuthorityTransferPathsSafe(
   }
 }
 
+async function assertNativeProjectTransferPathsSafe(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetRoot: string,
+  targetLayout: WorkspaceLayout,
+): Promise<void> {
+  const source = path.join(sourceRoot, workspaceWorkRelativePath(sourceLayout, "project"));
+  await assertRealDirectory(source, "source native Project", false);
+  await assertRealDirectoryTree(source, "source native Project");
+
+  const target = path.join(targetRoot, workspaceWorkRelativePath(targetLayout, "project"));
+  const targetContainer = await nearestExistingAncestor(targetRoot);
+  await assertRealDirectory(targetContainer, "native Project target ancestor", false);
+  if (!(await assertRealDirectory(target, "target native Project", true))) return;
+  await assertRealDirectoryTree(target, "target native Project");
+  if ((await readdir(target)).length > 0) {
+    throw new FrameworkError(`target native Project path already contains content: ${target}`);
+  }
+}
+
+async function assertWorkDirectoryTransferPathsSafe(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetRoot: string,
+  targetLayout: WorkspaceLayout,
+  directory: string,
+): Promise<void> {
+  const source = path.join(sourceRoot, workspaceWorkRelativePath(sourceLayout, directory));
+  if (!(await assertRealDirectory(source, `source ${directory}`, true))) return;
+  await assertRealDirectoryTree(source, `source ${directory}`);
+  const target = path.join(targetRoot, workspaceWorkRelativePath(targetLayout, directory));
+  const targetContainer = await nearestExistingAncestor(targetRoot);
+  await assertRealDirectory(targetContainer, `${directory} target ancestor`, false);
+  if (!(await assertRealDirectory(target, `target ${directory}`, true))) return;
+  await assertRealDirectoryTree(target, `target ${directory}`);
+  if ((await readdir(target)).length > 0) {
+    throw new FrameworkError(`target ${directory} path already contains content: ${target}`);
+  }
+}
+
 async function nearestExistingAncestor(target: string): Promise<string> {
   let current = path.resolve(target);
   while (true) {
@@ -611,10 +686,12 @@ function rewriteManagedFilePaths(
   managedFiles: FrameworkManifest["managed_files"],
   sourceLayout: WorkspaceLayout,
   targetLayout: WorkspaceLayout,
+  additionalWorkDirectories: readonly string[],
 ): FrameworkManifest["managed_files"] {
   const rewritten: FrameworkManifest["managed_files"] = {};
   for (const [filePath, record] of Object.entries(managedFiles)) {
-    rewritten[relayoutWorkPath(filePath, sourceLayout, targetLayout)] = record;
+    rewritten[relayoutWorkPath(filePath, sourceLayout, targetLayout, additionalWorkDirectories)] =
+      record;
   }
   return rewritten;
 }
@@ -623,6 +700,7 @@ function relayoutWorkPath(
   filePath: string,
   sourceLayout: WorkspaceLayout,
   targetLayout: WorkspaceLayout,
+  additionalWorkDirectories: readonly string[] = [],
 ): string {
   for (const key of RELOCATED_PATH_KEYS) {
     const from = `${sourceLayout.paths[key]}/`;
@@ -630,7 +708,7 @@ function relayoutWorkPath(
       return `${targetLayout.paths[key]}/${filePath.slice(from.length)}`;
     }
   }
-  for (const directory of OVERLAY_WORK_DIRECTORIES) {
+  for (const directory of [...OVERLAY_WORK_DIRECTORIES, ...additionalWorkDirectories]) {
     const from = `${workspaceWorkRelativePath(sourceLayout, directory)}/`;
     if (filePath.startsWith(from)) {
       const to = workspaceWorkRelativePath(targetLayout, directory);

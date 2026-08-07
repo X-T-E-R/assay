@@ -14,11 +14,11 @@ Every current Assay workspace has a shared base, then the selected archetype add
 │   ├── patterns/     # validated reusable patterns
 │   ├── guides/       # operational guides
 │   └── troubleshooting/  # failure modes and fixes
-├── references/       # study learning-mode sources, when enabled
-├── analyses/         # study analysis cards, when enabled
+├── references/       # native external evidence; eager in study, lazy elsewhere
+├── analyses/         # native analyses; eager in study, lazy elsewhere
 ├── problem/          # solve/absorption-mode source materials, when enabled
 ├── iterations/       # solve/explore iteration plans, when enabled
-├── project-authority/ # optional project-owned facts, Policy, Norms, Specs, Relay records
+├── project/           # required native Project envelope, charter, and roadmap placeholder
 └── approaches/       # explore alternatives, when enabled
 ```
 
@@ -77,9 +77,9 @@ reminders are useful:
 | iterate local systems | `iterations/` |
 | keep one bounded outcome identifiable across contexts | `tasks/` |
 | promote accepted findings | `knowledge/` |
-| record project-owned facts and constraints | `project-authority/` |
+| record the adopted charter, roadmap, specifications, and selected extensions | `project/` |
 
-`project-authority/` is optional and follows the work root: it is at the standalone root, or under `.assay/` in every overlay privacy mode. Assay manages the scaffold and file integrity but does not interpret or decide its content. The project owns facts, Policy, Norms, Specs, and Relay activation records; Relay interprets Relay documents when the project explicitly creates them.
+`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`. Specifications, Project-selected Relay records, and extensions are lazy; Reference, Analysis, Task, System, and runtime state keep separate authority.
 
 Native Task follows the same work root: `tasks/` in standalone and
 `.assay/tasks/` in overlay. Each stable-id directory requires a machine

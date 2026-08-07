@@ -19,6 +19,7 @@ export * from "./profile.js";
 export * from "./plugins/index.js";
 export * from "./versioning.js";
 export * from "./project-registry.js";
+export * from "./project.js";
 export * from "./results.js";
 export * from "./schemas/index.js";
 export * from "./sources.js";

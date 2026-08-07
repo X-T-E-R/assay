@@ -66,7 +66,7 @@
     },
     "README.md": {
       "executable": false,
-      "hash": "02dc342acec85ac12546a4c13174dddcc7d87a161cbc854fca739d196da9acde",
+      "hash": "20dc33bc24f7c27e123e2f85682805e0ecf5e2289ca8e8344f3baf4f5ea5c9af",
       "installed_version": "0.3.0",
       "protected": false,
       "template_id": "root.readme",

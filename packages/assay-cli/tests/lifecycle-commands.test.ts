@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { loadManifest, recordManagedFile, saveManifest } from "assay-core";
 import { BARE_ARCHETYPE, writeBareArchetype } from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -503,23 +504,6 @@ describe("assay knowledge add CLI", () => {
 });
 
 describe("assay capability CLI", () => {
-  it("adds Project Authority through the generic capability command", async () => {
-    const root = await initWorkspace("ProjectAuthorityCli", BARE_ARCHETYPE);
-
-    const help = await runCli(["capability", "add", "--help"]);
-    expect(help.exitCode, help.stderr).toBe(0);
-    expect(help.stdout).toContain("project-authority");
-
-    const added = await runCli(["capability", "add", "project-authority", "--root", root]);
-    expect(added.exitCode, added.stderr).toBe(0);
-    expect(added.stdout).toContain("Added capability: project-authority");
-    expect(added.stdout).toContain("project-owned facts, policies, norms, specs, or Relay records");
-    expect(await exists(path.join(root, "project-authority", "relay", "README.md"))).toBe(true);
-    expect(await exists(path.join(root, "project-authority", "relay", "activation.json"))).toBe(
-      false,
-    );
-  });
-
   it("adds a module the archetype lacks and reports the scaffolded files", async () => {
     const root = await initWorkspace("CapAdd", BARE_ARCHETYPE);
 
@@ -570,7 +554,7 @@ describe("assay capability CLI", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: unsupported capability module 'telepathy'");
-    expect(result.stderr).toContain("supported modules: adr, intent, iteration, project-authority");
+    expect(result.stderr).toContain("supported modules: adr, intent, iteration");
   });
 
   it("lists modules and distinguishes archetype-provided from added", async () => {
@@ -583,7 +567,6 @@ describe("assay capability CLI", () => {
     expect(listed.stdout).toContain("adr: enabled (archetype)");
     expect(listed.stdout).toContain("intent: not enabled");
     expect(listed.stdout).toContain("iteration: enabled (added)");
-    expect(listed.stdout).toContain("project-authority: not enabled");
 
     const json = await runCli(["capability", "list", "--root", root, "--json"]);
     expect(json.exitCode).toBe(0);
@@ -591,7 +574,6 @@ describe("assay capability CLI", () => {
       { module: "adr", enabled: true, source: "archetype", supported: true },
       { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: true, source: "added", supported: true },
-      { module: "project-authority", enabled: false, source: null, supported: true },
     ]);
   });
 
@@ -603,7 +585,39 @@ describe("assay capability CLI", () => {
     expect(listed.exitCode).toBe(0);
     expect(listed.stdout).toContain("adr: not enabled");
     expect(listed.stdout).toContain("iteration: not enabled");
-    expect(listed.stdout).toContain("project-authority: not enabled");
+  });
+});
+
+describe("assay native Project migration CLI", () => {
+  it("previews and applies the retired project-authority migration without deleting source", async () => {
+    const root = await initWorkspace("ProjectMigration", "solve");
+    await rm(path.join(root, "project"), { recursive: true });
+    await mkdir(path.join(root, "project-authority", "specs"), { recursive: true });
+    const placeholder = "# Managed legacy placeholder\n";
+    await writeFile(path.join(root, "project-authority", "README.md"), placeholder, "utf8");
+    await writeFile(path.join(root, "project-authority", "specs", "api.md"), "# API\n", "utf8");
+    const manifest = await loadManifest(root);
+    if (!manifest) throw new Error("manifest missing");
+    manifest.project.capabilities = ["project-authority"];
+    recordManagedFile(manifest, {
+      path: "project-authority/README.md",
+      templateId: "project.authority.readme",
+      content: placeholder,
+    });
+    await saveManifest(root, manifest);
+
+    const preview = await runCli(["project", "migrate-authority", "--root", root, "--dry-run"]);
+    expect(preview.exitCode, preview.stderr).toBe(0);
+    expect(preview.stdout).toContain("Project authority migration: dry-run");
+    expect(await exists(path.join(root, "project"))).toBe(false);
+
+    const applied = await runCli(["project", "migrate-authority", "--root", root, "--apply"]);
+    expect(applied.exitCode, applied.stderr).toBe(0);
+    expect(applied.stdout).toContain("Project authority migration: applied");
+    expect(await readFile(path.join(root, "project", "specs", "api.md"), "utf8")).toBe("# API\n");
+    expect(await readFile(path.join(root, "project-authority", "specs", "api.md"), "utf8")).toBe(
+      "# API\n",
+    );
   });
 });
 

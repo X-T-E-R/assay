@@ -93,6 +93,7 @@ describe("assay Commander registration", () => {
       "status",
       "update",
       "projects",
+      "project",
       "migrate-layout",
       "archetype",
       "plugin",
@@ -115,6 +116,16 @@ describe("assay Commander registration", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: assay reference add [options] <source-dir> <name>");
     expect(result.stdout).toContain("--root <target-dir>");
+    expect(result.stderr).toBe("");
+  });
+
+  it("exposes explicit native Project migration help", async () => {
+    const result = await runCli(["project", "migrate-authority", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: assay project migrate-authority [options]");
+    expect(result.stdout).toContain("--dry-run");
+    expect(result.stdout).toContain("--apply");
     expect(result.stderr).toBe("");
   });
 
@@ -458,6 +469,14 @@ describe("assay CLI subprocess behavior", () => {
 
   it("initializes new built-in archetypes and each passes check", async () => {
     const expectations = {
+      study: {
+        mode: "learning",
+        paths: ["references", "analyses"],
+      },
+      solve: {
+        mode: "absorption",
+        paths: ["problem", "attempts", "objective.json"],
+      },
       explore: {
         mode: "absorption",
         paths: ["approaches", "trials", "comparison.md"],
@@ -479,6 +498,19 @@ describe("assay CLI subprocess behavior", () => {
       expect(init.stderr).toBe("");
       for (const expectedPath of expectation.paths) {
         expect(await pathExists(path.join(root, expectedPath))).toBe(true);
+      }
+      expect((await readdir(path.join(root, "project"))).sort()).toEqual([
+        "README.md",
+        "project.yaml",
+        "roadmap",
+      ]);
+      expect(await readdir(path.join(root, "project", "roadmap"))).toEqual(["README.md"]);
+      for (const absent of ["facts", "policy", "norms", "decisions", "relay", "extensions"]) {
+        expect(await pathExists(path.join(root, "project", absent))).toBe(false);
+      }
+      if (archetype !== "study") {
+        expect(await pathExists(path.join(root, "references"))).toBe(false);
+        expect(await pathExists(path.join(root, "analyses"))).toBe(false);
       }
       const manifest = JSON.parse(
         await readFile(path.join(root, ".assay", "manifest.json"), "utf8"),

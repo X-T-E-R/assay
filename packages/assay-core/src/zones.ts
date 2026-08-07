@@ -44,12 +44,26 @@ export function archetypeZones(
   const declared = mergeDirectories(
     archetypeDirectories(archetype, mode),
     capabilityDirectories(capabilities),
+    NATIVE_LAZY_DIRECTORIES,
   );
   return declared.filter(isZoneDirectory).map((directory) => ({
     path: directory.path,
     purpose: directory.purpose,
   }));
 }
+
+/**
+ * Reference and Analysis are native for every archetype, but lazy outside
+ * study. Declaring them as zones makes placement/status semantics available
+ * without causing init or check to require their directories on disk.
+ */
+export const NATIVE_LAZY_DIRECTORIES: readonly ArchetypeDirectory[] = [
+  {
+    path: "references",
+    purpose: "Living sources and frozen external evidence (created on first use)",
+  },
+  { path: "analyses", purpose: "Analysis records (created on first use)" },
+];
 
 function isZoneDirectory(directory: ArchetypeDirectory): boolean {
   const segments = directory.path.split("/").filter((segment) => segment.length > 0);

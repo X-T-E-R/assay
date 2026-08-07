@@ -48,6 +48,7 @@ const assayStatePathSchema = z
   .superRefine((value, context) => {
     const normalized = value.replaceAll("\\", "/");
     const normalizedPath = path.posix.normalize(normalized);
+    const semanticPath = normalizedPath.toLowerCase();
     if (
       path.posix.isAbsolute(normalized) ||
       path.win32.isAbsolute(value) ||
@@ -62,12 +63,18 @@ const assayStatePathSchema = z
     }
     if (
       normalizedPath === "." ||
-      normalizedPath === MANAGED_DIR ||
-      normalizedPath.startsWith(`${MANAGED_DIR}/`)
+      semanticPath === MANAGED_DIR ||
+      semanticPath.startsWith(`${MANAGED_DIR}/`)
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "external plugins cannot own the workspace root or Assay-managed state",
+      });
+    }
+    if (semanticPath === "project" || semanticPath.startsWith("project/")) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "external plugins cannot own native Project authority paths",
       });
     }
   });

@@ -15,6 +15,21 @@ export const projectArchetypeSchema = z.string().min(1);
 
 export const projectModeSchema = z.enum(["learning", "absorption"]);
 
+/** Strict, versionable machine envelope for the workspace's one native Project. */
+export const nativeProjectSchema = z
+  .object({
+    __schema: z.literal(1),
+    id: z.string().uuid(),
+    name: z.string().trim().min(1),
+    authority: z
+      .object({
+        mode: z.literal("native"),
+        pointer: z.literal("README.md"),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const pluginDeclarationSchema = z
   .object({
     kind: z.string().trim().min(1),
@@ -36,6 +51,9 @@ export const responsibilityBindingSchema = z
 
 export const frameworkProjectSchema = z
   .object({
+    // Compatibility/cache fields used for workspace presentation and
+    // archetype settings. The authoritative native Project identity and
+    // charter live in <work-root>/project/project.yaml and README.md.
     name: z.string().min(1),
     // Legacy v2 manifests may still carry project.core. Layout v3 keeps it
     // optional for migration reads only; fresh manifests must not materialize it.
@@ -377,6 +395,7 @@ export const migrationPlanSchema = z
 export type ManagedFileRecord = z.infer<typeof managedFileRecordSchema>;
 export type ProjectArchetype = z.infer<typeof projectArchetypeSchema>;
 export type ProjectMode = z.infer<typeof projectModeSchema>;
+export type NativeProject = z.infer<typeof nativeProjectSchema>;
 export type FrameworkProject = z.infer<typeof frameworkProjectSchema>;
 export type FrameworkManifest = z.infer<typeof frameworkManifestSchema>;
 export type PluginDeclaration = z.infer<typeof pluginDeclarationSchema>;

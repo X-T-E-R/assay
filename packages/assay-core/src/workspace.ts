@@ -25,6 +25,7 @@ import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
 import {
   type WorkspaceArea,
+  defaultOverlayLayout,
   defaultStandaloneLayout,
   intentRootPath,
   resolveWorkspaceLayout,
@@ -66,6 +67,15 @@ import {
   requireCapability,
   requireCapabilityModule,
 } from "./profile.js";
+import {
+  ensureNativeProject,
+  loadNativeProject,
+  preflightNativeProjectBoundary,
+  preflightWorkspaceManifestBoundary,
+  projectFileRelativePath,
+  projectRootRelativePath,
+  validateNativeProjectStructure,
+} from "./project.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import type {
   AdrIndex,
@@ -92,7 +102,7 @@ import {
   adrSuggestionsForSources,
   collectUpstreamStatus,
 } from "./upstream.js";
-import { archetypeZones } from "./zones.js";
+import { NATIVE_LAZY_DIRECTORIES, archetypeZones } from "./zones.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
   ".venv",
@@ -279,6 +289,12 @@ export interface FrameworkStatusResult {
   readonly layoutVersion?: number;
   readonly manifestFormat?: string;
   readonly project?: string;
+  readonly nativeProject?: {
+    readonly id: string;
+    readonly name: string;
+    readonly path: string;
+    readonly authority: string;
+  };
   readonly archetype?: ProjectArchetype;
   /** The archetype's one-line description; omitted when it declares none. */
   readonly archetypeDescription?: string;
@@ -829,6 +845,8 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   const archetypeDefinition = await loadArchetype(archetype, { root });
   const mode = archetypeDefinition.mode;
 
+  await preflightNativeProjectBoundary(root, defaultStandaloneLayout());
+
   await ensureDir(root, root, report);
 
   let manifest = (await loadManifest(root)) ?? defaultManifest(project, { archetype, mode });
@@ -854,6 +872,14 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   for (const directory of directories) {
     await ensureDir(path.join(root, directory), root, report);
   }
+
+  const nativeProject = await ensureNativeProject(
+    root,
+    defaultStandaloneLayout(),
+    manifest.project.name,
+  );
+  report.created_dirs.push(...nativeProject.createdDirectories);
+  report.created_files.push(...nativeProject.createdFiles);
 
   for (const template of mergeTemplateFiles(
     archetypeTemplates(project, mode, archetypeDefinition),
@@ -1064,6 +1090,22 @@ export async function checkFramework(
   const root = path.resolve(options.root);
   const includeAdvisories = options.includeAdvisories ?? false;
 
+  try {
+    await preflightWorkspaceManifestBoundary(root);
+  } catch (error) {
+    return {
+      root,
+      ok: false,
+      rows: [
+        {
+          path: MANIFEST_FILE,
+          status: "error",
+          message: error instanceof Error ? error.message : "Assay manifest boundary is redirected",
+        },
+      ],
+    };
+  }
+
   // Resolve the workspace layout up front so checks point at the right paths
   // for both standalone (work folders at root) and overlay (work folders
   // under .assay/). If the manifest cannot be read, fall back to standalone.
@@ -1074,6 +1116,24 @@ export async function checkFramework(
     // invalid manifest is reported below; use standalone fallback for paths
   }
   const layout = layoutForManifest(manifestForLayout);
+  if (manifestForLayout) {
+    try {
+      await preflightNativeProjectBoundary(root, layout);
+    } catch (error) {
+      return {
+        root,
+        ok: false,
+        rows: [
+          {
+            path: projectRootRelativePath(layout),
+            status: "error",
+            message:
+              error instanceof Error ? error.message : "native Project boundary is redirected",
+          },
+        ],
+      };
+    }
+  }
 
   // Base structure check targets: always-required runtime files plus the
   // archetype-declared primary directories. systems/ and knowledge/ resolve
@@ -1085,6 +1145,7 @@ export async function checkFramework(
     [`${MANAGED_DIR}/manifest.json`, `${MANAGED_DIR}/manifest.json`],
     ["systems directory", workspaceRelativePath(layout, "systemsContracts")],
     ["knowledge directory", workspaceRelativePath(layout, "knowledge")],
+    ["native Project directory", workspaceWorkRelativePath(layout, "project")],
   ];
 
   // If a workspace declares its archetype, augment checks with that archetype's
@@ -1099,7 +1160,13 @@ export async function checkFramework(
     const topLevels = new Set<string>();
     for (const d of dirsForArchetype(archetypeDefinition, mode)) {
       const top = d.split("/")[0];
-      if (top && !top.startsWith(".") && top !== "systems" && top !== "knowledge") {
+      if (
+        top &&
+        !top.startsWith(".") &&
+        top !== "project" &&
+        top !== "systems" &&
+        top !== "knowledge"
+      ) {
         topLevels.add(top);
       }
     }
@@ -1176,6 +1243,31 @@ export async function checkFramework(
       status: "ok",
       message: `manifest schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
     });
+
+    try {
+      await validateNativeProjectStructure(root, layout);
+      const project = await loadNativeProject(root, layout);
+      rows.push(
+        project
+          ? {
+              path: projectFileRelativePath(layout),
+              status: "ok",
+              message: `native Project ${project.id}; authority ${project.authority.mode}:${project.authority.pointer}`,
+            }
+          : {
+              path: projectFileRelativePath(layout),
+              status: "missing",
+              message: "native Project envelope is required",
+            },
+      );
+    } catch (error) {
+      rows.push({
+        path: projectFileRelativePath(layout),
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "native Project envelope failed validation",
+      });
+    }
 
     // Semantic check 1: managed file existence + hash consistency
     for (const [filePath, record] of Object.entries(manifest.managed_files)) {
@@ -1718,6 +1810,7 @@ async function collectUndeclaredDirectoryRows(
   for (const directory of [
     ...dirsForArchetype(archetype, manifest.project.mode),
     ...capabilityDirs(capabilities),
+    ...NATIVE_LAZY_DIRECTORIES.map((directory) => directory.path),
   ]) {
     const name = workRootEntryName(layout, workspaceTemplateRelativePath(layout, directory));
     if (name) {
@@ -2182,7 +2275,11 @@ export async function getFrameworkStatus(
   options: GetFrameworkStatusOptions,
 ): Promise<FrameworkStatusResult> {
   const root = path.resolve(options.root);
+  await preflightWorkspaceManifestBoundary(root);
   const manifest = await loadManifest(root);
+  if (manifest) {
+    await preflightNativeProjectBoundary(root, layoutForManifest(manifest));
+  }
   const decisionGovernance = manifest
     ? await getDecisionGovernanceStatus(root, manifest)
     : undefined;
@@ -2279,6 +2376,22 @@ export async function getFrameworkStatus(
 
   const knowledgeCount = await countKnowledgeEntries(root, layout);
   const runRecords = await countRunRecords(root, layout);
+  let nativeProject: FrameworkStatusResult["nativeProject"];
+  if (manifest) {
+    try {
+      const loaded = await loadNativeProject(root, layout);
+      if (loaded) {
+        nativeProject = {
+          id: loaded.id,
+          name: loaded.name,
+          path: projectFileRelativePath(layout),
+          authority: `${loaded.authority.mode}:${loaded.authority.pointer}`,
+        };
+      }
+    } catch {
+      // `check` reports the exact validation failure; status remains readable.
+    }
+  }
 
   if (!manifest) {
     return {
@@ -2304,6 +2417,7 @@ export async function getFrameworkStatus(
     layoutVersion: manifest.layout_version,
     manifestFormat: `schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
     project: manifest.project.name,
+    ...(nativeProject ? { nativeProject } : {}),
     archetype: manifest.project.archetype,
     ...(archetypeDefinition && archetypeDefinition.description !== ""
       ? { archetypeDescription: archetypeDefinition.description }

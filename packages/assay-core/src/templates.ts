@@ -209,18 +209,6 @@ function templateContentById(
       return knowledgeDecisionsReadme();
     case "knowledge.decisions.adr_template":
       return adrTemplate();
-    case "project.authority.readme":
-      return projectAuthorityReadme();
-    case "project.authority.facts.readme":
-      return projectAuthorityFactsReadme();
-    case "project.authority.policy.readme":
-      return projectAuthorityPolicyReadme();
-    case "project.authority.norms.readme":
-      return projectAuthorityNormsReadme();
-    case "project.authority.specs.readme":
-      return projectAuthoritySpecsReadme();
-    case "project.authority.relay.readme":
-      return projectAuthorityRelayReadme();
     case "knowledge.guides.readme":
       return "# guides/\n\nReusable operational guides.\n";
     case "knowledge.patterns.readme":
@@ -258,74 +246,6 @@ function templateContentById(
   }
 }
 
-function projectAuthorityReadme(): string {
-  return dedent(`
-    # Project Authority
-
-    This directory is the project's authoritative home for project-specific facts, policies, norms, specifications, and Relay records. The project owns its facts and constraints, and owns and selects its activation, fork, and promotion records. Relay interprets Relay documents and schemas.
-
-    Assay only scaffolds and protects this location, preserves managed templates, checks structural integrity, and carries it across workspace layout changes. Assay does not interpret, rank, enforce, accept, or decide the prose or Relay records stored here.
-
-    - \`facts/\` — project-specific facts and evidence-backed statements.
-    - \`policy/\` — mandatory project constraints.
-    - \`norms/\` — project defaults that apply unless a governing policy or named-object specification says otherwise.
-    - \`specs/\` — requirements for explicitly named objects and scopes.
-    - \`relay/\` — project-owned Relay activation and lifecycle records.
-
-    Acceptance requirements belong in the relevant policy or named-object specification; there is no separate acceptance authority here.
-  `);
-}
-
-function projectAuthorityFactsReadme(): string {
-  return dedent(`
-    # Project facts
-
-    Store project-specific factual records here. The project owns their content, provenance, correction, and retirement.
-
-    Assay preserves the location and managed placeholder only. It does not decide whether a statement is true, current, complete, or sufficient.
-  `);
-}
-
-function projectAuthorityPolicyReadme(): string {
-  return dedent(`
-    # Project policy
-
-    Store mandatory project constraints here. Policy states what must or must not happen within its declared scope.
-
-    The project owns and interprets these constraints. Assay does not infer policy from prose, enforce it, or decide whether work complies.
-  `);
-}
-
-function projectAuthorityNormsReadme(): string {
-  return dedent(`
-    # Project norms
-
-    Store project-specific defaults and conventions here. Norms apply by default and remain distinct from mandatory Policy and named-object Specs.
-
-    The project owns their scope and precedence. Assay does not interpret prose or resolve conflicts among norms, policies, and specifications.
-  `);
-}
-
-function projectAuthoritySpecsReadme(): string {
-  return dedent(`
-    # Project specifications
-
-    Store requirements for explicitly named objects or scopes here, including any acceptance requirements that govern those objects.
-
-    The project owns each specification and its interpretation. Assay does not judge completeness, compliance, evidence, or acceptance.
-  `);
-}
-
-function projectAuthorityRelayReadme(): string {
-  return dedent(`
-    # Project Relay records
-
-    This directory is the project-owned location for Relay activation, fork, and promotion records. Relay interprets Relay documents; the project chooses and owns the records it creates.
-
-    Assay creates this location, preserves its managed placeholder, and carries the directory across layout changes. Assay does not create an empty activation, parse Relay schemas, activate capabilities, grant permission, install anything, or accept results.
-  `);
-}
-
 export function rootReadme(project: string): string {
   return dedent(`
     # ${project}
@@ -341,6 +261,7 @@ export function rootReadme(project: string): string {
     | Path | Purpose |
     | --- | --- |
     | \`.assay/\` | Runtime metadata: version, manifest, events, migrations, backups |
+    | \`project/\` | Native Project identity, charter, and roadmap placeholder |
     | \`systems/\` | Registered active systems and local implementations |
     | \`knowledge/\` | Accepted reusable knowledge |
 
@@ -685,24 +606,6 @@ export function updateMechanismDoc(): string {
     | modified | current hash differs from manifest hash | skip |
     | user-deleted | manifest tracked it but path is absent | respect deletion |
     | untracked-existing | path exists but not in manifest | skip / \`.new\` |
-    `);
-}
-
-export function roadmapDoc(): string {
-  return dedent(`
-    # Roadmap
-
-    ## P0 Bootstrap
-
-    - [ ] Structure exists.
-    - [ ] Manifest exists.
-    - [ ] First evidence input captured.
-
-    ## P1 Internalization
-
-    - [ ] At least one external pattern validated through an iteration.
-    - [ ] Update mechanism tested on a dirty project.
-    - [ ] CLI packaged and smoke-tested.
     `);
 }
 

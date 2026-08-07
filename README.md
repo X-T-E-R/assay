@@ -75,13 +75,12 @@ Capability modules are optional features. An archetype enables some at init; the
 | `adr` | Numbered architecture decisions with status and supersede chains | `assay capability add adr` |
 | `intent` | Verbatim capture of what was asked for, promoted into requirements or ADRs | `assay plugin add assay.intent` |
 | `iteration` | Planned changes to your own systems, opened and closed with a result | `assay capability add iteration` |
-| `project-authority` | Project-owned facts, Policy, Norms, Specs, and Relay activation records | `assay capability add project-authority` |
 
 `assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run. `assay capability add intent` remains a compatible legacy entrance; `assay reconcile --apply` adopts its existing files into the plugin receipt without moving or rewriting intent records.
 
-Project Authority gives project-specific facts and constraints a real, project-owned home; it is a project area, not a fourth product or an operational plugin. Assay creates and protects the structure but does not interpret or decide its prose or Relay records. It lives at `project-authority/` in standalone workspaces and `.assay/project-authority/` in every overlay privacy mode; adding it never writes the overlay product root.
+Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Its strict `project.yaml` carries only stable identity, display name, schema version, and native authority pointer. `README.md` explains authority boundaries and `roadmap/README.md` is an intentionally schema-free placeholder. Project `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations, not init-time directories. References, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority.
 
-Intent is the most recently introduced of the four capability modules, and the one most often missing from a repo: months later the code is still there but the reason for it is not. `assay intent capture` stores the original wording, content-addressed and append-only, scoped to a registered system, so a requirement or an ADR can point back at the words it came from.
+Intent is the most recently introduced of the three capability modules, and the one most often missing from a repo: months later the code is still there but the reason for it is not. `assay intent capture` stores the original wording, content-addressed and append-only, scoped to a registered system, so a requirement or an ADR can point back at the words it came from.
 
 ## Add workspace plugins without another setup lifecycle
 

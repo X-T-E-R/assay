@@ -61,7 +61,9 @@ assay task validate [id] [--json]
 
 # Capability modules (optional features the archetype may not have enabled)
 assay capability list [--json]               # which modules are enabled, and whether by archetype or added later
-assay capability add <module>                # built-ins: adr|intent|iteration|project-authority; idempotent, safe to re-run
+assay capability add <module>                # built-ins: adr|intent|iteration; idempotent, safe to re-run
+assay project migrate-authority --dry-run    # preview retired project-authority -> native Project
+assay project migrate-authority --apply      # validated copy; source is preserved
 
 # Workspace plugins (intent is current; Trellis is a legacy surface)
 assay plugin add assay.intent
@@ -147,7 +149,7 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 
 ## Framework structure
 
-Target projects use an archetype-specific layout over a shared base (`.assay/`, `tasks/`, `systems/`, `knowledge/`; overlay resolves work folders under `.assay/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
+Target projects use an archetype-specific layout over a shared base (`.assay/`, `project/`, `tasks/`, `systems/`, `knowledge/`; overlay resolves work folders under `.assay/`). Reference and Analysis are native for every archetype but lazy outside `study`: their directories appear on the first source/reference/analysis command. Built-ins add eager directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
 
 ## Native Task
 
@@ -161,7 +163,7 @@ Standalone Tasks live under `tasks/<stable-id>/`; overlay Tasks live under
 `task.json` is a machine envelope and compatibility record; never put the Task
 contract into it. People and models edit the bounded goal, scope, task-level
 success checks, and references to governing acceptance directly in `prd.md`;
-Project Authority still owns project acceptance. Optional `design.md` and
+The native Project still owns project acceptance. Optional `design.md` and
 `research/` hold Task-local material.
 
 Write `handoff.md` only at a real continuation boundary. `checkpoint --from`
@@ -204,20 +206,20 @@ human `Task storage issues:` section), and exits 1 when any issue exists. Use
 the valid rows for discovery, but do not report the storage as healthy until
 the issues are repaired.
 
-Keep roadmaps, specifications, and acceptance in Project Authority. Keep agent
+Keep roadmaps, specifications, and acceptance in the native Project. Keep agent
 DAGs, dispatch, ownership, and permissions in the host. Relay owns fork and
 promotion semantics. Keep product learning and durable decisions in analyses,
 ADRs, and `knowledge/`. A Task never grants permission or proves acceptance.
 
 ## Capability modules
 
-`adr`, `intent`, `iteration`, and `project-authority` are optional capability modules. An archetype enables some of them at init — `study` ships `adr`, `solve` and `explore` ship `iteration`, and no archetype ships `intent` or `project-authority` — and the rest can be enabled at any time. Intent's preferred entrance is now the built-in `assay.intent` plugin.
+`adr`, `intent`, and `iteration` are optional capability modules. Every workspace instead has exactly one native Project at its work root. `study` ships `adr`; `solve` and `explore` ship `iteration`; intent's preferred entrance is the built-in `assay.intent` plugin.
 
-- When an intent command reports `capability not enabled`, run `assay plugin add assay.intent`. For ADR, iteration, or Project Authority, run `assay capability add <module>`.
+- When an intent command reports `capability not enabled`, run `assay plugin add assay.intent`. For ADR or iteration, run `assay capability add <module>`.
 - `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.
-- `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming ADR, intent, iteration, or Project Authority is unavailable.
+- `capability list` distinguishes modules provided by the archetype from modules added afterwards. Use it before assuming ADR, intent, or iteration is unavailable.
 - Capability-scaffolded files are managed files: `update` reconciles them and `check` treats their directories as required structure.
-- `assay capability add project-authority` creates `facts/`, `policy/`, `norms/`, `specs/`, and `relay/` under the workspace work root. The project owns its facts and constraints and owns and selects activation, fork, and promotion records; Relay interprets Relay documents and schemas. Assay only creates and protects the location: it creates no empty Relay activation, parses no Relay schema, and decides no fact, constraint, permission, or acceptance result. Standalone uses `project-authority/`; every overlay privacy mode uses `.assay/project-authority/` and never writes the product root implicitly.
+- The native Project defaults to exactly `project.yaml`, `README.md`, and `roadmap/README.md`. There is no roadmap item schema, CLI, or automatic Task synchronization yet. `specs/`, Project-selected `relay/`, and `extensions/` are lazy. Migrate the retired capability explicitly with `assay project migrate-authority --dry-run`, then `--apply`; migration never merges a non-empty target or deletes the source.
 - `plugin add assay.intent` declares desired plugin state, scaffolds only missing files, and records installation in `.assay/plugins.json`. `assay capability add intent` stays compatible for existing automation.
 - `reconcile` only operates on a workspace that already has `.assay/manifest.json`. It is a write-free preview unless `--apply` is present. A complete legacy intent scaffold is adopted without rewriting it; an incomplete one gets only its missing files. A converged apply does not update timestamps or append an event.
 - `assay.trellis` remains a legacy operational surface under `.assay/trellis/`. Native Tasks do not delete, rewrite, import, or automatically migrate existing Trellis state. When a workspace still uses the plugin, it does not call a Trellis CLI or depend on a root `.trellis/`, and it does not replace Assay-native Task, ADR, or intent authority.

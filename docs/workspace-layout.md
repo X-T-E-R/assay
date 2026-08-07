@@ -8,10 +8,13 @@ Use standalone when the Assay workbench is the project: studying external system
 
 ```text
 .assay/     manifest, Task context bindings, plugin receipts, version, events, migrations, backups, registries, archetypes
+project/    required native Project envelope and roadmap placeholder
 tasks/      native bounded outcomes; created when the first Task is written
 systems/    registered systems and system metadata
 knowledge/  accepted reusable decisions, patterns, guides, and troubleshooting notes
 ```
+
+Reference and Analysis are native, lazy work areas for every archetype. `study` scaffolds them eagerly; `solve`, `explore`, and custom archetypes create `references/` or `analyses/` on the first source/reference/analysis command. Their absence is healthy and `status` still reports both zones.
 
 Archetype-specific working directories sit alongside this base.
 
@@ -78,7 +81,7 @@ terminal Tasks move under `tasks/archive/<stable-id>/`.
 A Task preserves one bounded outcome across sessions, agents, compaction, and
 attempts. `.assay/task-contexts.json` stores exact host-context bindings, but
 Task never guesses current from active count, age, or title. It does not replace
-Project Authority, analyses, ADRs, `knowledge/`, or host-owned agent and
+the native Project, analyses, ADRs, `knowledge/`, or host-owned agent and
 dispatch state. See [Task records](task.md) for its lifecycle and command guide.
 
 ## Capability and plugin structure
@@ -139,11 +142,26 @@ confirmed with `--purge --yes` after backup.
 | `adr` | `knowledge/decisions/` with `README.md` and `ADR-TEMPLATE.md`, plus the `.assay/adrs.json` index. |
 | `intent` | `intent/`, `intent/original/`, and `intent/requirements/`, each with a `README.md`. |
 | `iteration` | `iterations/` and `iterations/templates/` with `README.md` and `iteration-plan.md`. |
-| `project-authority` | `project-authority/` with project-owned `facts/`, `policy/`, `norms/`, `specs/`, and `relay/` areas and managed README placeholders. |
 
 These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them; run `assay plugin list` to compare desired and installed plugin state.
 
-Project Authority follows the same work-root rule: `project-authority/` in standalone and `.assay/project-authority/` in every overlay privacy mode. The project owns the records and their meaning. Assay only manages the location, README placeholders, structural checks, updates, and conversion; it does not interpret facts, Policy, Norms, Specs, or Relay schemas. The Relay directory starts with a README only. Relay's explicit activation flow creates real activation documents when a project actually selects a workflow.
+Every workspace has a native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`. The envelope is strict and minimal; the roadmap is a placeholder without item schema or Task synchronization. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. Reference, Analysis, Task, System, ADR/knowledge, and `.assay/` runtime records remain independent authorities.
+
+```yaml
+__schema: 1
+id: 2ce70865-e604-4f40-8cfe-b13b6e99bb19
+name: Example Project
+authority:
+  mode: native
+  pointer: README.md
+```
+
+The schema is closed: extra fields, non-UUID identities, other authority modes,
+and other pointers fail `assay check`. The pointer is relative to the Project
+root, so overlay-to-standalone conversion preserves both identity and meaning.
+The `project.name`, `project.archetype`, and `project.mode` fields in
+`.assay/manifest.json` remain workspace presentation/settings compatibility
+data; the manifest is not a second Project charter or identity record.
 
 ## Intent records
 
@@ -217,4 +235,4 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, `.assay/tasks` to `tasks`, and `.assay/project-authority` to `project-authority`, carrying `.assay/task-contexts.json` and `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Task and Project Authority directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, `.assay/tasks` to `tasks`, and `.assay/project` to `project`, carrying `.assay/task-contexts.json` and `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Task and native Project directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.

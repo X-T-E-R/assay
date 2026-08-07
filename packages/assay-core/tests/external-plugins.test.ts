@@ -167,6 +167,23 @@ describe("external plugin descriptor control plane", () => {
         },
       }),
     ).rejects.toThrow(/descriptor failed validation/);
+    for (const projectPath of [
+      "project",
+      "project/plugin-state",
+      "Project/plugin-state",
+      "project\\plugin-state",
+      ".assay/project/plugin-state",
+    ]) {
+      await expect(
+        registerExternalPlugin({
+          root,
+          descriptor: {
+            ...fixtureDescriptor(),
+            state_ownership: [{ owner: "assay", path: projectPath }],
+          },
+        }),
+      ).rejects.toThrow(/descriptor failed validation/);
+    }
     await expect(
       registerExternalPlugin({
         root,

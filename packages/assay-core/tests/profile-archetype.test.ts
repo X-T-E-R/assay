@@ -137,12 +137,7 @@ describe("archetype loader", () => {
   });
 
   it("does not expose events as an optional capability module", () => {
-    expect(SUPPORTED_CAPABILITY_MODULES).toEqual([
-      "adr",
-      "intent",
-      "iteration",
-      "project-authority",
-    ]);
+    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["adr", "intent", "iteration"]);
   });
 
   it("loads project-local archetypes before user-global and built-in archetypes", async () => {
@@ -188,6 +183,7 @@ describe("archetype loader", () => {
       "iterations/templates",
       ".assay/backups",
       ".assay/migrations",
+      "project",
       "systems",
       "knowledge",
     ]);
@@ -309,6 +305,11 @@ describe("archetype directory purposes", () => {
       { path: "described", purpose: "What belongs in described" },
       { path: ".assay/backups", purpose: "" },
       { path: ".assay/migrations", purpose: "" },
+      {
+        path: "project",
+        purpose:
+          "Native Project charter, roadmap, specifications, selected Relay records, and extensions",
+      },
       { path: "systems", purpose: "Registered systems and local implementations" },
       { path: "knowledge", purpose: "Accepted, reusable knowledge" },
     ]);
@@ -381,8 +382,11 @@ describe("archetype directory purposes", () => {
       "attempts",
       "tools",
       "iterations",
+      "project",
       "systems",
       "knowledge",
+      "references",
+      "analyses",
     ]);
   });
 });

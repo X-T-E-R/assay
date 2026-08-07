@@ -24,10 +24,22 @@ import {
 import { FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
-import { defaultOverlayLayout, defaultStandaloneLayout, resolveWorkspaceLayout } from "./layout.js";
+import {
+  defaultOverlayLayout,
+  defaultStandaloneLayout,
+  resolveWorkspaceLayout,
+  workspaceWorkRelativePath,
+} from "./layout.js";
 import { loadLegacyManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import { archetypeAliasTarget } from "./profile.js";
+import {
+  ensureNativeProject,
+  preflightNativeProjectBoundary,
+  preflightWorkspaceManifestBoundary,
+  projectFileRelativePath,
+  projectRootRelativePath,
+} from "./project.js";
 import {
   type OperationReport,
   type UpdateAnalysis,
@@ -576,6 +588,9 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
   const root = path.resolve(options.root);
   const action = options.action ?? "skip";
   const dryRun = options.dryRun ?? false;
+  await preflightWorkspaceManifestBoundary(root);
+  const boundaryManifest = requireManifest(await loadManifest(root), root);
+  await preflightNativeProjectBoundary(root, layoutForManifest(boundaryManifest));
   const analysis = await analyzeUpdate({ root });
   const plan = await planUpdate({ root, dryRun, action });
   const report = createEmptyReport();
@@ -584,6 +599,29 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
 
   if (dryRun) {
     report.notes.push("dry-run: no changes applied");
+    const manifest = requireManifest(await loadManifest(root), root);
+    const layout = layoutForManifest(manifest);
+    const projectRoot = projectRootRelativePath(layout);
+    const legacyAuthority = workspaceWorkRelativePath(layout, "project-authority");
+    if (
+      !(await exists(path.join(root, projectRoot))) &&
+      (await exists(path.join(root, legacyAuthority)))
+    ) {
+      report.notes.push(
+        "legacy project-authority detected; run `assay project migrate-authority --dry-run` before update scaffolds a native Project",
+      );
+    } else {
+      for (const relative of [
+        projectRoot,
+        projectFileRelativePath(layout),
+        `${projectRoot}/README.md`,
+        `${projectRoot}/roadmap/README.md`,
+      ]) {
+        if (!(await exists(path.join(root, relative)))) {
+          report.notes.push(`would create native Project path: ${relative}`);
+        }
+      }
+    }
     recordAssayAgentsResult(
       report,
       await applyAssayAgentsBlock({ root, mode: agentsMode, dryRun: true }),
@@ -647,6 +685,22 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
   }
 
   recordAssayAgentsResult(report, await applyAssayAgentsBlock({ root, mode: agentsMode }));
+
+  const layout = layoutForManifest(manifest);
+  const projectRoot = projectRootRelativePath(layout);
+  const legacyAuthority = workspaceWorkRelativePath(layout, "project-authority");
+  if (
+    !(await exists(path.join(root, projectRoot))) &&
+    (await exists(path.join(root, legacyAuthority)))
+  ) {
+    report.notes.push(
+      "legacy project-authority preserved; run `assay project migrate-authority --dry-run`, then `--apply`",
+    );
+  } else {
+    const nativeProject = await ensureNativeProject(root, layout, manifest.project.name);
+    report.created_dirs.push(...nativeProject.createdDirectories);
+    report.created_files.push(...nativeProject.createdFiles);
+  }
 
   rewriteRenamedArchetype(manifest, report);
   manifest.framework_version = CURRENT_VERSION;

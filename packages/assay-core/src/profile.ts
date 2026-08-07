@@ -94,12 +94,7 @@ export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): reado
 export type ProfileTemplateEntry = ArchetypeTemplateEntry;
 export type Profile = Archetype;
 
-export const SUPPORTED_CAPABILITY_MODULES = [
-  "adr",
-  "intent",
-  "iteration",
-  "project-authority",
-] as const;
+export const SUPPORTED_CAPABILITY_MODULES = ["adr", "intent", "iteration"] as const;
 export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
 
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
@@ -150,42 +145,6 @@ export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>
     templates: [
       { path: "iterations/README.md", templateId: "iterations.readme" },
       { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" },
-    ],
-  },
-  "project-authority": {
-    dirs: [
-      {
-        path: "project-authority",
-        purpose: "Project-owned facts, policies, norms, specifications, and Relay activation",
-      },
-      { path: "project-authority/facts", purpose: "Project-owned factual records" },
-      { path: "project-authority/policy", purpose: "Project-owned mandatory constraints" },
-      { path: "project-authority/norms", purpose: "Project-owned overridable defaults" },
-      { path: "project-authority/specs", purpose: "Project-owned named-object specifications" },
-      { path: "project-authority/relay", purpose: "Project-owned Relay activation records" },
-    ],
-    templates: [
-      { path: "project-authority/README.md", templateId: "project.authority.readme" },
-      {
-        path: "project-authority/facts/README.md",
-        templateId: "project.authority.facts.readme",
-      },
-      {
-        path: "project-authority/policy/README.md",
-        templateId: "project.authority.policy.readme",
-      },
-      {
-        path: "project-authority/norms/README.md",
-        templateId: "project.authority.norms.readme",
-      },
-      {
-        path: "project-authority/specs/README.md",
-        templateId: "project.authority.specs.readme",
-      },
-      {
-        path: "project-authority/relay/README.md",
-        templateId: "project.authority.relay.readme",
-      },
     ],
   },
 };
@@ -301,6 +260,11 @@ const BASE_ARCHETYPE: Archetype = {
   dirs: [
     { path: `${MANAGED_DIR}/backups`, purpose: "" },
     { path: `${MANAGED_DIR}/migrations`, purpose: "" },
+    {
+      path: "project",
+      purpose:
+        "Native Project charter, roadmap, specifications, selected Relay records, and extensions",
+    },
     { path: "systems", purpose: "Registered systems and local implementations" },
     { path: "knowledge", purpose: "Accepted, reusable knowledge" },
   ],

@@ -40,7 +40,7 @@ The manifest carries a `layout` block so runtime code asks "where is `references
 ```
 
 In overlay mode, `references`, `analyses`, `iterations`, `knowledge`, native
-`tasks`, optional `project-authority`, and `systems_contracts` all resolve under
+`tasks`, native `project`, and `systems_contracts` all resolve under
 `.assay/`. Native Task storage follows `work_root` directly, so it does not need a
 separate entry in `layout.paths`.
 
@@ -212,7 +212,7 @@ It should:
 4. Copy `.assay/iterations` to `../product-assay/iterations`.
 5. Copy `.assay/knowledge` to `../product-assay/knowledge`.
 6. Copy `.assay/tasks` to `../product-assay/tasks` without merging or overwriting a non-empty target.
-7. Copy optional `.assay/project-authority` to `../product-assay/project-authority` without changing bytes or merging a non-empty target.
+7. Copy `.assay/project` to `../product-assay/project` without changing bytes or merging a non-empty target.
 8. Carry `.assay/task-contexts.json` with the rest of Assay state under `../product-assay/.assay`.
 9. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
 10. Leave the product repo and its `.git/` untouched.
@@ -225,7 +225,7 @@ In-place conversion is allowed only with an explicit destructive flag, because i
 
 `assay update` resolves managed template paths through the layout path map. In overlay mode every managed template is written under `.assay/`, and the root files `attach` promises not to touch — `README.md`, `.gitignore`, `AGENTS.md` — are never created or overwritten, including with `--force`.
 
-This includes the optional Project Authority capability: it lives under `.assay/project-authority/` for `private`, `private-git`, and `tracked` overlays. Publishing or projecting it into the product root would be a separate explicit action and is not part of `capability add`.
+The native Project lives under `.assay/project/` for every overlay privacy mode and is hoisted to `project/` on conversion. The product root is never an implicit Project writer.
 
 ## Validation loop
 

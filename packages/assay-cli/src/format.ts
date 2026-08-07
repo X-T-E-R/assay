@@ -449,6 +449,13 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
         `Installed version: ${result.installedVersion ?? "unknown"}`,
         `Layout version: ${result.layoutVersion ?? "unknown"}`,
         `Project: ${result.project ?? "unknown"}`,
+        ...(result.nativeProject
+          ? [
+              `Native Project: ${result.nativeProject.name} (${result.nativeProject.id})`,
+              `Project envelope: ${result.nativeProject.path}`,
+              `Project authority: ${result.nativeProject.authority}`,
+            ]
+          : []),
         ...semantics,
         `Managed files: ${result.managedFiles}`,
       ]

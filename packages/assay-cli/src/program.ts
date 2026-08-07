@@ -89,6 +89,7 @@ import {
   listTrellisWorkers,
   loadManifest,
   migrateLayout,
+  migrateProjectAuthority,
   mutateTrellisLease,
   observeExternalPluginFromFile,
   parseTrellisJson,
@@ -433,8 +434,6 @@ function capabilityAddNextLine(module: string): string {
       return 'Next: `assay intent capture --text "<what the product is for>"`.';
     case "iteration":
       return 'Next: `assay iteration start "<what you are changing>"`.';
-    case "project-authority":
-      return "Next: add project-owned facts, policies, norms, specs, or Relay records in the scaffolded Project Authority directory.";
     default:
       return "Next: `assay capability list` shows what this workspace now has.";
   }
@@ -711,6 +710,38 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         return;
       }
       writeLine(output, "stdout", formatProjectList("tracked Assay projects", records));
+    });
+
+  const project = program
+    .command("project")
+    .description("Inspect and migrate the workspace's native Project");
+
+  project
+    .command("migrate-authority")
+    .description("Safely copy the retired project-authority capability into the native Project")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .addOption(new Option("--dry-run", "preview without writing").conflicts("apply"))
+    .addOption(new Option("--apply", "apply the validated copy").conflicts("dryRun"))
+    .action(async (commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await migrateProjectAuthority({
+        root,
+        apply: commandOptions.apply === true,
+      });
+      writeLine(
+        output,
+        "stdout",
+        [
+          `Project authority migration: ${result.apply ? "applied" : "dry-run"}`,
+          `Source: ${result.source} (preserved)`,
+          `Target: ${result.target}`,
+          `Entries: ${result.entries.join(", ") || "(none)"}`,
+          result.removedCapability
+            ? "Manifest: retired project-authority capability will be removed"
+            : "Manifest: no retired capability entry",
+          ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+        ].join("\n"),
+      );
     });
 
   projects

@@ -29,7 +29,7 @@ tasks/
 `task.json` lets the CLI identify and validate the Task. Keep contract prose out
 of it. Write the bounded goal, scope, task-level success checks, and references
 to governing acceptance in `prd.md`; both people and models edit that file
-directly. Project acceptance itself remains with Project Authority.
+directly. Project acceptance itself remains with the native Project.
 
 `create` starts `prd.md` with this clean-room template, using the description as
 the Goal when one was supplied and the title otherwise:
@@ -206,7 +206,7 @@ when a stale writer must fail rather than overwrite newer state.
 | Concern | Owner |
 | --- | --- |
 | Task contract and continuation identity | native Task files |
-| Roadmap, project specifications, and acceptance | Project Authority |
+| Roadmap, project specifications, and acceptance | native Project |
 | Agent DAG, dispatch, owner, and execution permissions | host runtime |
 | Fork, activation, and promotion semantics | Relay |
 | Durable product decisions and reusable learning | ADRs, analyses, and `knowledge/` |

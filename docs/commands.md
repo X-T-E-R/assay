@@ -127,7 +127,7 @@ Every Task directory requires `task.json` and `prd.md`. `task.json` is the
 machine envelope and compatibility metadata; reader-facing goals, scope,
 task-level success checks, and links to governing acceptance belong in
 `prd.md`, which people and models edit directly. Project acceptance itself
-remains with Project Authority.
+remains with the native Project.
 
 Optional `design.md` and `research/` hold Task-local material. Add
 `handoff.md` only at a real continuation boundary. It is a replaceable
@@ -179,7 +179,7 @@ bindings without changing them.
 `assay check` includes the same Task integrity checks in its workspace-wide
 report.
 
-Roadmaps, specifications, and acceptance remain with Project Authority. Agent
+Roadmaps, specifications, and acceptance remain with the native Project. Agent
 DAGs, dispatch, ownership, and execution permissions remain with the host.
 Relay owns fork and promotion semantics. See [Task records](task.md) for the
 file contract and operating boundaries.
@@ -349,12 +349,12 @@ assay convert --to standalone --target ../existing-repo-assay
 
 The new workbench hoists `.assay/references` to `references`,
 `.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`,
-`.assay/project-authority` to `project-authority`, and so on. Assay state travels
+`.assay/project` to `project`, and so on. Assay state travels
 with it, including `.assay/task-contexts.json` and the legacy
 `.assay/trellis/` runtime state.
 
-Task and Project Authority directories are copied or moved without merging.
-Conversion refuses a non-empty target `tasks/` or `project-authority/` before
+Task and native Project directories are copied or moved without merging.
+Conversion refuses a non-empty target `tasks/` or `project/` before
 writing any target state. The original product repo is registered as the
 primary independent system by relative path (`../existing-repo`).
 
@@ -531,7 +531,7 @@ Assay stores captured text as given. Redact credentials and personal data before
 
 ## Capability modules
 
-Capability modules are optional workspace features: `adr` enables the ADR commands and index, `intent` enables the intent commands and directories, `iteration` enables the iteration commands and templates, and `project-authority` creates the project-owned home for facts, Policy, Norms, Specs, and Relay records. An archetype turns some of them on at init, and `capability add` turns the rest on later, so the archetype chosen at init does not lock the workspace out of a capability it needs afterwards.
+Capability modules are optional workspace features: `adr` enables the ADR commands and index, `intent` enables the intent commands and directories, `iteration` enables the iteration commands and templates. An archetype turns some of them on at init, and `capability add` turns the rest on later, so the archetype chosen at init does not lock the workspace out of a capability it needs afterwards.
 
 ```bash
 assay capability add <module> [--root <dir>]
@@ -543,18 +543,17 @@ assay capability list [--root <dir>] [--json]
 ```bash
 assay capability add adr        # an explore workspace gains knowledge/decisions/ and adr commands
 assay adr new "Adopt overlay layout"
-assay capability add project-authority
 ```
 
 `capability list` shows every module with how the workspace obtained it: `archetype` for modules the archetype provides, `added` for modules enabled afterwards.
 
 Templates a capability scaffolds are managed files like any other, so `assay update` reconciles them and `assay check` reports the module's directories as required structure.
 
-Project Authority is a project-owned area, not a fourth product or an operational plugin. It resolves through the existing work root: `project-authority/` in standalone and `.assay/project-authority/` in every overlay privacy mode. The project owns its facts and constraints and owns and selects activation, fork, and promotion records; Relay interprets Relay documents and schemas. Assay only scaffolds and protects the location, checks structure and managed-file integrity, and carries the directory through conversion. It does not create `relay/activation.json`, parse Relay schemas, decide facts or constraints, grant permission, or accept results. Acceptance requirements belong in the governing Policy or named-object Spec rather than a separate directory.
+Every workspace has one native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Its default shape is exactly `project.yaml`, `README.md`, and `roadmap/README.md`; roadmap items have no schema or CLI in this release. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. For a legacy workspace, run `assay project migrate-authority --dry-run` followed by `--apply` before ordinary update. Migration copies the retired `project-authority/` capability without merging or deleting its source; `update` detects that input and leaves it untouched until the explicit migration runs.
 
 ## Custom archetypes
 
-Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `intent`, `iteration`, `project-authority`), `dirs`, and `templates`.
+Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `intent`, `iteration`), `dirs`, and `templates`.
 
 Template entries can carry their own content, so an archetype pack does not depend on built-in templateIds:
 

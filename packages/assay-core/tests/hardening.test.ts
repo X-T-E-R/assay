@@ -433,17 +433,17 @@ describe("convert carries the full workspace state to the new standalone root", 
     { label: "copy", move: false, keepOverlay: true },
     { label: "move", move: true, keepOverlay: false },
   ])(
-    "preserves Project Authority bytes during $label conversion",
+    "preserves native Project bytes during $label conversion",
     async (mode) => {
-      const root = await overlayWorkspace(`ConvertProjectAuthority-${mode.label}`);
-      await addCapability({ root, module: "project-authority" });
-      const sourceAuthority = path.join(root, ".assay", "project-authority");
-      const modifiedPolicy = Buffer.from("# Project-owned policy\r\n\r\nExact bytes.\r\n", "utf8");
-      const unknownFacts = Buffer.from([0, 1, 2, 13, 10, 255]);
-      await writeFile(path.join(sourceAuthority, "policy", "README.md"), modifiedPolicy);
-      await writeFile(path.join(sourceAuthority, "facts", "snapshot.bin"), unknownFacts);
+      const root = await overlayWorkspace(`ConvertProject-${mode.label}`);
+      const sourceProject = path.join(root, ".assay", "project");
+      const modifiedReadme = Buffer.from("# Project-owned charter\r\n\r\nExact bytes.\r\n", "utf8");
+      const extensionBytes = Buffer.from([0, 1, 2, 13, 10, 255]);
+      await writeFile(path.join(sourceProject, "README.md"), modifiedReadme);
+      await mkdir(path.join(sourceProject, "extensions"), { recursive: true });
+      await writeFile(path.join(sourceProject, "extensions", "snapshot.bin"), extensionBytes);
 
-      const target = path.join(path.dirname(root), `converted-project-authority-${mode.label}`);
+      const target = path.join(path.dirname(root), `converted-project-${mode.label}`);
       await convertOverlayToStandalone({
         root,
         target,
@@ -451,52 +451,38 @@ describe("convert carries the full workspace state to the new standalone root", 
         keepOverlay: mode.keepOverlay,
       });
 
-      expect(await readFile(path.join(target, "project-authority", "policy", "README.md"))).toEqual(
-        modifiedPolicy,
+      expect(await readFile(path.join(target, "project", "README.md"))).toEqual(modifiedReadme);
+      expect(await readFile(path.join(target, "project", "extensions", "snapshot.bin"))).toEqual(
+        extensionBytes,
       );
-      expect(
-        await readFile(path.join(target, "project-authority", "facts", "snapshot.bin")),
-      ).toEqual(unknownFacts);
-      const manifest = await loadManifest(target);
-      expect(Object.keys(manifest?.managed_files ?? {})).toContain(
-        "project-authority/policy/README.md",
-      );
-      expect(
-        Object.keys(manifest?.managed_files ?? {}).some((entry) =>
-          entry.startsWith(".assay/project-authority/"),
-        ),
-      ).toBe(false);
       expect((await checkFramework({ root: target })).ok).toBe(true);
 
       if (mode.move) {
         expect(await exists(path.join(root, ".assay"))).toBe(false);
       } else {
-        expect(await readFile(path.join(sourceAuthority, "policy", "README.md"))).toEqual(
-          modifiedPolicy,
-        );
+        expect(await readFile(path.join(sourceProject, "README.md"))).toEqual(modifiedReadme);
       }
     },
     30_000,
   );
 
-  it("rejects a Project Authority target conflict before writing any conversion output", async () => {
-    const root = await overlayWorkspace("ConvertProjectAuthorityConflict");
-    await addCapability({ root, module: "project-authority" });
-    const sourcePolicy = path.join(root, ".assay", "project-authority", "policy", "README.md");
-    const sourceBytes = await readFile(sourcePolicy);
+  it("rejects a native Project target conflict before writing any conversion output", async () => {
+    const root = await overlayWorkspace("ConvertProjectConflict");
+    const sourceReadme = path.join(root, ".assay", "project", "README.md");
+    const sourceBytes = await readFile(sourceReadme);
 
-    const target = path.join(path.dirname(root), "converted-project-authority-conflict");
-    const conflict = path.join(target, "project-authority", "policy", "README.md");
+    const target = path.join(path.dirname(root), "converted-project-conflict");
+    const conflict = path.join(target, "project", "user.md");
     await mkdir(path.dirname(conflict), { recursive: true });
     await writeFile(conflict, "# Target-owned content\n", "utf8");
 
     await expect(convertOverlayToStandalone({ root, target })).rejects.toThrow(
-      /target project-authority path already contains content/,
+      /target native Project path already contains content/,
     );
 
     expect(await readFile(conflict, "utf8")).toBe("# Target-owned content\n");
     expect(await exists(path.join(target, ".assay", "manifest.json"))).toBe(false);
-    expect(await readFile(sourcePolicy)).toEqual(sourceBytes);
+    expect(await readFile(sourceReadme)).toEqual(sourceBytes);
     expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(true);
   });
 
@@ -504,18 +490,17 @@ describe("convert carries the full workspace state to the new standalone root", 
     { label: "copy", move: false, keepOverlay: true },
     { label: "move", move: true, keepOverlay: false },
   ])(
-    "rejects an empty Project Authority target junction before $label writes or removals",
+    "rejects an empty native Project target junction before $label writes or removals",
     async (mode) => {
-      const root = await overlayWorkspace(`ConvertProjectAuthorityJunction-${mode.label}`);
-      await addCapability({ root, module: "project-authority" });
+      const root = await overlayWorkspace(`ConvertProjectJunction-${mode.label}`);
       const sourceManifest = path.join(root, ".assay", "manifest.json");
-      const sourcePolicy = path.join(root, ".assay", "project-authority", "policy", "README.md");
-      const sourceUnknown = path.join(root, ".assay", "project-authority", "facts", "owned.bin");
+      const sourceReadme = path.join(root, ".assay", "project", "README.md");
+      const sourceUnknown = path.join(root, ".assay", "project", "owned.bin");
       const unknownBytes = Buffer.from([255, 10, 0, 13, 7]);
-      await writeFile(sourcePolicy, "# Project-owned exact bytes\r\n", "utf8");
+      await writeFile(sourceReadme, "# Project-owned exact bytes\r\n", "utf8");
       await writeFile(sourceUnknown, unknownBytes);
       const manifestBytes = await readFile(sourceManifest);
-      const policyBytes = await readFile(sourcePolicy);
+      const readmeBytes = await readFile(sourceReadme);
 
       const target = path.join(path.dirname(root), `converted-pa-junction-${mode.label}`);
       const outside = path.join(path.dirname(root), `outside-pa-junction-${mode.label}`);
@@ -523,7 +508,7 @@ describe("convert carries the full workspace state to the new standalone root", 
       await mkdir(outside, { recursive: true });
       await symlink(
         outside,
-        path.join(target, "project-authority"),
+        path.join(target, "project"),
         process.platform === "win32" ? "junction" : "dir",
       );
 
@@ -539,7 +524,7 @@ describe("convert carries the full workspace state to the new standalone root", 
       expect(await readdir(outside)).toEqual([]);
       expect(await exists(path.join(target, ".assay"))).toBe(false);
       expect(await readFile(sourceManifest)).toEqual(manifestBytes);
-      expect(await readFile(sourcePolicy)).toEqual(policyBytes);
+      expect(await readFile(sourceReadme)).toEqual(readmeBytes);
       expect(await readFile(sourceUnknown)).toEqual(unknownBytes);
     },
     30_000,

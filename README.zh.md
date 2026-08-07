@@ -73,13 +73,12 @@ none。Assay 不按 active 数量、创建时间或标题推断。文件合同�
 | `adr` | 带状态和取代链的编号架构决策 | `assay capability add adr` |
 | `intent` | 原样记录当初提出的诉求，再推进为需求或 ADR | `assay plugin add assay.intent` |
 | `iteration` | 对自有系统的受控改动，可开启并按结果关闭 | `assay capability add iteration` |
-| `project-authority` | 项目自有的事实、Policy、Norms、Specs 与 Relay 激活记录 | `assay capability add project-authority` |
 
 `assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。`assay capability add intent` 仍作为兼容入口保留；`assay reconcile --apply` 会接管已有文件并补写插件回执，不移动或改写 intent 记录。
 
-Project Authority 给项目事实与项目约束一个由 Project 自己拥有的真实位置；它是项目区域，不是第四个产品，也不是 operational plugin。Assay 只创建并保护结构，不解释或裁决其中的文字与 Relay 记录。standalone 位于 `project-authority/`，所有 overlay privacy mode 都位于 `.assay/project-authority/`；添加能力不会隐式写入 overlay 产品根。
+每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。严格的 `project.yaml` 只保存稳定身份、显示名称、schema 版本和原生 authority pointer；`README.md` 说明权威边界，`roadmap/README.md` 是暂不带 schema 的占位。Project 的 `specs/`、Project 选择的 `relay/` 与 `extensions/` 都是按需创建的语义位置。Reference、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。
 
-`intent` 是四个 capability module 中最近引入的一个，也是仓库里最常缺失的一环：几个月后代码还在，当初为什么要做却已经找不到了。`assay intent capture` 按内容寻址、只追加地保存原始措辞，并绑定到已注册的系统，之后的需求或 ADR 就能指回它所依据的那段话。
+`intent` 是三个 capability module 中最近引入的一个，也是仓库里最常缺失的一环：几个月后代码还在，当初为什么要做却已经找不到了。`assay intent capture` 按内容寻址、只追加地保存原始措辞，并绑定到已注册的系统，之后的需求或 ADR 就能指回它所依据的那段话。
 
 ## 用插件扩展工作区，不增加新的 setup 生命周期
 
