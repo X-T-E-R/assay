@@ -102,4 +102,3 @@ workspace report.
 
 Use full ids for `show`, `update`, links, and filters. Assay does not guess by
 title, prefix, or suffix.
-
