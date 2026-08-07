@@ -99,6 +99,21 @@ stores v1 runtime state under `.assay/trellis/` and declares additive runtime
 capabilities. A legacy preview binding is ignored for ADR authority and removed
 on reconcile, so `assay.native` remains the decision owner.
 
+Independently packaged external descriptors use a separate control-plane file,
+`.assay/external-plugins.json`. Each record contains the validated descriptor,
+its computed SHA-256 lock, Assay's enabled flag, and at most one externally
+reported host observation. Descriptor verification, Assay enablement, host
+installation, host activation, and health remain separate fields. Missing host
+evidence stays `unobserved`/`unverifiable`; it is never inferred from the
+descriptor or payload locator. Descriptors may list several hosts and omit a
+target version rather than fabricate one; observations always name a concrete
+host version, and exact comparison occurs only when the target declared one.
+State ownership entries are either safe Assay-relative paths or opaque
+host-owned symbolic locators. Assay never resolves or deletes a host locator.
+External records contribute no native module,
+responsibility binding, decision provider, runtime hook, or workspace writer.
+Removing a record never deletes the referenced package or host-owned state.
+
 Operational v1 remains entirely project-local:
 
 ```text

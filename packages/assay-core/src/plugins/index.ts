@@ -1,5 +1,6 @@
 export * from "./authority.js";
 export * from "./confined-reader.js";
+export * from "./external.js";
 export * from "./reconcile.js";
 export * from "./registry.js";
 export * from "./state.js";

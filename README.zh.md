@@ -93,11 +93,20 @@ assay attach --name Product --plugin assay.intent
 # 也可以之后再添加。
 assay plugin add assay.intent
 assay plugin add assay.trellis
+# 从独立发布的 descriptor 注册元数据；Assay 不执行插件。
+assay plugin register ./assay-plugin.json
+assay plugin observe ./host-observation.json
 assay plugin list
 assay plugin check
 ```
 
 manifest 记录期望启用的插件和责任绑定，`.assay/plugins.json` 记录当前工作区实际安装的内容。`assay reconcile` 对照这些状态与现有文件并输出计划；默认只预览，只有加上 `--apply` 才会修改。它只收敛一个已经存在 manifest 的 Assay 工作区，不负责创建或 attach，不覆盖已有 intent 文件，也不会自动删除孤立回执。
+
+外部 descriptor 使用独立且通用的 control-plane 路径。Assay 把精确 artifact 元数据锁定在 `.assay/external-plugins.json`，只接受与 descriptor 完全匹配的 host observation，并分别呈现 descriptor verification、Assay enablement、host installation/activation 和 health。disable、enable、remove 只改变 Assay 记录；不会安装、激活、停用、卸载、导入或执行外部 package。
+
+descriptor 可以声明多个 host，未知版本时不伪造精确版本；provenance 记录 SPDX 与权威 license URL。state ownership 明确区分安全的 Assay 相对路径与不透明的 host locator，Assay 永不解析或删除后者。
+
+本仓库还包含未发布的 metadata/control-plane adapter：`packages/assay-plugin-ponytail/assay-plugin.json`。它只引用外部 Ponytail artifact，不在 host 中安装或激活 Ponytail，不执行 Ponytail，也不表示上游 Ponytail 项目认可该 adapter。
 
 添加 `assay.trellis` 只创建缺失的 `.assay/trellis/` runtime state 和安装回执；它不调用 Trellis CLI，也不依赖根目录 `.trellis/`。operational v1 提供完整 task/session/journal/config/channel/worker/mem/legacy-migration 命令族、只读外部 Channel 源迁移、带回执的旧 Codex writer hook 清理、`protocol --json` 与 Codex hook registration。外部 worker 通过 CLI 驱动持久状态机；Assay 不伪装已启动 provider process。会话指针不一致时，无 scope 的 current/context 会 fail closed。
 

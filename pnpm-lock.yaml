@@ -56,6 +56,10 @@ importers:
         specifier: workspace:*
         version: link:../assay-test-support
 
+  packages/assay-plugin-fixture: {}
+
+  packages/assay-plugin-ponytail: {}
+
   packages/assay-test-support: {}
 
 packages:

@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { ADRS_FILE, CURRENT_VERSION, MANIFEST_FILE, PLUGINS_STATE_FILE } from "../constants.js";
-import { FrameworkError, FrameworkNotFoundError } from "../errors.js";
+import { FrameworkError, FrameworkNotFoundError, InvalidManifestError } from "../errors.js";
 import { appendEvent } from "../events.js";
 import {
   defaultStandaloneLayout,
@@ -35,6 +35,14 @@ import {
   normalizeProviderTarget,
 } from "./authority.js";
 import {
+  EXTERNAL_PLUGIN_SPI_VERSION,
+  type ExternalPluginStatus,
+  externalPluginCheckRows,
+  listExternalPlugins,
+  loadExternalPluginsState,
+  setExternalPluginEnabled,
+} from "./external.js";
+import {
   DECISION_GOVERNANCE_RESPONSIBILITY,
   type PluginDefinition,
   getPluginDefinition,
@@ -55,7 +63,11 @@ import {
   withTrellisLock,
 } from "./trellis-storage.js";
 
-export type PluginDesiredSource = "manifest" | "archetype" | "legacy-capability";
+export type PluginDesiredSource =
+  | "manifest"
+  | "archetype"
+  | "legacy-capability"
+  | "external-descriptor";
 export type PluginReconcileAction = "install" | "adopt" | "repair" | "refresh" | "noop" | "blocked";
 
 export interface PluginReconcileEntry {
@@ -127,8 +139,10 @@ export interface PluginStatus {
   readonly missingPaths: readonly string[];
   readonly observations: ProviderObservation | null;
   readonly desiredSources: readonly PluginDesiredSource[];
-  readonly action: PluginReconcileAction | "available" | "orphan";
+  readonly action: PluginReconcileAction | "available" | "orphan" | "disabled";
   readonly message: string;
+  /** Present only for descriptor-only plugins operated by an external host. */
+  readonly external?: ExternalPluginStatus;
 }
 
 export interface ListPluginsResult {
@@ -731,6 +745,23 @@ export async function removePlugin(options: {
   const root = path.resolve(options.root);
   const id = resolvePluginId(options.plugin);
   if (id !== "assay.trellis") {
+    const external = (await loadExternalPluginsState(root))?.plugins[id];
+    if (external && options.mode === "disable" && !options.purge) {
+      const result = await setExternalPluginEnabled({
+        root,
+        plugin: id,
+        enabled: false,
+        ...(options.now ? { now: options.now } : {}),
+      });
+      return {
+        root,
+        plugin: id,
+        mode: "disable",
+        changed: result.changed,
+        hookRemoved: false,
+        dataPreserved: true,
+      };
+    }
     throw new FrameworkError("plugin disable/uninstall currently supports assay.trellis only");
   }
   if (options.mode === "disable" && options.purge) {
@@ -1062,10 +1093,37 @@ async function statusForWorkspace(root: string): Promise<{
 export async function listPlugins(rootValue: string): Promise<ListPluginsResult> {
   const root = path.resolve(rootValue);
   const { manifest, statuses, responsibilities } = await statusForWorkspace(root);
+  const externalStatuses = await listExternalPlugins(root);
   return {
     root,
     project: manifest.project.name,
-    plugins: statuses,
+    plugins: [
+      ...statuses,
+      ...externalStatuses.map(
+        (external): PluginStatus => ({
+          id: external.id,
+          kind: "external-descriptor",
+          supported: true,
+          desired: external.assayEnabled,
+          installed: false,
+          protocolVersion: EXTERNAL_PLUGIN_SPI_VERSION,
+          stateVersion: 1,
+          healthy: external.health === "healthy",
+          health: external.health,
+          contributedCapabilities: [],
+          runtimeCapabilities: [],
+          operationalResponsibilities: [],
+          providedResponsibilities: [],
+          activeResponsibilities: [],
+          missingPaths: [],
+          observations: null,
+          desiredSources: external.assayEnabled ? ["external-descriptor"] : [],
+          action: external.assayEnabled ? "noop" : "disabled",
+          message: external.message,
+          external,
+        }),
+      ),
+    ].sort((left, right) => left.id.localeCompare(right.id)),
     responsibilities,
   };
 }
@@ -1137,11 +1195,15 @@ export async function collectPluginCheckRows(rootValue: string): Promise<CheckRo
         });
       }
     }
+    rows.push(...(await externalPluginCheckRows(root)));
     return rows;
   } catch (error) {
     return [
       {
-        path: PLUGINS_STATE_FILE,
+        path:
+          error instanceof InvalidManifestError
+            ? relativeDisplayPath(error.path, root)
+            : PLUGINS_STATE_FILE,
         status: "error",
         message: error instanceof Error ? error.message : "plugin state check failed",
       },

@@ -100,6 +100,9 @@ assay attach --name Product --plugin assay.intent
 # Or add it later.
 assay plugin add assay.intent
 assay plugin add assay.trellis
+# Register metadata from an independently packaged descriptor; Assay executes nothing.
+assay plugin register ./assay-plugin.json
+assay plugin observe ./host-observation.json
 assay plugin list
 assay plugin check
 ```
@@ -110,6 +113,21 @@ with the existing files and prints a plan; it is a dry-run unless `--apply` is
 given. Reconcile only converges plugins in a workspace that already has an
 Assay manifest. It never creates or attaches a workspace, overwrites existing
 intent files, or removes an orphaned plugin receipt.
+
+External descriptors take a separate generic control-plane path. Assay locks
+their exact artifact metadata in `.assay/external-plugins.json`, accepts only a
+matching host-reported observation, and keeps descriptor verification, Assay
+enablement, host installation/activation, and health separate. Disable,
+re-enable, and remove affect Assay records only; they do not install, activate,
+deactivate, uninstall, import, or execute the external package.
+Descriptors can name multiple hosts without inventing versions, carry SPDX and
+license-source metadata, and distinguish safe Assay-relative state from opaque
+host-owned locators that Assay never resolves or deletes.
+
+This repository also includes the unpublished metadata/control-plane adapter
+`packages/assay-plugin-ponytail/assay-plugin.json`. It only references the
+external Ponytail artifact: it does not install or activate Ponytail in a host,
+execute it, or imply endorsement by the upstream Ponytail project.
 
 Adding `assay.trellis` creates only its missing `.assay/trellis/` runtime state
 and installation receipt. It does not invoke a Trellis CLI or depend on a root

@@ -197,6 +197,14 @@ export function formatPluginList(result: ListPluginsResult): string {
   return [
     `Plugins for ${result.project}:`,
     ...result.plugins.map((plugin) => {
+      if (plugin.external) {
+        const external = plugin.external;
+        const observedHost =
+          external.observedHost && external.observedHostVersion
+            ? `${external.observedHost}@${external.observedHostVersion}`
+            : "(none)";
+        return `  - ${plugin.id} (external descriptor): descriptor ${external.descriptorVerification}; payload ${external.payload.ref} referenced; Assay ${external.assayEnabled ? "enabled" : "disabled"}; observed host ${observedHost}; host installation ${external.hostInstallation}; host activation ${external.hostActivation}; health ${external.health}; execution ${external.executionOwner}; Assay executes nothing`;
+      }
       const desired = plugin.desired
         ? `desired by ${plugin.desiredSources.join(", ")}`
         : "not desired";
