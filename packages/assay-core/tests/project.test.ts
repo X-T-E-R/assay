@@ -9,18 +9,24 @@ import {
   addReference,
   addSource,
   applyUpdate,
+  archiveRoadmap,
   attachExistingRepo,
   checkFramework,
   convertOverlayToStandalone,
   createAnalysis,
+  createRoadmap,
   getFrameworkStatus,
   initFramework,
   loadManifest,
   loadNativeProject,
   migrateProjectAuthority,
+  realizeRoadmap,
   recordManagedFile,
   resolveWorkspaceLayout,
   saveManifest,
+  setConvertRoadmapProbeForTests,
+  showRoadmap,
+  updateRoadmap,
 } from "../src/index.js";
 
 const tempDirs = createTempDirectoryFixture("assay-core-project");
@@ -30,6 +36,7 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
+  setConvertRoadmapProbeForTests(undefined);
   await tempDirs.cleanup();
 });
 
@@ -83,9 +90,25 @@ describe("native Project scaffold", () => {
     const root = path.join(await tempDirs.createTempDir(), "stable");
     await initFramework({ target: root, name: "Stable", archetype: "solve" });
     const first = await nativeProject(root);
+    expect(first.id).toBe("project-stable");
     await initFramework({ target: root, name: "Stable", archetype: "solve" });
     await applyUpdate({ root });
     expect((await nativeProject(root)).id).toBe(first.id);
+  });
+
+  it("rejects an unpublished UUID-shaped native Project id", async () => {
+    const root = path.join(await tempDirs.createTempDir(), "uuid-project-id");
+    await initFramework({ target: root, name: "Readable only", archetype: "solve" });
+    const file = path.join(root, "project", "project.yaml");
+    await writeFile(
+      file,
+      (await readFile(file, "utf8")).replace(
+        /^id: .*$/m,
+        "id: 123e4567-e89b-42d3-a456-426614174000",
+      ),
+      "utf8",
+    );
+    expect((await checkFramework({ root })).ok).toBe(false);
   });
 
   it("fails check for a malformed or open-ended Project envelope", async () => {
@@ -93,7 +116,7 @@ describe("native Project scaffold", () => {
     await initFramework({ target: root, name: "Invalid", archetype: "study" });
     await writeFile(
       path.join(root, "project", "project.yaml"),
-      "__schema: 1\nid: not-a-uuid\nname: Invalid\nauthority:\n  mode: native\n  pointer: README.md\nextra: forbidden\n",
+      "__schema: 1\nid: not-readable\nname: Invalid\nauthority:\n  mode: native\n  pointer: README.md\nextra: forbidden\n",
       "utf8",
     );
     const check = await checkFramework({ root });
@@ -188,9 +211,7 @@ describe("native Project scaffold", () => {
     check = await checkFramework({ root });
     expect(check.ok).toBe(false);
     expect(
-      check.rows.some(
-        (row) => row.status === "error" && row.message?.includes("roadmap placeholder"),
-      ),
+      check.rows.some((row) => row.status === "error" && row.message?.includes("roadmap guide")),
     ).toBe(true);
     await applyUpdate({ root });
 
@@ -474,5 +495,111 @@ describe("Project conversion", () => {
     expect((await nativeProject(target)).id).toBe(before.id);
     const check = await checkFramework({ root: target });
     expect(check.ok, JSON.stringify(check.rows, null, 2)).toBe(true);
+  }, 60_000);
+
+  it("serializes create, update, and archive across a copy conversion", async () => {
+    const root = await productRepo("convert-roadmap-source");
+    await attachExistingRepo({
+      root,
+      name: "Convert Roadmap",
+      archetype: "explore",
+      noTrack: true,
+    });
+    const editable = await createRoadmap({ root, title: "Editable" });
+    const archivable = await realizeRoadmap({
+      root,
+      id: (await createRoadmap({ root, title: "Archivable" })).item.id,
+    });
+    const target = path.join(path.dirname(root), "convert-roadmap-target");
+    let enteredResolve: (() => void) | undefined;
+    let releaseResolve: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => {
+      enteredResolve = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    setConvertRoadmapProbeForTests(async () => {
+      enteredResolve?.();
+      await release;
+    });
+    const converting = convertOverlayToStandalone({ root, target });
+    await entered;
+    const settled = { create: false, update: false, archive: false };
+    const creating = createRoadmap({ root, title: "Concurrent" }).finally(() => {
+      settled.create = true;
+    });
+    const updating = updateRoadmap({ root, id: editable.item.id, title: "Updated" }).finally(() => {
+      settled.update = true;
+    });
+    const archiving = archiveRoadmap({ root, id: archivable.item.id }).finally(() => {
+      settled.archive = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(settled).toEqual({ create: false, update: false, archive: false });
+    releaseResolve?.();
+    await converting;
+    const created = await creating;
+    await Promise.all([updating, archiving]);
+
+    expect((await showRoadmap({ root, id: editable.item.id })).item.title).toBe("Updated");
+    expect((await showRoadmap({ root, id: archivable.item.id })).archived).toBe(true);
+    expect((await showRoadmap({ root, id: created.item.id })).item.title).toBe("Concurrent");
+    expect((await showRoadmap({ root: target, id: editable.item.id })).item.title).toBe("Editable");
+    expect((await showRoadmap({ root: target, id: archivable.item.id })).archived).toBe(false);
+    await expect(showRoadmap({ root: target, id: created.item.id })).rejects.toMatchObject({
+      code: "ROADMAP_NOT_FOUND",
+    });
+  }, 60_000);
+
+  it("fails a queued Roadmap create after a move instead of recreating Project", async () => {
+    const root = await productRepo("convert-roadmap-move-source");
+    await attachExistingRepo({ root, name: "Move Roadmap", archetype: "explore", noTrack: true });
+    await createRoadmap({ root, title: "Moved" });
+    const target = path.join(path.dirname(root), "convert-roadmap-move-target");
+    let enteredResolve: (() => void) | undefined;
+    let releaseResolve: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => {
+      enteredResolve = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    setConvertRoadmapProbeForTests(async () => {
+      enteredResolve?.();
+      await release;
+    });
+    const converting = convertOverlayToStandalone({ root, target, move: true });
+    await entered;
+    let createSettled = false;
+    const creating = createRoadmap({ root, title: "Must not appear" }).finally(() => {
+      createSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(createSettled).toBe(false);
+    releaseResolve?.();
+    await converting;
+    await expect(creating).rejects.toMatchObject({ code: "ROADMAP_PROJECT_INVALID" });
+    expect(await exists(path.join(root, ".assay", "project"))).toBe(false);
+    expect((await showRoadmap({ root: target, id: "roadmap-0001-moved" })).item.title).toBe(
+      "Moved",
+    );
+  }, 60_000);
+
+  it("fails conversion before writes when the Roadmap coordination path is redirected", async () => {
+    const root = await productRepo("convert-roadmap-lock-redirect");
+    await attachExistingRepo({ root, name: "Redirect Lock", archetype: "explore", noTrack: true });
+    await createRoadmap({ root, title: "Protected" });
+    const locks = path.join(root, ".assay", "roadmap-locks");
+    const outside = path.join(path.dirname(root), "outside-roadmap-locks");
+    await rm(locks, { recursive: true, force: true });
+    await mkdir(outside, { recursive: true });
+    await symlink(outside, locks, process.platform === "win32" ? "junction" : "dir");
+    const target = path.join(path.dirname(root), "convert-roadmap-lock-target");
+    await expect(convertOverlayToStandalone({ root, target })).rejects.toMatchObject({
+      code: "ROADMAP_STORAGE_BOUNDARY",
+    });
+    expect(await exists(target)).toBe(false);
+    expect(await readdir(outside)).toEqual([]);
   }, 60_000);
 });

@@ -17,6 +17,7 @@ import { relativeDisplayPath } from "./paths.js";
 import { reconcilePlugins } from "./plugins/reconcile.js";
 import { DECISION_GOVERNANCE_RESPONSIBILITY, TRELLIS_PLUGIN_ID } from "./plugins/registry.js";
 import { dirsForArchetype, loadArchetype } from "./profile.js";
+import { withRoadmapGlobalCoordination } from "./roadmap.js";
 import type { FrameworkManifest, SystemRecord, WorkspaceLayout } from "./schemas/index.js";
 import { adrIndexSchema } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
@@ -69,6 +70,14 @@ const RELOCATED_PATH_KEYS = [
   "systems_contracts",
 ] as const satisfies readonly (keyof WorkspaceLayout["paths"])[];
 
+type ConvertRoadmapProbe = () => void | Promise<void>;
+let roadmapCoordinationProbe: ConvertRoadmapProbe | undefined;
+
+/** Test-only hook after conversion preflight while Roadmap coordination is held. */
+export function setConvertRoadmapProbeForTests(probe: ConvertRoadmapProbe | undefined): void {
+  roadmapCoordinationProbe = probe;
+}
+
 async function exists(target: string): Promise<boolean> {
   try {
     const { stat } = await import("node:fs/promises");
@@ -90,6 +99,34 @@ async function exists(target: string): Promise<boolean> {
  * is registered as the primary independent system by relative path.
  */
 export async function convertOverlayToStandalone(
+  options: ConvertOverlayOptions,
+): Promise<ConvertOverlayResult> {
+  const sourceRoot = path.resolve(options.root);
+  const sourceManifest = await loadManifest(sourceRoot);
+  if (!sourceManifest) {
+    throw new FrameworkNotFoundError(
+      `No Assay manifest found at ${path.join(sourceRoot, MANIFEST_FILE)}. Run \`assay attach\` first.`,
+    );
+  }
+  const sourceLayout = resolveWorkspaceLayout(sourceManifest);
+  if (!sourceLayout || sourceLayout.mode !== "overlay") {
+    throw new FrameworkError(
+      `convert --to standalone requires an overlay workspace; ${sourceRoot} is not overlay mode.`,
+    );
+  }
+  const result = await withRoadmapGlobalCoordination(sourceRoot, () =>
+    convertOverlayToStandaloneLocked(options),
+  );
+  if (options.keepOverlay === false) {
+    return {
+      ...result,
+      overlayStateRemoved: await removeEmptiedOverlayState(sourceRoot, sourceLayout),
+    };
+  }
+  return result;
+}
+
+async function convertOverlayToStandaloneLocked(
   options: ConvertOverlayOptions,
 ): Promise<ConvertOverlayResult> {
   const sourceRoot = path.resolve(options.root);
@@ -147,6 +184,7 @@ export async function convertOverlayToStandalone(
       directory,
     );
   }
+  await roadmapCoordinationProbe?.();
   if (targetExists) {
     if (await exists(path.join(targetRoot, MANIFEST_FILE))) {
       throw new FrameworkError(
@@ -343,10 +381,7 @@ export async function convertOverlayToStandalone(
   // --move, where every Assay-owned file above was relocated to the target.
   // Anything still present (a nested `.assay/.git`, user files) is left alone
   // and reported as not removed rather than deleted silently.
-  let overlayStateRemoved = false;
-  if (!keepOverlay) {
-    overlayStateRemoved = await removeEmptiedOverlayState(sourceRoot, sourceLayout);
-  }
+  const overlayStateRemoved = false;
 
   return {
     sourceRoot,

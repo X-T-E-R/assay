@@ -6,6 +6,8 @@
 - `commands.md` is the full command reference.
 - `task.md` explains native Task directories, continuation checkpoints, current
   bindings, relationships, and authority boundaries.
+- `roadmap.md` explains native Roadmap item storage, lifecycle, Task links, and
+  graph constraints.
 - `donor-adoption.md` explains the donor relationship, evidence, and decision
   lifecycle for tracking adopted source material across target systems.
 - `workspace-layout.md` describes the base and archetype-specific directory structure.

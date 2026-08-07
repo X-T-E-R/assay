@@ -44,7 +44,7 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 | Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, iterations |
 | Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
 
-The three built-ins cover the three shapes work actually takes: study outside examples, solve a measurable target, or explore when the target shape is still open. A workspace that needs a different structure declares its own archetype YAML under `.assay/archetypes/` or `~/.assay/archetypes/`; see `docs/workspace-layout.md`. The command surface stays small: `task`, `source`, `analysis`, `donor`, `intent`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+The three built-ins cover the three shapes work actually takes: study outside examples, solve a measurable target, or explore when the target shape is still open. A workspace that needs a different structure declares its own archetype YAML under `.assay/archetypes/` or `~/.assay/archetypes/`; see `docs/workspace-layout.md`. The command surface stays small: `task`, `roadmap`, `source`, `analysis`, `donor`, `intent`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
 
 ## Keep one outcome intact across context resets
 
@@ -53,7 +53,7 @@ agents, compaction, and repeated attempts. A Task is a plain directory with a
 machine-readable `task.json` envelope and a reader-editable `prd.md` contract.
 Add `handoff.md` only when another session or agent needs a real continuation
 checkpoint. Several Tasks can be active at once, including Tasks with the same
-title; commands address them by stable UUID.
+title; records use readable stable ids such as `task-0001-ship-native-task`.
 
 Tasks live in `tasks/<id>/` in standalone workspaces and
 `.assay/tasks/<id>/` in overlays. Finishing a Task records its lifecycle state;
@@ -78,7 +78,7 @@ Capability modules are optional features. An archetype enables some at init; the
 
 `assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run. `assay capability add intent` remains a compatible legacy entrance; `assay reconcile --apply` adopts its existing files into the plugin receipt without moving or rewriting intent records.
 
-Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Its strict `project.yaml` carries only stable identity, display name, schema version, and native authority pointer. `README.md` explains authority boundaries and `roadmap/README.md` is an intentionally schema-free placeholder. Project `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations, not init-time directories. References, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority.
+Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Project ids use `project-<slug>`. `README.md` explains authority boundaries. Roadmap items live under `roadmap/<roadmap-id>/`, with closed machine state in `item.yaml` and reader-owned outcome prose in `outcome.md`; the root `roadmap/README.md` is explanatory, not a dynamic index. Project `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. References, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority. See [Roadmap items](docs/roadmap.md).
 
 Intent is the most recently introduced of the three capability modules, and the one most often missing from a repo: months later the code is still there but the reason for it is not. `assay intent capture` stores the original wording, content-addressed and append-only, scoped to a registered system, so a requirement or an ADR can point back at the words it came from.
 

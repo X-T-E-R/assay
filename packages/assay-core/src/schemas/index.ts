@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isReadableId } from "../readable-id.js";
+
 export const managedFileRecordSchema = z
   .object({
     template_id: z.string().min(1),
@@ -19,7 +21,7 @@ export const projectModeSchema = z.enum(["learning", "absorption"]);
 export const nativeProjectSchema = z
   .object({
     __schema: z.literal(1),
-    id: z.string().uuid(),
+    id: z.string().refine((value) => isReadableId("project", value), "invalid native Project id"),
     name: z.string().trim().min(1),
     authority: z
       .object({

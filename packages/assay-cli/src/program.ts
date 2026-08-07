@@ -181,6 +181,7 @@ import {
   formatTrellisTask,
   formatUpdateResult,
 } from "./format.js";
+import { addRoadmapCommand } from "./roadmap-command.js";
 import { addTaskCommand } from "./task-command.js";
 
 export interface CliOutput {
@@ -1056,6 +1057,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     });
 
   addTaskCommand(program, { output, resolveRoot: discoveredRoot });
+  addRoadmapCommand(program, { output, resolveRoot: discoveredRoot });
 
   const trellis = program
     .command("trellis")

@@ -7,7 +7,7 @@ the same; a new attempt is not a new product object in v0.1.
 
 A Task is not a permission token, an acceptance decision, or an agent job. It
 is a file-based contract and continuation anchor that other tools can address
-by stable UUID.
+by a stable id. Tasks use `task-0001-<slug>`.
 
 ## Files in a Task
 
@@ -16,14 +16,14 @@ under `.assay/tasks/`.
 
 ```text
 tasks/
-  <stable-uuid>/
+  task-0001-<slug>/
     task.json        required machine envelope and compatibility metadata
     prd.md           required reader-editable Task contract
     handoff.md       optional replaceable continuation checkpoint
     design.md        optional Task-local design
     research/        optional Task-local research
   archive/
-    <stable-uuid>/   explicitly archived terminal Tasks
+    <stable-id>/     explicitly archived terminal Tasks
 ```
 
 `task.json` lets the CLI identify and validate the Task. Keep contract prose out
@@ -87,11 +87,11 @@ itself has become independently addressable, then record a relationship if the
 lineage matters.
 
 Titles are labels, not identifiers. Multiple active Tasks and duplicate titles
-are valid. Use the stable UUID returned by `create` in commands, links, and host
+are valid. Use the full stable id returned by `create` in commands, links, and host
 bindings.
 
 The optional `name`, `creator`, `assignee`, and `priority` values are display or
-compatibility metadata. They do not replace the UUID, choose a host owner, or
+compatibility metadata. They do not replace the stable id, choose a host owner, or
 grant execution permission.
 
 ## Lifecycle
@@ -109,7 +109,7 @@ them in `handoff.md` when they affect the next step. They do not automatically
 finish or cancel the Task.
 
 `finish` marks a Task `done`. It does not move the directory to `archive/`,
-commit or push Git changes, accept the result for the project, update a roadmap,
+commit or push Git changes, accept the result for the project, realize a Roadmap item,
 change a Relay activation, or complete related Tasks. Archive a terminal Task
 with the separate `archive` command when moving it out of the live Task tree is
 actually useful.
@@ -150,6 +150,12 @@ finish another Task, or accept its result. Update each Task and each host
 binding explicitly. The `relations` command replaces the complete relation set;
 use `--clear` when the intended set is empty. Self-relations, duplicate pairs,
 missing targets, and directed cycles are rejected.
+
+Roadmap membership is not a fourth Task relation and is never stored as a Task
+back-reference. A native Roadmap item owns its canonical `task_refs`; use
+`assay roadmap link-task` and `unlink-task` to change those links. One Task may
+appear in several items, and neither Task nor Roadmap lifecycle state
+propagates through the link.
 
 ## Command surface
 

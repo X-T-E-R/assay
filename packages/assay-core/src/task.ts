@@ -9,6 +9,7 @@ import {
   workspaceWorkRelativePath,
 } from "./layout.js";
 import { loadManifest } from "./manifest.js";
+import { allocateReadableId, isReadableId, readableIdSlug } from "./readable-id.js";
 import { TASK_HANDOFF_HEADINGS, renderTaskPrd } from "./tasks/task-contract.js";
 import {
   TASK_ENVELOPE_KEYS,
@@ -33,7 +34,6 @@ const MAX_TASK_FILE_BYTES = 1024 * 1024;
 const MAX_TASK_RECORDS = 4096;
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
-const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const CHECKPOINT_TRANSACTION_FILE = ".assay-checkpoint.json";
 
 export type TaskTransactionProbeStage = "after-prepare" | "after-handoff" | "after-task";
@@ -43,10 +43,17 @@ type TaskTransactionProbe = (
 ) => "crash" | undefined | Promise<"crash" | undefined>;
 
 let transactionProbe: TaskTransactionProbe | undefined;
+type TaskArchiveProbe = (taskId: string) => void | Promise<void>;
+let archiveProbe: TaskArchiveProbe | undefined;
 
 /** Test-only crash injection at durable checkpoint transaction boundaries. */
 export function setTaskTransactionProbeForTests(probe: TaskTransactionProbe | undefined): void {
   transactionProbe = probe;
+}
+
+/** Test-only hook for allocator/archive coordination. */
+export function setTaskArchiveProbeForTests(probe: TaskArchiveProbe | undefined): void {
+  archiveProbe = probe;
 }
 
 export const TASK_WRITE_STATUSES = ["active", "paused", "done", "cancelled", "superseded"] as const;
@@ -306,7 +313,7 @@ function isTerminal(status: TaskStatus): boolean {
 }
 
 function assertTaskId(id: string): string {
-  if (!TASK_ID_PATTERN.test(id)) {
+  if (!isReadableId("task", id)) {
     throw new TaskError("TASK_ID_INVALID", `invalid task id: ${id}`, {
       details: { id },
     });
@@ -814,12 +821,7 @@ function renderTaskJson(value: Record<string, unknown>): string {
 }
 
 function slugify(title: string): string {
-  const slug = title
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+  const slug = readableIdSlug(title, 64);
   return slug || "task";
 }
 
@@ -893,6 +895,14 @@ function relationLockDirectory(location: TaskLocation): string {
   return path.join(location.locksDirectory, ".relations");
 }
 
+async function storedTaskIds(location: TaskLocation): Promise<string[]> {
+  const [live, archived] = await Promise.all([
+    listTaskDirectories(location.root, location.directory),
+    listTaskDirectories(location.root, location.archiveDirectory),
+  ]);
+  return [...live, ...archived].map((entry) => entry.name);
+}
+
 async function writeMutation(
   location: TaskLocation,
   id: string,
@@ -922,60 +932,65 @@ export async function createTask(options: CreateTaskOptions): Promise<TaskRecord
   if (title.length === 0) {
     throw new TaskError("TASK_INVALID", "task title must not be empty");
   }
-  const id = randomUUID();
   const location = await taskLocation(options.root);
-  return withTaskLock(location.root, taskLockDirectory(location, id), async () => {
-    const live = taskDirectory(location, id, false);
-    const archived = taskDirectory(location, id, true);
-    if ((await pathExists(live)) || (await pathExists(archived))) {
-      throw new TaskError("TASK_ALREADY_EXISTS", `task already exists: ${id}`);
-    }
-    const relationInput = options.relations ?? [];
-    const relations =
-      relationInput.length === 0
-        ? []
-        : await withTaskLock(location.root, relationLockDirectory(location), () =>
-            assertRelationsAcyclic(location, id, relationInput),
-          );
-    const date = (options.now ?? new Date()).toISOString().slice(0, 10);
-    const record = newTaskEnvelope({
-      id,
-      name: options.name?.trim() || slugify(title),
-      title,
-      description: options.description?.trim() ?? "",
-      status: "active",
-      priority: options.priority?.trim() || "P2",
-      creator: options.creator?.trim() ?? "",
-      assignee: options.assignee?.trim() ?? "",
-      createdAt: date,
-      meta: {
-        assay: {
-          record_version: "0.1",
-          revision: 0,
-          relations: relations.map((relation) => ({ ...relation })),
-        },
-      },
-    });
-    await mkdir(location.directory, { recursive: true });
-    await assertTaskStorageBoundary(location.root, location.directory);
-    const temporary = path.join(location.directory, `.create-${id}-${randomUUID()}`);
+  // Allocation and initial relation validation share the global graph/create
+  // lock. This makes max(live + archive) + 1 safe across concurrent creators.
+  return withTaskLock(location.root, relationLockDirectory(location), async () => {
+    let id: string;
     try {
-      await mkdir(temporary, { recursive: false });
-      await atomicWriteTaskText(
-        location.root,
-        path.join(temporary, "task.json"),
-        renderTaskJson(record as unknown as Record<string, unknown>),
-      );
-      await atomicWriteTaskText(
-        location.root,
-        path.join(temporary, "prd.md"),
-        renderTaskPrd(title, options.description),
-      );
-      await rename(temporary, live);
-    } finally {
-      await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+      id = allocateReadableId("task", title, await storedTaskIds(location));
+    } catch (error) {
+      throw new TaskError("TASK_INVALID", "task id allocation failed", { cause: error });
     }
-    return readTaskAt(location, { directory: live, archived: false }, id);
+    return withTaskLock(location.root, taskLockDirectory(location, id), async () => {
+      const live = taskDirectory(location, id, false);
+      const archived = taskDirectory(location, id, true);
+      if ((await pathExists(live)) || (await pathExists(archived))) {
+        throw new TaskError("TASK_ALREADY_EXISTS", `task already exists: ${id}`);
+      }
+      const relationInput = options.relations ?? [];
+      const relations =
+        relationInput.length === 0 ? [] : await assertRelationsAcyclic(location, id, relationInput);
+      const date = (options.now ?? new Date()).toISOString().slice(0, 10);
+      const record = newTaskEnvelope({
+        id,
+        name: options.name?.trim() || slugify(title),
+        title,
+        description: options.description?.trim() ?? "",
+        status: "active",
+        priority: options.priority?.trim() || "P2",
+        creator: options.creator?.trim() ?? "",
+        assignee: options.assignee?.trim() ?? "",
+        createdAt: date,
+        meta: {
+          assay: {
+            record_version: "0.1",
+            revision: 0,
+            relations: relations.map((relation) => ({ ...relation })),
+          },
+        },
+      });
+      await mkdir(location.directory, { recursive: true });
+      await assertTaskStorageBoundary(location.root, location.directory);
+      const temporary = path.join(location.directory, `.create-${id}-${randomUUID()}`);
+      try {
+        await mkdir(temporary, { recursive: false });
+        await atomicWriteTaskText(
+          location.root,
+          path.join(temporary, "task.json"),
+          renderTaskJson(record as unknown as Record<string, unknown>),
+        );
+        await atomicWriteTaskText(
+          location.root,
+          path.join(temporary, "prd.md"),
+          renderTaskPrd(title, options.description),
+        );
+        await rename(temporary, live);
+      } finally {
+        await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+      }
+      return readTaskAt(location, { directory: live, archived: false }, id);
+    });
   }).catch(throwStorage);
 }
 
@@ -1083,6 +1098,7 @@ export async function listTasks(options: ListTasksOptions): Promise<ListTasksRes
     throw new TaskError("TASK_INVALID", `task list limit must be between 1 and ${MAX_PAGE_SIZE}`);
   }
   const status = options.status === undefined ? undefined : normalizeStatus(options.status);
+  if (options.cursor !== undefined) assertTaskId(options.cursor);
   const location = await taskLocation(options.root);
   const validation = await allValidationEntries(location, true);
   const issues = validation.filter((entry) => !entry.valid);
@@ -1209,32 +1225,35 @@ export async function finishTask(options: FinishTaskOptions): Promise<TaskRecord
 export async function archiveTask(options: ArchiveTaskOptions): Promise<TaskRecordResult> {
   const location = await taskLocation(options.root);
   const id = assertTaskId(options.id);
-  return withTaskLock(location.root, taskLockDirectory(location, id), async () => {
-    const live = taskDirectory(location, id, false);
-    const archived = taskDirectory(location, id, true);
-    const [hasLive, hasArchived] = await Promise.all([pathExists(live), pathExists(archived)]);
-    if (hasLive && hasArchived) {
-      throw new TaskError("TASK_CONFLICT", `task exists in both live and archive storage: ${id}`);
-    }
-    if (hasArchived) {
+  return withTaskLock(location.root, relationLockDirectory(location), () =>
+    withTaskLock(location.root, taskLockDirectory(location, id), async () => {
+      const live = taskDirectory(location, id, false);
+      const archived = taskDirectory(location, id, true);
+      const [hasLive, hasArchived] = await Promise.all([pathExists(live), pathExists(archived)]);
+      if (hasLive && hasArchived) {
+        throw new TaskError("TASK_CONFLICT", `task exists in both live and archive storage: ${id}`);
+      }
+      if (hasArchived) {
+        return readTaskAt(location, { directory: archived, archived: true }, id);
+      }
+      if (!hasLive) {
+        throw new TaskError("TASK_NOT_FOUND", `task not found: ${id}`);
+      }
+      await recoverCheckpointTransaction(location, { directory: live, archived: false }, id);
+      const current = await readTaskAt(location, { directory: live, archived: false }, id);
+      await assertTaskDirectoryShape(location, live);
+      if (!isTerminal(current.task.status)) {
+        throw new TaskError("TASK_NOT_TERMINAL", `only terminal tasks can be archived: ${id}`);
+      }
+      await archiveProbe?.(id);
+      await mkdir(location.archiveDirectory, { recursive: true });
+      if (await pathExists(archived)) {
+        throw new TaskError("TASK_ALREADY_EXISTS", `archive target already exists: ${id}`);
+      }
+      await rename(live, archived);
       return readTaskAt(location, { directory: archived, archived: true }, id);
-    }
-    if (!hasLive) {
-      throw new TaskError("TASK_NOT_FOUND", `task not found: ${id}`);
-    }
-    await recoverCheckpointTransaction(location, { directory: live, archived: false }, id);
-    const current = await readTaskAt(location, { directory: live, archived: false }, id);
-    await assertTaskDirectoryShape(location, live);
-    if (!isTerminal(current.task.status)) {
-      throw new TaskError("TASK_NOT_TERMINAL", `only terminal tasks can be archived: ${id}`);
-    }
-    await mkdir(location.archiveDirectory, { recursive: true });
-    if (await pathExists(archived)) {
-      throw new TaskError("TASK_ALREADY_EXISTS", `archive target already exists: ${id}`);
-    }
-    await rename(live, archived);
-    return readTaskAt(location, { directory: archived, archived: true }, id);
-  }).catch(throwStorage);
+    }),
+  ).catch(throwStorage);
 }
 
 async function readContexts(location: TaskLocation): Promise<ContextFile> {
@@ -1263,6 +1282,7 @@ async function readContexts(location: TaskLocation): Promise<ContextFile> {
   ) {
     throw new TaskError("TASK_CONTEXT_INVALID", "task context bindings have an invalid shape");
   }
+  for (const id of Object.values(value.bindings)) assertTaskId(id as string);
   return {
     version: 1,
     bindings: { ...(value.bindings as Record<string, string>) },

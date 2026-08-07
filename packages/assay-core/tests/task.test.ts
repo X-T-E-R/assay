@@ -24,12 +24,14 @@ import {
   checkFramework,
   checkpointTask,
   clearTaskContext,
+  contextTask,
   convertOverlayToStandalone,
   createTask,
   currentTask,
   finishTask,
   initFramework,
   listTasks,
+  setTaskArchiveProbeForTests,
   setTaskRelations,
   setTaskTransactionProbeForTests,
   showTask,
@@ -116,6 +118,7 @@ afterEach(async () => {
   setTaskLockProbeForTests(undefined);
   setTaskLockWaitForTests(undefined);
   setTaskTransactionProbeForTests(undefined);
+  setTaskArchiveProbeForTests(undefined);
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -129,7 +132,7 @@ describe("native Task creation and Markdown contract", () => {
         title: "Ship Native Task",
         description: "Verify native behavior",
       });
-      expect(created.task.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(created.task.id).toBe("task-0001-ship-native-task");
       expect(created.task.status).toBe("active");
       expect(created.path).toBe(
         mode === "overlay" ? `.assay/tasks/${created.task.id}` : `tasks/${created.task.id}`,
@@ -157,6 +160,71 @@ describe("native Task creation and Markdown contract", () => {
     expect(first.task.id).not.toBe(second.task.id);
     expect(first.task.name).toBe("same-title");
     expect(second.task.name).toBe("same-title");
+  });
+
+  it("allocates under one create lock across concurrency and archived history", async () => {
+    const root = await workspace("Concurrent readable ids");
+    const [left, right] = await Promise.all([
+      createTask({ root, title: "并发" }),
+      createTask({ root, title: "并发" }),
+    ]);
+    expect(new Set([left.task.id, right.task.id])).toEqual(new Set(["task-0001", "task-0002"]));
+    await archiveTask({ root, id: (await finishTask({ root, id: left.task.id })).task.id });
+    expect((await createTask({ root, title: "Next" })).task.id).toBe("task-0003-next");
+  });
+
+  it("serializes highest-sequence archive with allocation", async () => {
+    const root = await workspace("Archive allocator lock");
+    const highest = await finishTask({
+      root,
+      id: (await createTask({ root, title: "Old slug" })).task.id,
+    });
+    let enteredResolve: (() => void) | undefined;
+    let releaseResolve: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => {
+      enteredResolve = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    setTaskArchiveProbeForTests(async () => {
+      enteredResolve?.();
+      await release;
+    });
+    const archiving = archiveTask({ root, id: highest.task.id });
+    await entered;
+    let createdSettled = false;
+    const creating = createTask({ root, title: "New slug" }).finally(() => {
+      createdSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(createdSettled).toBe(false);
+    releaseResolve?.();
+    await archiving;
+    expect((await creating).task.id).toBe("task-0002-new-slug");
+  });
+
+  it("rejects UUID-shaped ids across native lookup, context, relation, and archive APIs", async () => {
+    const root = await workspace("Readable only");
+    const task = await createTask({ root, title: "Readable" });
+    const uuid = "123e4567-e89b-42d3-a456-426614174000";
+    await expect(showTask({ root, id: uuid })).rejects.toMatchObject({ code: "TASK_ID_INVALID" });
+    await expect(bindTask({ root, contextKey: "uuid", id: uuid })).rejects.toMatchObject({
+      code: "TASK_ID_INVALID",
+    });
+    await expect(archiveTask({ root, id: uuid })).rejects.toMatchObject({
+      code: "TASK_ID_INVALID",
+    });
+    await expect(listTasks({ root, cursor: uuid })).rejects.toMatchObject({
+      code: "TASK_ID_INVALID",
+    });
+    await expect(
+      setTaskRelations({
+        root,
+        id: task.task.id,
+        relations: [{ type: "continues", task_id: uuid }],
+      }),
+    ).rejects.toMatchObject({ code: "TASK_ID_INVALID" });
   });
 
   it("writes handoff only at a valid explicit checkpoint", async () => {
@@ -225,7 +293,7 @@ describe("native Task creation and Markdown contract", () => {
     const created = await createTask({ root, title: "Checkpoint crash" });
     const initial = await checkpointTask({ root, id: created.task.id, handoff: HANDOFF });
     await bindTask({ root, contextKey: "session:checkpoint", id: created.task.id });
-    await mkdir(path.join(root, "tasks", "not-a-uuid"));
+    await mkdir(path.join(root, "tasks", "invalid-native-id"));
     setTaskTransactionProbeForTests((stage) => (stage === "after-handoff" ? "crash" : undefined));
     await expect(
       checkpointTask({
@@ -490,7 +558,7 @@ describe("native Task persistence hardening", () => {
     });
   });
 
-  it("requires UUID directory identity and keeps invalid manual ids out of list pages", async () => {
+  it("requires readable directory identity and keeps invalid manual ids out of list pages", async () => {
     const root = await workspace("StrictIdentity");
     const valid = await createTask({ root, title: "Valid sibling" });
     const manual = path.join(root, "tasks", "manual-id");
@@ -700,8 +768,11 @@ describe("native Task persistence hardening", () => {
     const validation = await validateTasks({ root });
     expect(validation.tasks.find((task) => task.id === valid.task.id)?.valid).toBe(true);
     expect(validation.context_issues).toEqual([
-      expect.objectContaining({ code: "TASK_NOT_FOUND" }),
+      expect.objectContaining({ code: "TASK_ID_INVALID" }),
     ]);
+    await expect(contextTask({ root, contextKey: "session:missing" })).rejects.toMatchObject({
+      code: "TASK_ID_INVALID",
+    });
     const check = await checkFramework({ root });
     expect(check.rows.find((row) => row.path === ".assay/task-contexts.json")).toMatchObject({
       status: "error",

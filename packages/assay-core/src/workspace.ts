@@ -77,6 +77,7 @@ import {
   validateNativeProjectStructure,
 } from "./project.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
+import { RoadmapError, validateRoadmaps } from "./roadmap.js";
 import type {
   AdrIndex,
   AdrRecord,
@@ -1684,7 +1685,33 @@ export async function checkFramework(
     });
   }
 
-  // Semantic check 8: native Task history. Task storage is optional, and one
+  // Semantic check 8: native Roadmap structure, graph, and Task references.
+  // Partial validation keeps healthy siblings visible when one item is bad.
+  try {
+    const roadmapValidation = await validateRoadmaps({ root });
+    for (const item of roadmapValidation.items) {
+      rows.push({
+        path: item.path,
+        status: item.valid ? "ok" : "error",
+        message: item.valid
+          ? "native roadmap item is valid"
+          : item.issues.map((issue) => `${issue.code}: ${issue.message}`).join("; "),
+      });
+    }
+  } catch (error) {
+    rows.push({
+      path: `${projectRootRelativePath(layout)}/roadmap`,
+      status: "error",
+      message:
+        error instanceof RoadmapError
+          ? `${error.code}: ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : "native roadmap records failed validation",
+    });
+  }
+
+  // Semantic check 9: native Task history. Task storage is optional, and one
   // malformed historical record must not hide validation results for others.
   try {
     const taskValidation = await validateTasks({ root });

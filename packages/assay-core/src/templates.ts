@@ -261,7 +261,7 @@ export function rootReadme(project: string): string {
     | Path | Purpose |
     | --- | --- |
     | \`.assay/\` | Runtime metadata: version, manifest, events, migrations, backups |
-    | \`project/\` | Native Project identity, charter, and roadmap placeholder |
+    | \`project/\` | Native Project identity, charter, and Roadmap items |
     | \`systems/\` | Registered active systems and local implementations |
     | \`knowledge/\` | Accepted reusable knowledge |
 

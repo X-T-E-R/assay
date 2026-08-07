@@ -22,12 +22,14 @@ import { fileHash } from "./hashing.js";
 import { resolveWorkspaceLayout, workspaceWorkRelativePath } from "./layout.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { relativeDisplayPath } from "./paths.js";
+import { projectReadableId } from "./readable-id.js";
 import {
   type FrameworkManifest,
   type NativeProject,
   type WorkspaceLayout,
   nativeProjectSchema,
 } from "./schemas/index.js";
+import { withTaskLock } from "./tasks/task-storage.js";
 
 export const PROJECT_SCHEMA_VERSION = 1 as const;
 export const PROJECT_AUTHORITY_MODE = "native" as const;
@@ -70,7 +72,11 @@ Project ownership does not grant plugins, Relay, Ponytail, or external tooling p
 export function projectRoadmapReadme(): string {
   return `# Roadmap
 
-This directory is the Project's roadmap location. It is intentionally a placeholder in this Assay version: there is no roadmap item schema, CLI, status machine, or automatic Task synchronization.
+This directory contains Assay-native Roadmap items. Each live item is stored at \`<id>/{item.yaml,outcome.md}\`; terminal items may be moved unchanged to \`archive/<id>/\`.
+
+The root README is explanatory only. It is never a generated index. Machine state belongs in each \`item.yaml\`, while reader-edited outcome prose belongs in \`outcome.md\` and is never rewritten by lifecycle commands.
+
+Roadmap items link to Tasks from their canonical \`task_refs\` field. Tasks do not carry Roadmap back-references, and neither Task nor Roadmap status changes propagate automatically.
 `;
 }
 
@@ -107,6 +113,16 @@ export async function ensureNativeProject(
   name: string,
 ): Promise<NativeProjectScaffoldResult> {
   const root = path.resolve(rootInput);
+  return withTaskLock(root, path.join(root, layout.state_root, "project-create.lock"), () =>
+    ensureNativeProjectUnlocked(root, layout, name),
+  );
+}
+
+async function ensureNativeProjectUnlocked(
+  root: string,
+  layout: WorkspaceLayout,
+  name: string,
+): Promise<NativeProjectScaffoldResult> {
   const rootPath = projectRootRelativePath(layout);
   const createdDirectories: string[] = [];
   const createdFiles: string[] = [];
@@ -132,7 +148,7 @@ export async function ensureNativeProject(
   if (!project) {
     project = nativeProjectSchema.parse({
       __schema: PROJECT_SCHEMA_VERSION,
-      id: randomUUID(),
+      id: projectReadableId(name),
       name,
       authority: { mode: PROJECT_AUTHORITY_MODE, pointer: PROJECT_AUTHORITY_POINTER },
     });
@@ -173,7 +189,7 @@ export async function validateNativeProjectStructure(
   );
   const roadmap = path.join(projectRoot, "roadmap");
   await assertOrdinaryDirectory(roadmap, "native Project roadmap", false);
-  await assertOrdinaryFile(path.join(roadmap, "README.md"), "native Project roadmap placeholder");
+  await assertOrdinaryFile(path.join(roadmap, "README.md"), "native Project roadmap guide");
 }
 
 /** Read-only lifecycle preflight for a possibly not-yet-created Project. */
@@ -210,7 +226,23 @@ async function preflightNativeProjectPath(root: string, layout: WorkspaceLayout)
     false,
   );
   if (await assertOrdinaryDirectory(projectRoot, "native Project", true)) {
-    await assertOrdinaryTree(projectRoot, "native Project");
+    // Roadmap descendants are validated item-by-item so one corrupt item does
+    // not hide healthy siblings. The Roadmap root itself is still checked
+    // below, and every Roadmap operation enforces its own reparse boundary.
+    for (const entry of await readdir(projectRoot, { withFileTypes: true })) {
+      if (entry.name === "roadmap") continue;
+      const entryPath = path.join(projectRoot, entry.name);
+      const stats = await lstat(entryPath);
+      if (stats.isSymbolicLink()) {
+        throw new FrameworkError(
+          `native Project contains a symlink, junction, or reparse point: ${entryPath}`,
+        );
+      }
+      if (stats.isDirectory()) await assertOrdinaryTree(entryPath, "native Project");
+      else if (!stats.isFile()) {
+        throw new FrameworkError(`native Project contains a non-regular entry: ${entryPath}`);
+      }
+    }
     for (const [target, label] of [
       [path.join(projectRoot, "project.yaml"), "native Project envelope"],
       [path.join(projectRoot, PROJECT_AUTHORITY_POINTER), "native Project authority pointer"],
@@ -222,7 +254,7 @@ async function preflightNativeProjectPath(root: string, layout: WorkspaceLayout)
       await assertOrdinaryDirectory(roadmap, "native Project roadmap", false);
       const roadmapReadme = path.join(roadmap, "README.md");
       if (await entryExists(roadmapReadme)) {
-        await assertOrdinaryFile(roadmapReadme, "native Project roadmap placeholder");
+        await assertOrdinaryFile(roadmapReadme, "native Project roadmap guide");
       }
     }
   }
@@ -322,7 +354,7 @@ export async function migrateProjectAuthority(
       path.join(staged, "project.yaml"),
       serializeNativeProject({
         __schema: PROJECT_SCHEMA_VERSION,
-        id: randomUUID(),
+        id: projectReadableId(manifest.project.name),
         name: manifest.project.name,
         authority: { mode: PROJECT_AUTHORITY_MODE, pointer: PROJECT_AUTHORITY_POINTER },
       }),

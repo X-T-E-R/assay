@@ -108,8 +108,9 @@ context compaction, and repeated attempts. It is native and needs no plugin or
 capability module. Standalone workspaces store each record in
 `tasks/<stable-id>/`; overlays use `.assay/tasks/<stable-id>/`.
 
-`create` takes scalar options rather than a JSON payload and assigns the stable
-UUID. `--description` seeds the initial PRD but does not make `task.json` the
+`create` takes scalar options rather than a JSON payload and assigns the next
+`task-0001-<slug>` stable id.
+`--description` seeds the initial PRD but does not make `task.json` the
 prose authority. Repeat `--relation <type:id>` to create several relationships.
 `checkpoint --from` reads UTF-8 Markdown directly and replaces the Task's
 optional `handoff.md`; `--expected-revision` lets writers fail instead of
@@ -120,7 +121,7 @@ created but the binding fails. Use the returned stable id with `bind --rebind`
 instead of running `create` again.
 
 `--name`, `--creator`, `--assignee`, and `--priority` are display or
-compatibility metadata. They neither replace the UUID nor establish host
+compatibility metadata. They neither replace the stable id nor establish host
 ownership or permission.
 
 Every Task directory requires `task.json` and `prd.md`. `task.json` is the
@@ -183,6 +184,32 @@ Roadmaps, specifications, and acceptance remain with the native Project. Agent
 DAGs, dispatch, ownership, and execution permissions remain with the host.
 Relay owns fork and promotion semantics. See [Task records](task.md) for the
 file contract and operating boundaries.
+
+## Native Roadmap items
+
+```bash
+assay roadmap create --title <text> [--root <dir>] [--json]
+assay roadmap show <id> [--root <dir>] [--json]
+assay roadmap list [--state candidate|committed|realized|retired] [--horizon now|next|later|unscheduled] [--task <task-id>] [--archived live|archived|all] [--limit <n>] [--cursor <id>] [--root <dir>] [--json]
+assay roadmap update <id> [--title <text>] [--state <state>] [--horizon <horizon>] [--order <n-or-null>] [--depends-on <id...> | --clear-depends-on] [--superseded-by <id...> | --clear-superseded-by] [--expected-revision <n>] [--root <dir>] [--json]
+assay roadmap link-task <id> --task <task-id> [--expected-revision <n>] [--root <dir>] [--json]
+assay roadmap unlink-task <id> --task <task-id> [--expected-revision <n>] [--root <dir>] [--json]
+assay roadmap realize|retire <id> [--expected-revision <n>] [--root <dir>] [--json]
+assay roadmap archive <id> [--root <dir>] [--json]
+assay roadmap validate [id] [--root <dir>] [--json]
+```
+
+New items use `roadmap-0001-<slug>` ids. A title can be renamed and duplicate
+titles are valid; the full id never changes. Each item has independent state
+and horizon fields. `realized` and `retired` are terminal, and only terminal
+items can move to `roadmap/archive/<id>/`.
+
+Roadmap Task links are canonical only in `item.yaml.task_refs`. Linking checks
+the exact Task id in live or archived native Task storage; unlinking can repair
+a dangling reference after the Task has disappeared. Task and Roadmap
+lifecycle commands never update each other. `list`, `validate`, and `assay
+check` report malformed items, graph errors, and unresolved Task references
+without hiding healthy siblings. See [Roadmap items](roadmap.md).
 
 ## Workspace plugins and reconcile
 
@@ -549,7 +576,7 @@ assay adr new "Adopt overlay layout"
 
 Templates a capability scaffolds are managed files like any other, so `assay update` reconciles them and `assay check` reports the module's directories as required structure.
 
-Every workspace has one native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Its default shape is exactly `project.yaml`, `README.md`, and `roadmap/README.md`; roadmap items have no schema or CLI in this release. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. For a legacy workspace, run `assay project migrate-authority --dry-run` followed by `--apply` before ordinary update. Migration copies the retired `project-authority/` capability without merging or deleting its source; `update` detects that input and leaves it untouched until the explicit migration runs.
+Every workspace has one native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Its initial shape is `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap items are added under `roadmap/<id>/`. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. For a legacy workspace, run `assay project migrate-authority --dry-run` followed by `--apply` before ordinary update. Migration copies the retired `project-authority/` capability without merging or deleting its source; `update` detects that input and leaves it untouched until the explicit migration runs.
 
 ## Custom archetypes
 

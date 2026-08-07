@@ -126,7 +126,7 @@ describe("assay task CLI", { timeout: 60_000 }, () => {
     expect(created.stdout).toContain("Revision: 0");
     expect(created.stdout).toContain("# Native Task");
     expect(created.stdout).toContain("Markdown, not JSON");
-    const id = created.stdout.match(/Task: ([0-9a-f-]{36})/)?.[1];
+    const id = created.stdout.match(/Task: (task-\d{4,}(?:-[a-z0-9-]+)?)/)?.[1];
     expect(id).toBeDefined();
     if (id === undefined) throw new Error("created task id not found");
 
@@ -134,6 +134,20 @@ describe("assay task CLI", { timeout: 60_000 }, () => {
     expect(shown.exitCode, shown.stderr).toBe(0);
     expect(shown.stdout).toContain(`Path: tasks/${id}`);
     expect(shown.stdout).toContain("Handoff: (none)");
+  });
+
+  it("rejects a malformed list cursor with a stable Task code", async () => {
+    const root = await workspace("invalid-cursor");
+    const result = await cliRunner.runCli([
+      "task",
+      "list",
+      "--cursor",
+      "123e4567-e89b-42d3-a456-426614174000",
+      "--root",
+      root,
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("TASK_ID_INVALID");
   });
 
   it("keeps duplicate titles independent and preserves exact Markdown checkpoint bytes", async () => {

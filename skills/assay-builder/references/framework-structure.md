@@ -18,7 +18,7 @@ Every current Assay workspace has a shared base, then the selected archetype add
 ├── analyses/         # native analyses; eager in study, lazy elsewhere
 ├── problem/          # solve/absorption-mode source materials, when enabled
 ├── iterations/       # solve/explore iteration plans, when enabled
-├── project/           # required native Project envelope, charter, and roadmap placeholder
+├── project/           # required native Project envelope, charter, and Roadmap items
 └── approaches/       # explore alternatives, when enabled
 ```
 
@@ -79,7 +79,7 @@ reminders are useful:
 | promote accepted findings | `knowledge/` |
 | record the adopted charter, roadmap, specifications, and selected extensions | `project/` |
 
-`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`. Specifications, Project-selected Relay records, and extensions are lazy; Reference, Analysis, Task, System, and runtime state keep separate authority.
+`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap records are added under `roadmap/<id>/`. Specifications, Project-selected Relay records, and extensions are lazy; Reference, Analysis, Task, System, and runtime state keep separate authority.
 
 Native Task follows the same work root: `tasks/` in standalone and
 `.assay/tasks/` in overlay. Each stable-id directory requires a machine

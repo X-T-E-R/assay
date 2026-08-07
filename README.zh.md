@@ -44,7 +44,7 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、迭代 |
 | 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
 
-三个内置 archetype 覆盖工作实际会呈现的三种形态：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。需要别的结构时，在 `.assay/archetypes/` 或 `~/.assay/archetypes/` 下写一份自定义 archetype YAML，见 `docs/workspace-layout.md`。命令面很小：`task`、`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
+三个内置 archetype 覆盖工作实际会呈现的三种形态：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。需要别的结构时，在 `.assay/archetypes/` 或 `~/.assay/archetypes/` 下写一份自定义 archetype YAML，见 `docs/workspace-layout.md`。命令面很小：`task`、`roadmap`、`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
 
 ## 让同一个结果跨上下文继续
 
@@ -56,7 +56,7 @@ compaction，或针对同一结果继续尝试时，仍使用同一个 Task。Ta
 
 standalone 把 Task 存在 `tasks/<id>/`，overlay 存在
 `.assay/tasks/<id>/`。同一工作区可以同时有多个 Task，也允许重名；命令始终用
-稳定 UUID 寻址。`finish` 只更新生命周期状态，不会自动 archive、提交 Git、
+Task 使用 `task-0001-<slug>` 形式的可读稳定 ID 寻址。`finish` 只更新生命周期状态，不会自动 archive、提交 Git、
 验收结果、修改 roadmap 或推进 Relay。
 
 `current` 也不猜：显式 Task id 优先，其次读取
@@ -76,7 +76,7 @@ none。Assay 不按 active 数量、创建时间或标题推断。文件合同�
 
 `assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。`assay capability add intent` 仍作为兼容入口保留；`assay reconcile --apply` 会接管已有文件并补写插件回执，不移动或改写 intent 记录。
 
-每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。严格的 `project.yaml` 只保存稳定身份、显示名称、schema 版本和原生 authority pointer；`README.md` 说明权威边界，`roadmap/README.md` 是暂不带 schema 的占位。Project 的 `specs/`、Project 选择的 `relay/` 与 `extensions/` 都是按需创建的语义位置。Reference、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。
+每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。Project 使用 `project-<slug>`。Roadmap Item 位于 `roadmap/<roadmap-id>/`：`item.yaml` 保存封闭机器状态，`outcome.md` 保存读者可直接编辑且生命周期命令不会重写的结果说明；根 `roadmap/README.md` 只作说明，不生成动态索引。Project 的 `specs/`、Project 选择的 `relay/` 与 `extensions/` 都是按需创建的语义位置。Reference、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。
 
 `intent` 是三个 capability module 中最近引入的一个，也是仓库里最常缺失的一环：几个月后代码还在，当初为什么要做却已经找不到了。`assay intent capture` 按内容寻址、只追加地保存原始措辞，并绑定到已注册的系统，之后的需求或 ADR 就能指回它所依据的那段话。
 

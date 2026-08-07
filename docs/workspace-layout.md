@@ -8,7 +8,7 @@ Use standalone when the Assay workbench is the project: studying external system
 
 ```text
 .assay/     manifest, Task context bindings, plugin receipts, version, events, migrations, backups, registries, archetypes
-project/    required native Project envelope and roadmap placeholder
+project/    required native Project envelope and native Roadmap items
 tasks/      native bounded outcomes; created when the first Task is written
 systems/    registered systems and system metadata
 knowledge/  accepted reusable decisions, patterns, guides, and troubleshooting notes
@@ -145,19 +145,19 @@ confirmed with `--purge --yes` after backup.
 
 These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them; run `assay plugin list` to compare desired and installed plugin state.
 
-Every workspace has a native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`. The envelope is strict and minimal; the roadmap is a placeholder without item schema or Task synchronization. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. Reference, Analysis, Task, System, ADR/knowledge, and `.assay/` runtime records remain independent authorities.
+Every workspace has a native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`; `assay roadmap create` then adds `roadmap/<id>/{item.yaml,outcome.md}`. The root Roadmap README stays explanatory and never becomes a dynamic index. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. Reference, Analysis, Task, System, ADR/knowledge, and `.assay/` runtime records remain independent authorities.
 
 ```yaml
 __schema: 1
-id: 2ce70865-e604-4f40-8cfe-b13b6e99bb19
+id: project-example-project
 name: Example Project
 authority:
   mode: native
   pointer: README.md
 ```
 
-The schema is closed: extra fields, non-UUID identities, other authority modes,
-and other pointers fail `assay check`. The pointer is relative to the Project
+The schema is closed: extra fields, ids other than `project-<slug>`, other
+authority modes, and other pointers fail `assay check`. The pointer is relative to the Project
 root, so overlay-to-standalone conversion preserves both identity and meaning.
 The `project.name`, `project.archetype`, and `project.mode` fields in
 `.assay/manifest.json` remain workspace presentation/settings compatibility
