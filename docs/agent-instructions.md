@@ -55,6 +55,10 @@ committed. Before capturing:
 - remove personal data that the workspace has no reason to keep;
 - keep the wording that carries the intent, not the whole transcript.
 
+The same rule applies to native Task documents. Keep `prd.md` focused on the
+Task contract, and keep `handoff.md` to the current continuation state. Neither
+file is a transcript dump or credential store.
+
 Captures are append-only by design: `intent capture` refuses to rewrite a
 recorded file, and the file's own SHA-256 makes an after-the-fact edit visible.
 That protects the record's integrity, not its contents — a secret captured by

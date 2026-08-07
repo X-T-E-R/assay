@@ -83,6 +83,7 @@ import {
   resolveSourceObservation,
 } from "./sources.js";
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
+import { TaskError, validateTasks } from "./task.js";
 import { archetypeTemplates, capabilityTemplates, mergeTemplateFiles } from "./templates.js";
 import { nowIso } from "./time.js";
 import {
@@ -1591,6 +1592,41 @@ export async function checkFramework(
     });
   }
 
+  // Semantic check 8: native Task history. Task storage is optional, and one
+  // malformed historical record must not hide validation results for others.
+  try {
+    const taskValidation = await validateTasks({ root });
+    for (const task of taskValidation.tasks) {
+      rows.push({
+        path: task.path,
+        status: task.valid ? "ok" : "error",
+        message: task.valid
+          ? `native task record is valid (${task.status})`
+          : task.issues.map((issue) => `${issue.code}: ${issue.message}`).join("; "),
+      });
+    }
+    if (taskValidation.context_issues.length > 0) {
+      rows.push({
+        path: taskValidation.context_path,
+        status: "error",
+        message: taskValidation.context_issues
+          .map((issue) => `${issue.code}: ${issue.message}`)
+          .join("; "),
+      });
+    }
+  } catch (error) {
+    rows.push({
+      path: workspaceWorkRelativePath(layout, "tasks"),
+      status: "error",
+      message:
+        error instanceof TaskError
+          ? `${error.code}: ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : "native task records failed validation",
+    });
+  }
+
   return {
     root,
     ok: rows.every((row) => row.status === "ok" || row.status === "warning"),
@@ -1619,7 +1655,7 @@ export async function checkFramework(
  * root are the same directory, so these sit next to the work folders and must
  * not be reported as stray placement.
  */
-const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["donors", "archetypes", "node_modules"]);
+const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["donors", "archetypes", "node_modules", "tasks"]);
 
 /**
  * Name of the work-root entry a workspace-root-relative path sits under, or

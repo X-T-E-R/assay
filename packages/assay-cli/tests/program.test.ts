@@ -96,6 +96,7 @@ describe("assay Commander registration", () => {
       "migrate-layout",
       "archetype",
       "plugin",
+      "task",
       "trellis",
       "reconcile",
       "reference",

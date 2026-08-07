@@ -53,7 +53,7 @@ const OVERLAY_WORK_AREAS = ["references", "analyses", "iterations", "knowledge"]
  * is missing from both the hoist and the managed-path rewrite would be
  * stranded in the source overlay after a move.
  */
-const OVERLAY_WORK_DIRECTORIES = ["intent", "project-authority"] as const;
+const OVERLAY_WORK_DIRECTORIES = ["intent", "project-authority", "tasks"] as const;
 
 /**
  * Layout `paths` keys whose location differs between overlay and standalone.
@@ -118,6 +118,8 @@ export async function convertOverlayToStandalone(
   const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const decisionBinding = sourceManifest.bindings?.[DECISION_GOVERNANCE_RESPONSIBILITY];
   const targetExists = await exists(targetRoot);
+  await assertTaskContextTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
+  await assertTaskTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   await assertProjectAuthorityTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   if (targetExists) {
     if (await exists(path.join(targetRoot, MANIFEST_FILE))) {
@@ -326,6 +328,73 @@ export async function convertOverlayToStandalone(
 }
 
 /**
+ * Task records are history, so conversion must neither merge nor overwrite
+ * them. Validate both trees before creating any conversion output; this also
+ * prevents `cp` from following a redirecting entry out of either workspace.
+ */
+async function assertTaskTransferPathsSafe(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetRoot: string,
+  targetLayout: WorkspaceLayout,
+): Promise<void> {
+  const locks = path.join(sourceRoot, sourceLayout.state_root, "task-locks");
+  if (await assertRealDirectory(locks, "source task locks", true)) {
+    if ((await readdir(locks)).length > 0) {
+      throw new FrameworkError(`source has an active or stale task lock: ${locks}`);
+    }
+  }
+  const source = path.join(sourceRoot, workspaceWorkRelativePath(sourceLayout, "tasks"));
+  if (!(await assertRealDirectory(source, "source tasks", true))) return;
+  await assertRealDirectoryTree(source, "source tasks");
+
+  const target = path.join(targetRoot, workspaceWorkRelativePath(targetLayout, "tasks"));
+  const targetContainer = await nearestExistingAncestor(targetRoot);
+  await assertRealDirectory(targetContainer, "tasks target ancestor", false);
+  if (!(await assertRealDirectory(target, "target tasks", true))) return;
+  await assertRealDirectoryTree(target, "target tasks");
+  if ((await readdir(target)).length > 0) {
+    throw new FrameworkError(`target tasks path already contains content: ${target}`);
+  }
+}
+
+async function assertTaskContextTransferSafe(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetRoot: string,
+  targetLayout: WorkspaceLayout,
+): Promise<void> {
+  const sourceContextLock = path.join(sourceRoot, sourceLayout.state_root, ".task-context.lock");
+  if (await exists(sourceContextLock)) {
+    throw new FrameworkError(`source has an active task context lock: ${sourceContextLock}`);
+  }
+  const source = path.join(sourceRoot, sourceLayout.state_root, "task-contexts.json");
+  const target = path.join(targetRoot, targetLayout.state_root, "task-contexts.json");
+  await assertRealFile(source, "source task contexts", true);
+  let targetEntryExists = true;
+  try {
+    await lstat(target);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      targetEntryExists = false;
+    } else {
+      throw error;
+    }
+  }
+  const targetAncestor = await nearestExistingAncestor(
+    targetEntryExists ? path.dirname(target) : target,
+  );
+  await assertRealDirectory(targetAncestor, "task contexts target ancestor", false);
+  const targetExists = await assertRealFile(target, "target task contexts", true);
+  if (targetExists) {
+    const stats = await lstat(target);
+    if (stats.size > 0) {
+      throw new FrameworkError(`target task contexts already contain content: ${target}`);
+    }
+  }
+}
+
+/**
  * A converted target may already be a prepared directory, but Project
  * Authority content must never be merged into or overwrite it. Check this
  * before creating the target manifest or any other conversion output, so a
@@ -412,6 +481,55 @@ async function assertRealDirectory(
     );
   }
   return true;
+}
+
+async function assertRealFile(
+  target: string,
+  label: string,
+  allowMissing: boolean,
+): Promise<boolean> {
+  let stats: Stats;
+  try {
+    stats = await lstat(target);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT" && allowMissing) {
+      return false;
+    }
+    throw error;
+  }
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new FrameworkError(`${label} must be a regular file, not a redirect: ${target}`);
+  }
+  const resolved = path.normalize(path.resolve(target));
+  const resolvedRealPath = path.normalize(await realpath(target));
+  const comparableResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const comparableReal =
+    process.platform === "win32" ? resolvedRealPath.toLowerCase() : resolvedRealPath;
+  if (comparableResolved !== comparableReal) {
+    throw new FrameworkError(`${label} resolves through a redirect: ${target}`);
+  }
+  return true;
+}
+
+async function assertRealDirectoryTree(directory: string, label: string): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.name === ".assay-checkpoint.json") {
+      throw new FrameworkError(
+        `task checkpoint transaction must be recovered before conversion: ${entryPath}`,
+      );
+    }
+    const stats = await lstat(entryPath);
+    if (stats.isSymbolicLink()) {
+      throw new FrameworkError(
+        `${label} contains a symlink, junction, or reparse point: ${entryPath}`,
+      );
+    }
+    if (stats.isDirectory()) {
+      await assertRealDirectory(entryPath, label, false);
+      await assertRealDirectoryTree(entryPath, label);
+    }
+  }
 }
 
 /**

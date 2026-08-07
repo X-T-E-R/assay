@@ -7,7 +7,8 @@ Assay has two layout modes. Both use `.assay/` as the Assay-owned state director
 Use standalone when the Assay workbench is the project: studying external systems, solving a measurable target, exploring directions, or cross-system learning.
 
 ```text
-.assay/     manifest, plugin receipts, version, events, migrations, backups, registries, archetypes
+.assay/     manifest, Task context bindings, plugin receipts, version, events, migrations, backups, registries, archetypes
+tasks/      native bounded outcomes; created when the first Task is written
 systems/    registered systems and system metadata
 knowledge/  accepted reusable decisions, patterns, guides, and troubleshooting notes
 ```
@@ -65,6 +66,21 @@ the same convention.
 
 Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
 
+## Native Task records
+
+Every workspace can use `assay task` without enabling a capability or
+installing a plugin. Task follows the work root: standalone records live under
+`tasks/<stable-id>/`, while overlay records live under
+`.assay/tasks/<stable-id>/`. Each directory requires `task.json` and `prd.md`;
+`handoff.md`, `design.md`, and `research/` are optional. Explicitly archived
+terminal Tasks move under `tasks/archive/<stable-id>/`.
+
+A Task preserves one bounded outcome across sessions, agents, compaction, and
+attempts. `.assay/task-contexts.json` stores exact host-context bindings, but
+Task never guesses current from active count, age, or title. It does not replace
+Project Authority, analyses, ADRs, `knowledge/`, or host-owned agent and
+dispatch state. See [Task records](task.md) for its lifecycle and command guide.
+
 ## Capability and plugin structure
 
 Capability modules own a small, fixed part of the layout. An archetype that declares a module scaffolds it at init; `assay capability add <module>` scaffolds the same structure in a workspace that did not start with it and records the module under `project.capabilities` in the manifest.
@@ -78,7 +94,7 @@ rewriting intent content. Legacy `project.capabilities: ["intent"]` remains a
 valid desired-state source and can be adopted in place.
 
 The manifest's `bindings` map remains available for genuinely exclusive
-providers. `assay.trellis` no longer uses it: the built-in operational plugin
+providers. `assay.trellis` no longer uses it: the legacy operational plugin
 stores v1 runtime state under `.assay/trellis/` and declares additive runtime
 capabilities. A legacy preview binding is ignored for ADR authority and removed
 on reconcile, so `assay.native` remains the decision owner.
@@ -129,7 +145,7 @@ The capture filename is derived from the SHA-256 of its own body, and the full d
 
 Decisions have no directory here. `assay intent promote --to decision` creates
 an ADR through the native `adr` module with `related_intent` and `system` set.
-The built-in Trellis task/context runtime does not replace or dual-write that
+The legacy Trellis task/context runtime does not replace or dual-write that
 decision authority.
 
 `assay status` counts both intent directories as zones once the module is enabled.
@@ -162,6 +178,7 @@ Use overlay when an existing product repo root should be the primary system. Ass
 ```text
 .assay/
   manifest.json
+  task-contexts.json
   systems-registry.json
   events/
   backups/
@@ -170,9 +187,10 @@ Use overlay when an existing product repo root should be the primary system. Ass
   analyses/
   iterations/
   knowledge/
+  tasks/
 ```
 
-Overlay does not create root-level `references/`, `analyses/`, `iterations/`, `knowledge/`, or `systems/` folders. It does not modify tracked root files by default.
+Overlay does not create root-level `references/`, `analyses/`, `iterations/`, `knowledge/`, `tasks/`, or `systems/` folders. It does not modify tracked root files by default.
 
 ## Runtime paths
 
@@ -184,4 +202,4 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, `.assay/project-authority` to `project-authority`, carrying `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Project Authority bytes are preserved and a non-empty target authority directory is rejected before any target state is written. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, `.assay/tasks` to `tasks`, and `.assay/project-authority` to `project-authority`, carrying `.assay/task-contexts.json` and `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Task and Project Authority directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.

@@ -5,6 +5,7 @@ Every current Assay workspace has a shared base, then the selected archetype add
 ```text
 <project-root>/
 ├── .assay/       # version, manifest, plugin receipts, registries, events, migrations, backups
+├── tasks/             # native bounded outcomes; overlay uses .assay/tasks/
 ├── systems/          # registered systems and local implementations
 │   ├── <name>/             # active system (system.yaml + source; may be independent git repo)
 │   └── archive/            # archived prior systems, copy-first move
@@ -74,10 +75,18 @@ reminders are useful:
 | explore local approaches | `approaches/`, `trials/`, `comparison.md` |
 | build local systems | `systems/` |
 | iterate local systems | `iterations/` |
+| keep one bounded outcome identifiable across contexts | `tasks/` |
 | promote accepted findings | `knowledge/` |
 | record project-owned facts and constraints | `project-authority/` |
 
 `project-authority/` is optional and follows the work root: it is at the standalone root, or under `.assay/` in every overlay privacy mode. Assay manages the scaffold and file integrity but does not interpret or decide its content. The project owns facts, Policy, Norms, Specs, and Relay activation records; Relay interprets Relay documents when the project explicitly creates them.
+
+Native Task follows the same work root: `tasks/` in standalone and
+`.assay/tasks/` in overlay. Each stable-id directory requires a machine
+`task.json` envelope and a reader-editable `prd.md` contract. `handoff.md`,
+`design.md`, and `research/` are optional. `.assay/task-contexts.json` stores
+exact host-context bindings. Task does not own roadmaps, specifications,
+acceptance, permissions, dispatch, agent ownership, or Relay promotion.
 
 ## `.assay/` managed files
 
@@ -86,7 +95,8 @@ The CLI writes and maintains these files automatically:
 - `.assay/VERSION` — installed framework template version.
 - `.assay/manifest.json` — managed file manifest with template IDs, hashes, desired plugins, and exclusive provider bindings.
 - `.assay/plugins.json` — installed plugin receipts.
-- `.assay/trellis/` — built-in operational v1 task/session/journal/config/channel/worker state, WAL, terminal archive, and migration receipts. Codex sessions remain external and read-only.
+- `.assay/task-contexts.json` — exact host-context bindings for native Tasks; the CLI owns this file.
+- `.assay/trellis/` — legacy operational task/session/journal/config/channel/worker state, WAL, terminal archive, and migration receipts. Native Tasks do not automatically import or migrate it. Codex sessions remain external and read-only.
 - `.assay/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain.
 - `.assay/adrs.json` — ADR index: number allocator, status, supersedes chain, and file paths.
 - `.assay/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
@@ -95,7 +105,7 @@ The CLI writes and maintains these files automatically:
 
 Do not edit these files manually; use the CLI for all manifest, plugin, registry, ADR, and event operations.
 
-`.trellis/` is not an Assay-managed path and is not used by the built-in
+`.trellis/` is not an Assay-managed path and is not used by the legacy
 `assay.trellis` plugin. Its operational task/session/journal/config/channel/worker state lives under
 `.assay/trellis/`; hook registration calls the installed Assay command directly
 and does not copy a project hook script.

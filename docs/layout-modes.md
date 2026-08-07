@@ -6,7 +6,7 @@ Assay fits the way your code already lives. It supports two layout modes, both b
 
 | Mode | Root meaning | Work folders | Primary system | Default Git behavior |
 | --- | --- | --- | --- | --- |
-| `standalone` | The root is an Assay workbench. | `references/`, `analyses/`, `iterations/`, `knowledge/`, `systems/` at root; state in `.assay/`. | Registered under `systems/` or an external independent path. | Outer workbench Git is optional. |
+| `standalone` | The root is an Assay workbench. | `references/`, `analyses/`, `iterations/`, `knowledge/`, `tasks/`, `systems/` at root; state in `.assay/`. | Registered under `systems/` or an external independent path. | Outer workbench Git is optional. |
 | `overlay` | The root is an existing product repo. | All Assay-owned work folders live under `.assay/`. | `path: "."`, `vcs: "independent-git"`, contract in `.assay/systems/root.yaml`. | Product Git ignores `.assay/` by default. |
 
 Do not call overlay "monorepo mode". `overlay` and `attach` describe what happens: Assay attaches private evidence and decisions to a repo whose root remains the system.
@@ -39,7 +39,10 @@ The manifest carries a `layout` block so runtime code asks "where is `references
 }
 ```
 
-In overlay mode, `references`, `analyses`, `iterations`, `knowledge`, optional `project-authority`, and `systems_contracts` all resolve under `.assay/`.
+In overlay mode, `references`, `analyses`, `iterations`, `knowledge`, native
+`tasks`, optional `project-authority`, and `systems_contracts` all resolve under
+`.assay/`. Native Task storage follows `work_root` directly, so it does not need a
+separate entry in `layout.paths`.
 
 ### Standalone
 
@@ -48,6 +51,7 @@ assay-workbench/
   .assay/
     VERSION
     manifest.json
+    task-contexts.json
     systems-registry.json
     adrs.json
     events/
@@ -57,6 +61,7 @@ assay-workbench/
   analyses/
   iterations/
   knowledge/
+  tasks/
   systems/
 ```
 
@@ -72,6 +77,7 @@ product-repo/
   .assay/
     VERSION
     manifest.json
+    task-contexts.json
     systems-registry.json
     adrs.json
     events/
@@ -83,6 +89,7 @@ product-repo/
     analyses/
     iterations/
     knowledge/
+    tasks/
 ```
 
 Overlay exists because the repo root is already the system. Assay must not move product files, rewrite the root README, or create top-level `references/` or `analyses/` folders in a product repo unless explicitly asked.
@@ -98,6 +105,7 @@ Recommended tracked content:
 ```text
 .assay/manifest.json
 .assay/VERSION
+.assay/task-contexts.json
 .assay/systems-registry.json
 .assay/adrs.json
 .assay/events/
@@ -108,6 +116,7 @@ references/**/observations/
 analyses/
 iterations/
 knowledge/
+tasks/
 systems/**/system.yaml
 .assay/systems/*.yaml
 ```
@@ -139,7 +148,9 @@ git init
 git add manifest.json systems-registry.json adrs.json events analyses knowledge references
 ```
 
-This makes Assay state independently versioned while the product repo still ignores `.assay/`.
+This makes Assay state independently versioned while the product repo still
+ignores `.assay/`. After creating or binding the first native Task, also add
+`tasks/` and `task-contexts.json`.
 
 A team may explicitly choose `privacy: tracked`, but that is never the default. It requires an explicit command because it changes product repo review noise and can leak local research material.
 
@@ -200,10 +211,11 @@ It should:
 3. Copy `.assay/analyses` to `../product-assay/analyses`.
 4. Copy `.assay/iterations` to `../product-assay/iterations`.
 5. Copy `.assay/knowledge` to `../product-assay/knowledge`.
-6. Copy optional `.assay/project-authority` to `../product-assay/project-authority` without changing bytes or merging a non-empty target.
-7. Keep Assay state under `../product-assay/.assay`.
-8. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
-9. Leave the product repo and its `.git/` untouched.
+6. Copy `.assay/tasks` to `../product-assay/tasks` without merging or overwriting a non-empty target.
+7. Copy optional `.assay/project-authority` to `../product-assay/project-authority` without changing bytes or merging a non-empty target.
+8. Carry `.assay/task-contexts.json` with the rest of Assay state under `../product-assay/.assay`.
+9. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
+10. Leave the product repo and its `.git/` untouched.
 
 In-place conversion is allowed only with an explicit destructive flag, because it would have to move product root files into `systems/<name>/` or otherwise change the meaning of the product Git repository.
 

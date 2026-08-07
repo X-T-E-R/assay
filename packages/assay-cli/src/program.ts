@@ -176,6 +176,7 @@ import {
   formatTrellisTask,
   formatUpdateResult,
 } from "./format.js";
+import { addTaskCommand } from "./task-command.js";
 
 export interface CliOutput {
   readonly stdout: (text: string) => void;
@@ -940,6 +941,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         output.setExitCode(1);
       }
     });
+
+  addTaskCommand(program, { output, resolveRoot: discoveredRoot });
 
   const trellis = program
     .command("trellis")

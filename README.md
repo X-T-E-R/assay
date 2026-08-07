@@ -31,7 +31,7 @@ Assay fits the way your code already lives.
 
 | Mode | Use it when | Where Assay writes | Git posture |
 | --- | --- | --- | --- |
-| `standalone` | You want a dedicated study / solve / explore workspace. | `.assay/` for Assay state, with work folders such as `references/`, `analyses/`, `iterations/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
+| `standalone` | You want a dedicated study / solve / explore workspace. | `.assay/` for Assay state, with work folders such as `tasks/`, `references/`, `analyses/`, `iterations/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
 | `overlay` | You already have a product repo and want its root to be the primary system. | One private `.assay/` folder containing Assay state and work folders. Product files stay where they are. | Product Git ignores `.assay/` by default; Assay state can optionally have its own Git inside `.assay/`. |
 
 ## Choose what you're building
@@ -44,7 +44,27 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 | Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, iterations |
 | Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
 
-The three built-ins cover the three shapes work actually takes: study outside examples, solve a measurable target, or explore when the target shape is still open. A workspace that needs a different structure declares its own archetype YAML under `.assay/archetypes/` or `~/.assay/archetypes/`; see `docs/workspace-layout.md`. The command surface stays small: `source`, `analysis`, `donor`, `intent`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+The three built-ins cover the three shapes work actually takes: study outside examples, solve a measurable target, or explore when the target shape is still open. A workspace that needs a different structure declares its own archetype YAML under `.assay/archetypes/` or `~/.assay/archetypes/`; see `docs/workspace-layout.md`. The command surface stays small: `task`, `source`, `analysis`, `donor`, `intent`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
+
+## Keep one outcome intact across context resets
+
+`assay task` gives one bounded outcome a stable identity across sessions,
+agents, compaction, and repeated attempts. A Task is a plain directory with a
+machine-readable `task.json` envelope and a reader-editable `prd.md` contract.
+Add `handoff.md` only when another session or agent needs a real continuation
+checkpoint. Several Tasks can be active at once, including Tasks with the same
+title; commands address them by stable UUID.
+
+Tasks live in `tasks/<id>/` in standalone workspaces and
+`.assay/tasks/<id>/` in overlays. Finishing a Task records its lifecycle state;
+it does not archive files, commit Git changes, accept the result, change a
+roadmap, or promote Relay state.
+
+`current` also refuses to guess. An explicit Task id wins, then an exact host
+context binding in `.assay/task-contexts.json`; otherwise there is no current
+Task. Assay never chooses by active count, creation time, or title. See [Task
+records](docs/task.md) for the file contract, lifecycle, relationships, and
+authority boundaries.
 
 ## Turn capabilities on when you need them
 
@@ -67,9 +87,10 @@ Intent is the most recently introduced of the four capability modules, and the o
 
 Plugins extend an existing Assay workspace; they do not replace `init`,
 `attach`, or the evidence workbench itself. `assay.intent` contributes the
-additive `intent` capability. `assay.trellis` is an in-package operational
-plugin with protocol and workspace-state schema version 1. Its dynamic state
-lives under `.assay/trellis/`; native Assay ADR and intent workflows remain active.
+additive `intent` capability. `assay.trellis` is the legacy in-package
+operational surface. Its dynamic state lives under `.assay/trellis/`; native
+Assay Task, ADR, and intent workflows remain active. New Tasks do not absorb,
+rewrite, or automatically migrate legacy Trellis state.
 
 ```bash
 # Create or attach, then install intent in the same command.
@@ -176,6 +197,7 @@ Assay does not run a model for you, hide your files in a database, or ask you to
 
 - [Layout modes](docs/layout-modes.md)
 - [Command reference](docs/commands.md)
+- [Task records](docs/task.md)
 - [Donor adoption](docs/donor-adoption.md)
 - [Workspace layout](docs/workspace-layout.md)
 - [Contributing](CONTRIBUTING.md)

@@ -1,6 +1,6 @@
 ---
 name: assay-builder
-description: "Build, adopt, update, analyze, and iterate Assay workspaces. Use when the user wants to initialize an Assay project, adopt an existing project into Assay, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, capture product intent verbatim and promote it into requirements or decisions, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-Assay knowledge management workflows."
+description: "Build, adopt, update, analyze, and iterate Assay workspaces. Use when the user wants to initialize an Assay project, create or resume a native Task, adopt an existing project into Assay, learn from external projects, freeze references, create analyses, evolve local systems, register independently-version-controlled systems, promote or archive active systems, close iterations or analyses, capture product intent verbatim and promote it into requirements or decisions, manage ADRs, add knowledge entries, manage framework updates, or safely migrate old folders. Not for generic note-taking, arbitrary project scaffolding, or non-Assay knowledge management workflows."
 ---
 
 # Assay Builder
@@ -42,13 +42,30 @@ assay status [--json] [--fetch]              # archetype zones with purposes + s
 assay update --dry-run                       # always dry-run first
 assay migrate-layout --dry-run               # always dry-run first; legacy layouts are migration input only
 
+# Native Task (available without a plugin or capability)
+assay task create --title <text> [--description <text>] [--name <display-slug>] [--creator <name>] [--assignee <name>] [--priority <priority>] [--relation <type:id...>] [--context <key>] [--json]
+assay task show <id> [--json]
+assay task list [--status active|paused|done|cancelled|superseded] [--archived live|archived|all] [--limit <n>] [--cursor <cursor>] [--json]
+assay task status <id> <active|paused|done|cancelled|superseded> [--expected-revision <n>] [--json]
+assay task checkpoint <id> --from <handoff.md> [--expected-revision <n>] [--json]
+assay task finish <id> [--expected-revision <n>] [--json]
+assay task archive <id> [--json]
+assay task bind <id> --context <key> [--rebind] [--json]
+assay task clear --context <key> [--json]
+assay task current [--id <id>] [--context <key>] [--json]
+assay task context [id] [--context <key>] [--json]
+assay task relations <id> (--relation <type:id...> | --clear) [--expected-revision <n>] [--json]
+assay task validate [id] [--json]
+
+# Every Task leaf also accepts --root <dir> and --json.
+
 # Capability modules (optional features the archetype may not have enabled)
 assay capability list [--json]               # which modules are enabled, and whether by archetype or added later
 assay capability add <module>                # built-ins: adr|intent|iteration|project-authority; idempotent, safe to re-run
 
-# Workspace plugins (extend an existing Assay workspace)
+# Workspace plugins (intent is current; Trellis is a legacy surface)
 assay plugin add assay.intent
-assay plugin add assay.trellis
+assay plugin add assay.trellis                       # legacy operational surface
 assay trellis task create --title <title> --json
 assay trellis task current --json
 assay trellis protocol --json
@@ -130,7 +147,67 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 
 ## Framework structure
 
-Target projects use an archetype-specific layout over a shared base (`.assay/`, `systems/`, `knowledge/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
+Target projects use an archetype-specific layout over a shared base (`.assay/`, `tasks/`, `systems/`, `knowledge/`; overlay resolves work folders under `.assay/`). Built-ins then add directories such as `references/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
+
+## Native Task
+
+Use `assay task` when one bounded outcome needs a durable identity across
+sessions, agents, context compaction, or implementation attempts. Create the
+Task at that boundary, not for every piece of work. If the intended outcome is
+unchanged, keep using the same Task when an attempt restarts or ownership moves.
+
+Standalone Tasks live under `tasks/<stable-id>/`; overlay Tasks live under
+`.assay/tasks/<stable-id>/`. Every Task requires `task.json` and `prd.md`.
+`task.json` is a machine envelope and compatibility record; never put the Task
+contract into it. People and models edit the bounded goal, scope, task-level
+success checks, and references to governing acceptance directly in `prd.md`;
+Project Authority still owns project acceptance. Optional `design.md` and
+`research/` hold Task-local material.
+
+Write `handoff.md` only at a real continuation boundary. `checkpoint --from`
+reads that Markdown and replaces the current checkpoint. Keep it to completed
+outcomes, working state, verification evidence, the next action, and open
+blockers or decisions. It is not a progress journal or a second PRD. The checkpoint must
+contain these exact headings in order: `# Current State`,
+`## Completed Outcomes`, `## Working State`, `## Verification Evidence`,
+`## Next Action`, and `## Open Blockers and Decisions`.
+
+Resume an existing Task in this order:
+
+1. read the direct user request or host dispatch;
+2. read the selected Task's `task.json` envelope;
+3. read `prd.md` as the Task contract;
+4. read a relevant `handoff.md` when one exists;
+5. inspect the current repository, diff, and governing authority before acting.
+
+Current selection is explicit stable id, then an exact host-context binding,
+then none. Bindings live in `.assay/task-contexts.json`. Never infer current
+from active count, newest record, or title; multiple active Tasks and duplicate
+titles are valid. If `create --context` reports a binding conflict, the Task was
+still created; use its returned id with `bind --rebind` instead of creating a
+duplicate.
+
+Task statuses are `active`, `paused`, `done`, `cancelled`, and `superseded`.
+Treat `blocked` and `partial` as handoff narrative, not terminal states.
+`finish` marks a Task `done` but does not archive it, change Git, accept it for
+the project, change a roadmap, or promote Relay state. `archive` is explicit and
+moves a terminal Task under `tasks/archive/<id>/`. A terminal Task does not
+reopen; if the outcome continues afterwards, create a related successor Task.
+
+Relations are `contributes_to`, `continues`, and `supersedes`. They preserve
+lineage only: no authority, binding, assignment, status, completion, or
+acceptance propagates through them.
+
+`task list` uses partial-health output. It keeps valid rows in stdout/JSON while
+placing corrupt or duplicate storage diagnostics in top-level `issues` (or a
+human `Task storage issues:` section), and exits 1 when any issue exists. Use
+the valid rows for discovery, but do not report the storage as healthy until
+the issues are repaired.
+
+Keep roadmaps, specifications, and acceptance in Project Authority. Keep agent
+DAGs, dispatch, ownership, and permissions in the host. Relay owns fork and
+promotion semantics. Keep product learning and durable decisions in analyses,
+ADRs, and `knowledge/`. A Task never grants permission or proves acceptance.
 
 ## Capability modules
 
@@ -143,7 +220,7 @@ Target projects use an archetype-specific layout over a shared base (`.assay/`, 
 - `assay capability add project-authority` creates `facts/`, `policy/`, `norms/`, `specs/`, and `relay/` under the workspace work root. The project owns its facts and constraints and owns and selects activation, fork, and promotion records; Relay interprets Relay documents and schemas. Assay only creates and protects the location: it creates no empty Relay activation, parses no Relay schema, and decides no fact, constraint, permission, or acceptance result. Standalone uses `project-authority/`; every overlay privacy mode uses `.assay/project-authority/` and never writes the product root implicitly.
 - `plugin add assay.intent` declares desired plugin state, scaffolds only missing files, and records installation in `.assay/plugins.json`. `assay capability add intent` stays compatible for existing automation.
 - `reconcile` only operates on a workspace that already has `.assay/manifest.json`. It is a write-free preview unless `--apply` is present. A complete legacy intent scaffold is adopted without rewriting it; an incomplete one gets only its missing files. A converged apply does not update timestamps or append an event.
-- `plugin add assay.trellis` installs Assay's built-in operational v1 runtime under `.assay/trellis/`. It does not call a Trellis CLI or depend on `.trellis/`, and it does not replace Assay-native ADR or intent authority. Tasks, sessions, journal, config, channels/leases, and external-worker state are durable project-local domains; Codex memory is bounded and read-only. Optional session ids fail closed when an unscoped current task would be ambiguous. Built-in provider-process supervision is deferred: workers register and drive the CLI themselves.
+- `assay.trellis` remains a legacy operational surface under `.assay/trellis/`. Native Tasks do not delete, rewrite, import, or automatically migrate existing Trellis state. When a workspace still uses the plugin, it does not call a Trellis CLI or depend on a root `.trellis/`, and it does not replace Assay-native Task, ADR, or intent authority.
 
 ## Product intent
 
@@ -241,6 +318,9 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 
 - Do not overwrite existing user files by default.
 - Do not adopt an already initialized Assay workspace; use `update` or `migrate-layout` instead.
+- Do not hand-edit native `task.json` or `.assay/task-contexts.json`; edit `prd.md` directly and use `assay task` for machine metadata, lifecycle, relationships, and bindings.
+- Do not create a new Task for another attempt at the same bounded outcome, and do not write `handoff.md` after every update. Checkpoint only at a real continuation boundary.
+- Do not treat Task creation, binding, relationships, or `finish` as permission, assignment, project acceptance, Git closeout, roadmap state, or Relay promotion.
 - Do not put external project source under `systems/`; in learning mode add it as a living source under `references/<alias>/` with `source add`, or use frozen references only for explicit full-capture/legacy evidence. In absorption mode land project-owned material under `problem/` via `absorb`.
 - Do not hand-edit `.assay/manifest.json`, `.assay/systems-registry.json`, or `.assay/adrs.json`; use the CLI.
 - Do not edit, rename, or delete files under `intent/original/`. Record a corrected capture with `--supersedes` instead.

@@ -28,4 +28,5 @@ export * from "./time.js";
 export * from "./update.js";
 export * from "./upstream.js";
 export * from "./workspace.js";
+export * from "./task.js";
 export * from "./zones.js";

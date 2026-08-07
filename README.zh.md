@@ -31,7 +31,7 @@ Assay 适配你代码现有的存在方式。
 
 | 模式 | 什么时候用 | Assay 写在哪里 | Git 策略 |
 | --- | --- | --- | --- |
-| `standalone` | 你想要一个独立的研究 / 评估 / 攻关工作区。 | `.assay/` 存 Assay 状态，`references/`、`analyses/`、`iterations/`、`knowledge/`、`systems/` 在工作区根目录。 | 工作区 Git 可选。独立系统保留自己的 Git。 |
+| `standalone` | 你想要一个独立的研究 / 评估 / 攻关工作区。 | `.assay/` 存 Assay 状态，`tasks/`、`references/`、`analyses/`、`iterations/`、`knowledge/`、`systems/` 在工作区根目录。 | 工作区 Git 可选。独立系统保留自己的 Git。 |
 | `overlay` | 你已经有产品仓库，想让它的根目录作为主系统。 | 一个私有的 `.assay/` 文件夹，包含 Assay 状态和工作目录。产品文件不动。 | 产品 Git 默认忽略 `.assay/`；Assay 状态可选地在 `.assay/` 里建自己的 Git。 |
 
 ## 选择要构建的工作区
@@ -44,7 +44,25 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、迭代 |
 | 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
 
-三个内置 archetype 覆盖工作实际会呈现的三种形态：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。需要别的结构时，在 `.assay/archetypes/` 或 `~/.assay/archetypes/` 下写一份自定义 archetype YAML，见 `docs/workspace-layout.md`。命令面很小：`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
+三个内置 archetype 覆盖工作实际会呈现的三种形态：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。需要别的结构时，在 `.assay/archetypes/` 或 `~/.assay/archetypes/` 下写一份自定义 archetype YAML，见 `docs/workspace-layout.md`。命令面很小：`task`、`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
+
+## 让同一个结果跨上下文继续
+
+`assay task` 给一个有边界的结果分配稳定身份。换 session、换 agent、发生
+compaction，或针对同一结果继续尝试时，仍使用同一个 Task。Task 是普通目录：
+`task.json` 只保存机器 envelope 和兼容元数据，`prd.md` 是人和模型直接编辑
+的任务合同。只有真的要把当前状态交给另一个 session 或 agent 时，才添加
+`handoff.md`。
+
+standalone 把 Task 存在 `tasks/<id>/`，overlay 存在
+`.assay/tasks/<id>/`。同一工作区可以同时有多个 Task，也允许重名；命令始终用
+稳定 UUID 寻址。`finish` 只更新生命周期状态，不会自动 archive、提交 Git、
+验收结果、修改 roadmap 或推进 Relay。
+
+`current` 也不猜：显式 Task id 优先，其次读取
+`.assay/task-contexts.json` 中完全匹配的 host context binding；都没有就返回
+none。Assay 不按 active 数量、创建时间或标题推断。文件合同、生命周期、关系
+和权限边界见 [Task records](docs/task.md)。
 
 ## 需要时再打开能力模块
 
@@ -65,7 +83,7 @@ Project Authority 给项目事实与项目约束一个由 Project 自己拥有�
 
 ## 用插件扩展工作区，不增加新的 setup 生命周期
 
-插件扩展已有 Assay 工作区，不替代 `init`、`attach`，也不改变 Assay 作为证据工作台的职责。`assay.intent` 以叠加方式提供 `intent` 能力；`assay.trellis` 是随 Assay 发布的内建 operational plugin，协议、插件状态与专用 runtime state schema 均为 v1，动态状态位于 `.assay/trellis/`。原生 ADR 与 intent 保持可用。
+插件扩展已有 Assay 工作区，不替代 `init`、`attach`，也不改变 Assay 作为证据工作台的职责。`assay.intent` 以叠加方式提供 `intent` 能力；`assay.trellis` 是 legacy operational surface，动态状态位于 `.assay/trellis/`。原生 Task、ADR 与 intent 保持可用；新 Task 不会吸收、改写或自动迁移旧 Trellis 状态。
 
 ```bash
 # 创建或接入时顺便安装 intent。
@@ -155,6 +173,7 @@ Assay 不会替你跑模型、不会把文件藏进数据库、也不会让你�
 
 - [布局模式](docs/layout-modes.md)
 - [命令参考](docs/commands.md)
+- [Task 记录](docs/task.md)
 - [Donor Adoption](docs/donor-adoption.md)
 - [工作区结构](docs/workspace-layout.md)
 - [贡献指南](CONTRIBUTING.md)

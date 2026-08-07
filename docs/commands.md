@@ -19,9 +19,9 @@ assay archetype list [--root <dir>] [--json]
 `init` creates a standalone workspace: Assay state in `.assay/`, work folders at the root. `attach` creates an overlay inside an existing product repository: everything Assay-owned lives under `.assay/`, product files stay where they are, and product Git ignores `.assay/` by default. `convert --to standalone` detaches an overlay into a sibling standalone workbench without moving the product repo.
 
 `--plugin assay.intent` installs the intent module after a successful `init` or
-`attach`. `--plugin assay.trellis` installs the built-in workspace runtime under
-`.assay/trellis/`; it has no external sidecar preflight. Both remain options on
-the existing lifecycle verbs, not a third setup operation.
+`attach`. The legacy `--plugin assay.trellis` option installs its workspace
+runtime under `.assay/trellis/`; it has no external sidecar preflight. Both
+remain options on the existing lifecycle verbs, not a third setup operation.
 
 `init`, successful `update`, and successful `adopt --apply` write a user-local project registry under `~/.assay/projects` by default. Use `--no-track` on those commands, or set `ASSAY_NO_TRACK=1`, to skip registry writes. The `assay projects` commands manage registry metadata only; they never delete workspace files.
 
@@ -85,6 +85,105 @@ was graded `major` or `replacement`. The built-in Trellis runtime does not
 replace native decision governance, so the next action continues to name the
 Assay ADR workflow. Nothing is blocked.
 
+## Native Task records
+
+```bash
+assay task create --title <text> [--description <text>] [--name <display-slug>] [--creator <name>] [--assignee <name>] [--priority <priority>] [--relation <type:id...>] [--context <key>] [--root <dir>] [--json]
+assay task show <id> [--root <dir>] [--json]
+assay task list [--status active|paused|done|cancelled|superseded] [--archived live|archived|all] [--limit <n>] [--cursor <cursor>] [--root <dir>] [--json]
+assay task status <id> <active|paused|done|cancelled|superseded> [--expected-revision <n>] [--root <dir>] [--json]
+assay task checkpoint <id> --from <handoff.md> [--expected-revision <n>] [--root <dir>] [--json]
+assay task finish <id> [--expected-revision <n>] [--root <dir>] [--json]
+assay task archive <id> [--root <dir>] [--json]
+assay task bind <id> --context <key> [--rebind] [--root <dir>] [--json]
+assay task clear --context <key> [--root <dir>] [--json]
+assay task current [--id <id>] [--context <key>] [--root <dir>] [--json]
+assay task context [id] [--context <key>] [--root <dir>] [--json]
+assay task relations <id> (--relation <type:id...> | --clear) [--expected-revision <n>] [--root <dir>] [--json]
+assay task validate [id] [--root <dir>] [--json]
+```
+
+`assay task` keeps one bounded outcome identifiable across sessions, agents,
+context compaction, and repeated attempts. It is native and needs no plugin or
+capability module. Standalone workspaces store each record in
+`tasks/<stable-id>/`; overlays use `.assay/tasks/<stable-id>/`.
+
+`create` takes scalar options rather than a JSON payload and assigns the stable
+UUID. `--description` seeds the initial PRD but does not make `task.json` the
+prose authority. Repeat `--relation <type:id>` to create several relationships.
+`checkpoint --from` reads UTF-8 Markdown directly and replaces the Task's
+optional `handoff.md`; `--expected-revision` lets writers fail instead of
+overwriting a concurrent metadata or checkpoint change.
+
+When `create --context` finds that the context is already bound, the Task stays
+created but the binding fails. Use the returned stable id with `bind --rebind`
+instead of running `create` again.
+
+`--name`, `--creator`, `--assignee`, and `--priority` are display or
+compatibility metadata. They neither replace the UUID nor establish host
+ownership or permission.
+
+Every Task directory requires `task.json` and `prd.md`. `task.json` is the
+machine envelope and compatibility metadata; reader-facing goals, scope,
+task-level success checks, and links to governing acceptance belong in
+`prd.md`, which people and models edit directly. Project acceptance itself
+remains with Project Authority.
+
+Optional `design.md` and `research/` hold Task-local material. Add
+`handoff.md` only at a real continuation boundary. It is a replaceable
+current-state checkpoint, not a diary or a second PRD.
+
+A checkpoint must contain these exact headings in order:
+
+```markdown
+# Current State
+## Completed Outcomes
+## Working State
+## Verification Evidence
+## Next Action
+## Open Blockers and Decisions
+```
+
+The lifecycle statuses are `active`, `paused`, `done`, `cancelled`, and
+`superseded`. `blocked` and `partial` are handoff facts, not terminal statuses.
+`finish` marks the Task `done`; it does not archive files, change Git, record
+project acceptance, update a roadmap, or promote Relay state. `archive` is a
+separate operation and moves a terminal Task to `tasks/archive/<id>/`.
+Terminal statuses do not reopen through `status`.
+
+Current resolution is explicit id, then an exact host-context binding, then
+none. Use `current --id <id>` or `context <id>` for the explicit case; use
+`--context <key>` to resolve an exact binding. Bindings live in
+`.assay/task-contexts.json`. There is no fallback based on active count,
+creation time, or title. Multiple Tasks and duplicate titles are valid; use
+stable ids. Replacing a different existing binding requires `bind --rebind`.
+
+`list` isolates damaged storage instead of hiding healthy siblings. It emits
+valid, filtered, paginated Task rows and also reports invalid or duplicated
+storage entries as top-level `issues`. JSON entries retain the `TASK_*` code,
+path, and live/archive location. Human output appends a `Task storage issues:`
+section after the valid rows.
+
+When any issue exists, `list` still writes this partial result to stdout but
+exits with status 1. Callers must inspect both the rows and diagnostics rather
+than treating the response as an empty list.
+
+Relationships use `contributes_to`, `continues`, or `supersedes`. They preserve
+lineage only: no status, permission, acceptance, completion, or host binding
+propagates through them.
+
+`relations` replaces the full relation set; use `--clear` to remove it
+explicitly. Self-relations, duplicate pairs, missing targets, and directed
+cycles are rejected. `validate` checks Task files, relationships, and context
+bindings without changing them.
+`assay check` includes the same Task integrity checks in its workspace-wide
+report.
+
+Roadmaps, specifications, and acceptance remain with Project Authority. Agent
+DAGs, dispatch, ownership, and execution permissions remain with the host.
+Relay owns fork and promotion semantics. See [Task records](task.md) for the
+file contract and operating boundaries.
+
 ## Workspace plugins and reconcile
 
 ```bash
@@ -99,7 +198,10 @@ assay reconcile [--root <dir>] [--plugin <id...>] [--dry-run | --apply] [--json]
 scaffold files, and writes an installation receipt to `.assay/plugins.json`.
 Existing files are never overwritten.
 
-`assay.trellis` (alias: `trellis`) is a built-in `workspace-runtime` plugin.
+`assay.trellis` (alias: `trellis`) is the legacy built-in
+`workspace-runtime` plugin. Native Tasks do not delete, rewrite, import, or
+automatically migrate existing Trellis state.
+
 Its protocol version, per-plugin receipt `state_version`, and dedicated runtime
 state schema are all exactly `1`. Dynamic task state is stored only in
 `.assay/trellis/`; no Trellis CLI or root `.trellis/` sidecar is used. It
@@ -217,7 +319,21 @@ cd /path/to/existing-repo
 assay convert --to standalone --target ../existing-repo-assay
 ```
 
-The new workbench hoists `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/project-authority` to `project-authority`, and so on. Assay state travels with it: manifest, systems registry, ADR index (with ADR paths rewritten to the new layout), events, backups, donor records, project-local archetypes, and `.assay/trellis` runtime state. Project Authority files are copied or moved byte-for-byte; conversion refuses a non-empty target `project-authority/` before writing any target state instead of merging or overwriting it. The original product repo is registered as the primary independent system by relative path (`../existing-repo`). Use `--move` to move instead of copy. `--no-keep-overlay` removes the emptied `.assay/` from the source and requires `--move`; with a copy the overlay is still the only holder of that state. The product repo and its `.git/` are never modified.
+The new workbench hoists `.assay/references` to `references`,
+`.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`,
+`.assay/project-authority` to `project-authority`, and so on. Assay state travels
+with it, including `.assay/task-contexts.json` and the legacy
+`.assay/trellis/` runtime state.
+
+Task and Project Authority directories are copied or moved without merging.
+Conversion refuses a non-empty target `tasks/` or `project-authority/` before
+writing any target state. The original product repo is registered as the
+primary independent system by relative path (`../existing-repo`).
+
+Use `--move` to move instead of copy. `--no-keep-overlay` removes the emptied
+`.assay/` from the source and requires `--move`; with a copy the overlay still
+holds that state and the request is refused. The product repo and its `.git/`
+are never modified.
 
 `assay update` follows the workspace layout. In an overlay workspace, managed templates are written under `.assay/`, and root `README.md`, `.gitignore`, and `AGENTS.md` are never created or replaced — including with `--force`.
 
