@@ -89,6 +89,10 @@ Assay ADR workflow. Nothing is blocked.
 
 ```bash
 assay plugin add <id> [--root <dir>]
+assay plugin register <descriptor.json> [--root <dir>] [--json]
+assay plugin observe <observation.json> [--root <dir>] [--json]
+assay plugin disable|enable <external-id> [--root <dir>] [--json]
+assay plugin remove <external-id> [--root <dir>] [--json]
 assay plugin list [--root <dir>] [--json]
 assay plugin check [--root <dir>] [--json]
 assay reconcile [--root <dir>] [--plugin <id...>] [--dry-run | --apply] [--json]
@@ -98,6 +102,29 @@ assay reconcile [--root <dir>] [--plugin <id...>] [--dry-run | --apply] [--json]
 `plugin add` declares it in `.assay/manifest.json`, creates only missing intent
 scaffold files, and writes an installation receipt to `.assay/plugins.json`.
 Existing files are never overwritten.
+
+`plugin register` is the separate, declaration-only path for an independently
+packaged external descriptor. Assay validates and locks the descriptor and its
+exact payload reference in `.assay/external-plugins.json`; it does not import,
+install, activate, or execute the payload. Qualified external IDs cannot use
+the reserved `assay.*` namespace. A descriptor declares one or more target
+hosts; a target carries an exact version only when the adapter knows one. The
+payload provenance carries an SPDX identifier and authoritative license URL.
+Payload integrity is either exact lowercase `sha256:<64-hex>` or npm-style
+`sha512-<64-byte-base64>`, and its ref ends in an exact `@version` or
+`#version` token.
+State ownership distinguishes safe Assay-relative paths from opaque symbolic
+host locators, which Assay never resolves or deletes. `plugin observe` imports
+one concrete host/version report and rejects identity, descriptor/payload
+integrity, undeclared host, known exact-version, scope, surface, or ownership
+mismatches. Until that report exists, list/check
+show host installation and activation as unobserved and health as
+unverifiable. Observations require an RFC 3339 timestamp with timezone;
+`active`, `healthy`, or `unhealthy` states require `installed`, while a
+`not-installed` report must remain inactive and unverifiable. List output keeps
+the concrete observed host/version and health aligned across its generic and
+external status fields. Disable/enable changes only Assay contribution state. Remove
+deletes only Assay's descriptor record and preserves package and host state.
 
 `assay.trellis` (alias: `trellis`) is a built-in `workspace-runtime` plugin.
 Its protocol version, per-plugin receipt `state_version`, and dedicated runtime

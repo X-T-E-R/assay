@@ -90,6 +90,7 @@ import {
   loadManifest,
   migrateLayout,
   mutateTrellisLease,
+  observeExternalPluginFromFile,
   parseTrellisJson,
   planTrellisLegacyHookScrub,
   planTrellisLegacyMigration,
@@ -105,8 +106,10 @@ import {
   recordDonorEvidenceFromFile,
   recordDonorRollback,
   registerDonorAdoptionFromFile,
+  registerExternalPluginFromFile,
   registerSystem,
   registerTrellisWorker,
+  removeExternalPlugin,
   removePlugin,
   renderCodexSessionStartHook,
   repairTrellisChannel,
@@ -117,6 +120,7 @@ import {
   scanForProjects,
   searchTrellisMemory,
   sendTrellisChannel,
+  setExternalPluginEnabled,
   setTrellisChannelCursor,
   setTrellisConfig,
   showTrellisConfig,
@@ -881,6 +885,44 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     });
 
   plugin
+    .command("register")
+    .description("Register and lock an independently packaged external plugin descriptor")
+    .argument("<descriptor-file>", "JSON descriptor file")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (descriptorFile, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await registerExternalPluginFromFile({ root, file: descriptorFile });
+      if (commandOptions.json) writeJson(output, result);
+      else {
+        writeLine(
+          output,
+          "stdout",
+          `${result.alreadyRegistered ? "External plugin already registered" : "Registered external plugin"}: ${result.plugin.id}`,
+        );
+        writeLine(output, "stdout", result.plugin.message);
+      }
+    });
+
+  plugin
+    .command("observe")
+    .description("Import a host-reported observation without invoking the external plugin")
+    .argument("<observation-file>", "JSON host observation file")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (observationFile, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await observeExternalPluginFromFile({ root, file: observationFile });
+      if (commandOptions.json) writeJson(output, result);
+      else
+        writeLine(
+          output,
+          "stdout",
+          `Recorded external observation: ${result.plugin.id}\n${result.plugin.message}`,
+        );
+    });
+
+  plugin
     .command("list")
     .description("List desired, installed, and available plugins")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
@@ -898,8 +940,12 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   for (const mode of ["disable", "uninstall"] as const) {
     plugin
       .command(mode)
-      .description(`${mode === "disable" ? "Disable" : "Uninstall"} a built-in workspace plugin`)
-      .argument("<plugin>", "plugin id or alias")
+      .description(
+        mode === "disable"
+          ? "Disable a built-in runtime or an external descriptor's Assay contribution"
+          : "Uninstall a built-in workspace plugin",
+      )
+      .argument("<plugin>", "plugin id or built-in alias")
       .option("--root <target-dir>", "target workspace directory", process.cwd())
       .option("--purge", "after backup, remove plugin-owned durable data")
       .option("--yes", "confirm purge")
@@ -922,6 +968,42 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           );
       });
   }
+
+  plugin
+    .command("enable")
+    .description("Re-enable an external descriptor's Assay-side contribution")
+    .argument("<plugin>", "qualified external plugin id")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (pluginId, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await setExternalPluginEnabled({ root, plugin: pluginId, enabled: true });
+      if (commandOptions.json) writeJson(output, result);
+      else
+        writeLine(
+          output,
+          "stdout",
+          `enable ${result.plugin.id}: ${result.changed ? "applied" : "already enabled"}; host state unchanged`,
+        );
+    });
+
+  plugin
+    .command("remove")
+    .description("Remove an external descriptor record without deleting host or package state")
+    .argument("<plugin>", "qualified external plugin id")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (pluginId, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await removeExternalPlugin({ root, plugin: pluginId });
+      if (commandOptions.json) writeJson(output, result);
+      else
+        writeLine(
+          output,
+          "stdout",
+          `remove ${result.plugin}: ${result.changed ? "Assay record removed" : "already absent"}; host/package state preserved`,
+        );
+    });
 
   plugin
     .command("check")

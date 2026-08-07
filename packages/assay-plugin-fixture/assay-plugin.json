@@ -1,0 +1,41 @@
+{
+  "__schema": 1,
+  "id": "assay-fixture.readonly-command",
+  "adapter_version": "1.0.0",
+  "assay": {
+    "spi_version": 1,
+    "version": "0.6.0"
+  },
+  "provenance": {
+    "source": "npm:@assay/plugin-fixture",
+    "ref": "@assay/plugin-fixture@1.0.0",
+    "license": {
+      "spdx": "MIT",
+      "url": "https://github.com/X-T-E-R/assay/blob/master/LICENSE"
+    }
+  },
+  "payload": {
+    "locator": "urn:assay-fixture:readonly-command-contract",
+    "version": "1.0.0",
+    "ref": "urn:assay-fixture:readonly-command-contract@1.0.0",
+    "integrity": "sha512-y7I1KGRrQ0+uiUnJECFSO4sfsU17UiL2S7CVkfTz5ty3uMfCDK+B4ER2dnA8bCISyjOxNEqI4p3VQ4BO2tltTw=="
+  },
+  "targets": [
+    {
+      "host": "fixture.host"
+    },
+    {
+      "host": "fixture.second-host"
+    }
+  ],
+  "requests": {
+    "capabilities": ["fixture.readonly-command"],
+    "scopes": ["fixture.command.read"],
+    "surfaces": ["fixture.command.status"]
+  },
+  "state_ownership": [],
+  "execution": {
+    "owner": "external-host",
+    "assay_executes": false
+  }
+}

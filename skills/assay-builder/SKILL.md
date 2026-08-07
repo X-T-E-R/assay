@@ -49,6 +49,10 @@ assay capability add <module>                # built-ins: adr|intent|iteration|p
 # Workspace plugins (extend an existing Assay workspace)
 assay plugin add assay.intent
 assay plugin add assay.trellis
+assay plugin register <descriptor.json> [--json]     # lock external metadata; execute nothing
+assay plugin observe <observation.json> [--json]     # import a matching host report
+assay plugin disable|enable <external-id> [--json]   # Assay-side contribution only
+assay plugin remove <external-id> [--json]           # preserve package and host state
 assay trellis task create --title <title> --json
 assay trellis task current --json
 assay trellis protocol --json
@@ -144,6 +148,7 @@ Target projects use an archetype-specific layout over a shared base (`.assay/`, 
 - `plugin add assay.intent` declares desired plugin state, scaffolds only missing files, and records installation in `.assay/plugins.json`. `assay capability add intent` stays compatible for existing automation.
 - `reconcile` only operates on a workspace that already has `.assay/manifest.json`. It is a write-free preview unless `--apply` is present. A complete legacy intent scaffold is adopted without rewriting it; an incomplete one gets only its missing files. A converged apply does not update timestamps or append an event.
 - `plugin add assay.trellis` installs Assay's built-in operational v1 runtime under `.assay/trellis/`. It does not call a Trellis CLI or depend on `.trellis/`, and it does not replace Assay-native ADR or intent authority. Tasks, sessions, journal, config, channels/leases, and external-worker state are durable project-local domains; Codex memory is bounded and read-only. Optional session ids fail closed when an unscoped current task would be ambiguous. Built-in provider-process supervision is deferred: workers register and drive the CLI themselves.
+- `plugin register` validates and locks an independently packaged external descriptor under `.assay/external-plugins.json`. It never imports, installs, activates, or executes the payload. A descriptor may list several hosts and omit unknown target versions, records SPDX/license-source metadata, and distinguishes safe Assay-relative state from opaque host locators. `plugin observe` requires a concrete host version and rejects identity, integrity, undeclared-host, declared exact-version, grant, surface, or ownership mismatches. Assay never resolves or deletes host locators. Missing evidence remains unobserved/unverifiable. Disable/enable/remove change only Assay control-plane records and grant no native capability, responsibility, or decision authority.
 
 ## Product intent
 

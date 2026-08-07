@@ -10,7 +10,7 @@ import {
   TRELLIS_PLUGIN_ID,
 } from "./registry.js";
 
-export type ProviderHealth = "healthy" | "unhealthy" | "not-checked";
+export type ProviderHealth = "healthy" | "unhealthy" | "unverifiable" | "not-checked";
 export type ResponsibilityState = "active" | "disabled" | "blocked";
 
 /** Compatibility shape retained for generic plugin receipts. */
