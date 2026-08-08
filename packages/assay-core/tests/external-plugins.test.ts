@@ -6,14 +6,13 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
   EXTERNAL_PLUGINS_STATE_FILE,
-  checkPlugins,
+  checkExternalPlugins,
   initFramework,
-  listPlugins,
+  listExternalPlugins,
   loadExternalPluginsState,
   observeExternalPlugin,
   registerExternalPlugin,
   removeExternalPlugin,
-  removePlugin,
   setExternalPluginEnabled,
 } from "../src/index.js";
 
@@ -39,7 +38,7 @@ function fixtureDescriptor(id = "example.readonly-command") {
     __schema: 1,
     id,
     adapter_version: "1.0.0",
-    assay: { spi_version: 1, version: "0.10.0" },
+    assay: { spi_version: 1, version: "0.11.0" },
     provenance: {
       source: "npm:@example/assay-plugin-fixture",
       ref: "v1.0.0",
@@ -309,27 +308,21 @@ describe("external plugin descriptor control plane", () => {
     const root = await workspace("DeclarationOnly");
     await registerExternalPlugin({ root, descriptor: fixtureDescriptor() });
 
-    const listed = await listPlugins(root);
-    expect(listed.plugins).toContainEqual(
+    const listed = await listExternalPlugins(root);
+    expect(listed).toContainEqual(
       expect.objectContaining({
         id: "example.readonly-command",
-        installed: false,
+        assayEnabled: true,
+        hostInstallation: "unobserved",
+        hostActivation: "unobserved",
         health: "unverifiable",
-        operationalResponsibilities: [],
-        providedResponsibilities: [],
-        external: expect.objectContaining({
-          assayEnabled: true,
-          hostInstallation: "unobserved",
-          hostActivation: "unobserved",
-          health: "unverifiable",
-          assayExecutes: false,
-        }),
+        assayExecutes: false,
       }),
     );
-    expect(
-      listed.plugins.find((plugin) => plugin.id === "example.readonly-command")?.external,
-    ).toMatchObject({ requestedCapabilities: ["fixture.readonly-command", "fixture.status.read"] });
-    const checked = await checkPlugins(root);
+    expect(listed.find((plugin) => plugin.id === "example.readonly-command")).toMatchObject({
+      requestedCapabilities: ["fixture.readonly-command", "fixture.status.read"],
+    });
+    const checked = await checkExternalPlugins(root);
     expect(checked.ok).toBe(true);
     expect(checked.rows).toContainEqual(
       expect.objectContaining({
@@ -348,7 +341,7 @@ describe("external plugin descriptor control plane", () => {
       "npm:@example/assay-plugin-fixture@9.9.9";
     await writeFile(file, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 
-    const checked = await checkPlugins(root);
+    const checked = await checkExternalPlugins(root);
     expect(checked.ok).toBe(false);
     expect(checked.rows).toEqual([
       expect.objectContaining({
@@ -382,7 +375,7 @@ describe("external plugin descriptor control plane", () => {
     expect(observed.plugin.hostInstallation).toBe("installed");
     expect(observed.plugin.hostActivation).toBe("active");
     expect(observed.plugin.health).toBe("healthy");
-    expect((await checkPlugins(root)).ok).toBe(true);
+    expect((await checkExternalPlugins(root)).ok).toBe(true);
 
     for (const invalidObservation of [
       {
@@ -447,15 +440,12 @@ describe("external plugin descriptor control plane", () => {
         health: "unhealthy",
       }),
     );
-    expect((await listPlugins(root)).plugins).toContainEqual(
+    expect(await listExternalPlugins(root)).toContainEqual(
       expect.objectContaining({
         id: registered.plugin.id,
+        observedHost: "example.host",
+        observedHostVersion: "9.4.0",
         health: "unhealthy",
-        external: expect.objectContaining({
-          observedHost: "example.host",
-          observedHostVersion: "9.4.0",
-          health: "unhealthy",
-        }),
       }),
     );
 
@@ -482,12 +472,12 @@ describe("external plugin descriptor control plane", () => {
     const root = await workspace("ControlLifecycle");
     await registerExternalPlugin({ root, descriptor: fixtureDescriptor() });
 
-    const disabled = await removePlugin({
+    const disabled = await setExternalPluginEnabled({
       root,
       plugin: "example.readonly-command",
-      mode: "disable",
+      enabled: false,
     });
-    expect(disabled).toMatchObject({ changed: true, hookRemoved: false, dataPreserved: true });
+    expect(disabled).toMatchObject({ changed: true });
     expect((await listExternal(root)).assayEnabled).toBe(false);
 
     const enabled = await setExternalPluginEnabled({
@@ -507,12 +497,60 @@ describe("external plugin descriptor control plane", () => {
     });
     expect((await loadExternalPluginsState(root))?.plugins).toEqual({});
   });
+
+  it("fails every external plugin read and write on a 0.10 workspace before changing state", async () => {
+    const root = await workspace("OldEnvelope");
+    const registered = await registerExternalPlugin({ root, descriptor: fixtureDescriptor() });
+    const manifestFile = path.join(root, ".assay", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8")) as Record<string, unknown>;
+    manifest.framework_version = "0.10.0";
+    manifest.minimum_assay_version = "0.10.0";
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const stateFile = path.join(root, EXTERNAL_PLUGINS_STATE_FILE);
+    const before = await readFile(stateFile);
+    const observation = {
+      __schema: 1,
+      plugin_id: registered.plugin.id,
+      descriptor_digest: registered.plugin.descriptorDigest,
+      payload_integrity: registered.plugin.payload.integrity,
+      host: "example.host",
+      host_version: "1.0.0",
+      granted_scopes: registered.plugin.requestedScopes,
+      granted_surfaces: registered.plugin.requestedSurfaces,
+      state_ownership: registered.plugin.stateOwnership,
+      installation: "installed",
+      activation: "active",
+      health: "healthy",
+      observed_at: "2026-08-08T00:00:00.000Z",
+    } as const;
+
+    for (const operation of [
+      () => listExternalPlugins(root),
+      () => checkExternalPlugins(root),
+      () => registerExternalPlugin({ root, descriptor: fixtureDescriptor("example.second") }),
+      () => observeExternalPlugin({ root, observation }),
+      () =>
+        setExternalPluginEnabled({
+          root,
+          plugin: registered.plugin.id,
+          enabled: false,
+        }),
+      () => removeExternalPlugin({ root, plugin: registered.plugin.id }),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({
+        code: "WORKSPACE_CUTOVER_REQUIRED",
+        observed: "0.10.0+s3+l7",
+        required: "0.11.0+s3+l7",
+      });
+      expect(await readFile(stateFile)).toEqual(before);
+    }
+  });
 });
 
 async function listExternal(root: string) {
-  const entry = (await listPlugins(root)).plugins.find(
+  const entry = (await listExternalPlugins(root)).find(
     (plugin) => plugin.id === "example.readonly-command",
-  )?.external;
+  );
   if (!entry) throw new Error("external plugin missing");
   return entry;
 }

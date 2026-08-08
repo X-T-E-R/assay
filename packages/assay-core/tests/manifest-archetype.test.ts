@@ -33,7 +33,6 @@ import {
   loadArchetype,
   loadExternalPluginsState,
   loadManifest,
-  loadPluginsState,
   loadSystemsRegistry,
   manifestPath,
   saveManifest,
@@ -92,21 +91,67 @@ function layout4Manifest() {
   return current;
 }
 
-describe("manifest 0.10 envelope", () => {
+describe("manifest 0.11 envelope", () => {
   it("writes and loads exactly schema 3 and layout 7 without a retired work path", async () => {
     const root = await tempDir();
     const manifest = defaultManifest("Current");
     expect(manifest).toMatchObject({
       __schema: 3,
-      framework_version: "0.10.0",
-      minimum_assay_version: "0.10.0",
+      framework_version: "0.11.0",
+      minimum_assay_version: "0.11.0",
       layout_version: 7,
       layout: { version: 7 },
     });
     expect(manifest.layout.paths).not.toHaveProperty("adrs_index");
     expect(manifest.layout.paths).not.toHaveProperty("iterations");
     await saveManifest(root, manifest);
-    await expect(loadManifest(root)).resolves.toMatchObject({ framework_version: "0.10.0" });
+    await expect(loadManifest(root)).resolves.toMatchObject({ framework_version: "0.11.0" });
+  });
+
+  it("rejects the exact 0.10.0+s3+l7 envelope before external or retired plugin state is read", async () => {
+    const root = await tempDir();
+    const old = defaultManifest("Previous release") as unknown as Record<string, unknown>;
+    old.framework_version = "0.10.0";
+    old.minimum_assay_version = "0.10.0";
+    await writeManifestJson(root, old);
+    await writeFile(path.join(root, ".assay", "external-plugins.json"), "{malformed", "utf8");
+    await writeFile(path.join(root, ".assay", "plugins.json"), "{malformed", "utf8");
+    const before = await treeHash(root);
+
+    await expect(loadExternalPluginsState(root)).rejects.toMatchObject({
+      code: "WORKSPACE_CUTOVER_REQUIRED",
+      observed: "0.10.0+s3+l7",
+      required: "0.11.0+s3+l7",
+      locator: "assay-cutover:0.10.0+s3+l7->0.11.0+s3+l7",
+    });
+    expect(await treeHash(root)).toBe(before);
+  });
+
+  it("retains optional generic plugin declarations and bindings without creating built-in state", async () => {
+    const root = await tempDir();
+    const manifest = defaultManifest("Generic metadata");
+    manifest.plugins = { "example.provider": { kind: "external-provider" } };
+    manifest.bindings = {
+      "example.responsibility": {
+        provider: "example.provider",
+        target: { kind: "workspace" },
+      },
+    };
+
+    await saveManifest(root, manifest);
+
+    await expect(loadManifest(root)).resolves.toMatchObject({
+      plugins: { "example.provider": { kind: "external-provider" } },
+      bindings: {
+        "example.responsibility": {
+          provider: "example.provider",
+          target: { kind: "workspace" },
+        },
+      },
+    });
+    await expect(readFile(path.join(root, ".assay", "plugins.json"), "utf8")).rejects.toMatchObject(
+      { code: "ENOENT" },
+    );
   });
 
   it("validates existing manifest bytes before overwrite and preserves invalid authorities", async () => {
@@ -697,8 +742,8 @@ describe("manifest 0.10 envelope", () => {
     await expect(loadManifest(root)).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
       observed: "0.7.0+s2+l5",
-      required: "0.10.0+s3+l7",
-      locator: "assay-cutover:0.7.0+s2+l5->0.10.0+s3+l7",
+      required: "0.11.0+s3+l7",
+      locator: "assay-cutover:0.7.0+s2+l5->0.11.0+s3+l7",
     });
     await expect(
       convertOverlayToStandalone({ root, target: path.join(root, "target") }),
@@ -726,12 +771,11 @@ describe("manifest 0.10 envelope", () => {
     await expect(getFrameworkStatus({ root })).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
       observed: "0.8.0+s2+l6",
-      required: "0.10.0+s3+l7",
-      locator: "assay-cutover:0.8.0+s2+l6->0.10.0+s3+l7",
+      required: "0.11.0+s3+l7",
+      locator: "assay-cutover:0.8.0+s2+l6->0.11.0+s3+l7",
     });
     for (const operation of [
       () => loadArchetype("study", { root }),
-      () => loadPluginsState(root),
       () => loadExternalPluginsState(root),
       () => loadSystemsRegistry(root),
     ]) {
@@ -755,8 +799,8 @@ describe("manifest 0.10 envelope", () => {
     await expect(loadManifest(root)).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
       observed: "0.6.0+s2+l4",
-      required: "0.10.0+s3+l7",
-      locator: "assay-cutover:0.6.0+s2+l4->0.10.0+s3+l7",
+      required: "0.11.0+s3+l7",
+      locator: "assay-cutover:0.6.0+s2+l4->0.11.0+s3+l7",
     });
     expect(await treeHash(root)).toBe(before);
   });
@@ -766,7 +810,7 @@ describe("manifest 0.10 envelope", () => {
     await writeManifestJson(root, layout4Manifest(), ".framework");
     await expect(loadManifest(root)).rejects.toBeInstanceOf(WorkspaceCutoverRequiredError);
     await expect(loadManifest(root)).rejects.toMatchObject({
-      locator: "assay-cutover:.framework:0.6.0+s2+l4->0.10.0+s3+l7",
+      locator: "assay-cutover:.framework:0.6.0+s2+l4->0.11.0+s3+l7",
     });
     const before = await readFile(path.join(root, ".framework", "manifest.json"), "utf8");
     await expect(saveManifest(root, defaultManifest("No overwrite"))).rejects.toMatchObject({

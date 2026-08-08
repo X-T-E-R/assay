@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { createTempDirectoryFixture, pathExists } from "assay-test-support";
@@ -6,7 +6,6 @@ import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  addPlugin,
   applyUpdate,
   attachExistingRepo,
   checkFramework,
@@ -42,7 +41,7 @@ async function tree(root: string): Promise<string[]> {
 }
 
 describe("capability and native Intent removal", () => {
-  it("writes the closed 0.10.0+s3+l7 envelope without capability or plugin state", async () => {
+  it("writes the closed 0.11.0+s3+l7 envelope without capability or built-in plugin state", async () => {
     const root = path.join(await tempDirs.createTempDir(), "fresh");
     await initFramework({ target: root, name: "Fresh" });
     await applyUpdate({ root, dryRun: false });
@@ -51,8 +50,8 @@ describe("capability and native Intent removal", () => {
     const manifest = JSON.parse(manifestText) as Record<string, unknown>;
     expect(manifest).toMatchObject({
       __schema: 3,
-      framework_version: "0.10.0",
-      minimum_assay_version: "0.10.0",
+      framework_version: "0.11.0",
+      minimum_assay_version: "0.11.0",
       layout_version: 7,
     });
     expect((manifest.project as Record<string, unknown>).capabilities).toBeUndefined();
@@ -86,7 +85,7 @@ describe("capability and native Intent removal", () => {
     }
   });
 
-  it("rejects a retired modules key before update or plugin mutation writes", async () => {
+  it("rejects a retired modules key before update writes", async () => {
     const root = path.join(await tempDirs.createTempDir(), "existing-custom");
     await initFramework({ target: root, name: "Existing" });
     const archetypePath = path.join(root, ".assay", "archetypes", "study.yaml");
@@ -100,9 +99,6 @@ describe("capability and native Intent removal", () => {
     const beforeManifest = await readFile(path.join(root, ".assay", "manifest.json"), "utf8");
 
     await expect(applyUpdate({ root, dryRun: false })).rejects.toThrow(
-      /retired archetype key 'modules'/,
-    );
-    await expect(addPlugin({ root, plugin: "assay.trellis" })).rejects.toThrow(
       /retired archetype key 'modules'/,
     );
     expect(await tree(root)).toEqual(before);
@@ -177,16 +173,80 @@ describe("capability and native Intent removal", () => {
     await writeFile(path.join(source, ".assay", "intent", "unknown.md"), "preserve me\n", "utf8");
     const target = path.join(await tempDirs.createTempDir(), "standalone-target");
 
-    const result = await convertOverlayToStandalone({
-      root: source,
-      target,
-      move: true,
-      keepOverlay: false,
-    });
-    expect(result.overlayStateRemoved).toBe(false);
+    await expect(
+      convertOverlayToStandalone({
+        root: source,
+        target,
+        move: true,
+        keepOverlay: false,
+      }),
+    ).rejects.toThrow(/unknown state/);
+    expect(await pathExists(target)).toBe(false);
     expect(await pathExists(path.join(target, "intent"))).toBe(false);
     expect(await readFile(path.join(source, ".assay", "intent", "unknown.md"), "utf8")).toBe(
       "preserve me\n",
     );
-  });
+  }, 30_000);
+
+  it("copies current external plugin state while leaving retired runtime and receipt residuals untouched", async () => {
+    const source = path.join(await tempDirs.createTempDir(), "copy-residual-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "package.json"), '{"name":"product"}\n', "utf8");
+    await execa("git", ["init"], { cwd: source });
+    await execa("git", ["config", "user.email", "assay@example.test"], { cwd: source });
+    await execa("git", ["config", "user.name", "Assay Test"], { cwd: source });
+    await execa("git", ["add", "package.json"], { cwd: source });
+    await execa("git", ["commit", "-m", "initial"], { cwd: source });
+    await attachExistingRepo({ root: source, name: "CopyResidual", noTrack: true });
+
+    const runtimeSentinel = path.join(source, ".assay", "trellis", "sentinel.txt");
+    const retiredReceipt = path.join(source, ".assay", "plugins.json");
+    const externalState = path.join(source, ".assay", "external-plugins.json");
+    await mkdir(path.dirname(runtimeSentinel), { recursive: true });
+    await writeFile(runtimeSentinel, "retired runtime\n", "utf8");
+    await writeFile(retiredReceipt, "{retired receipt bytes", "utf8");
+    await writeFile(
+      externalState,
+      '{"__schema":1,"plugins":{},"updated_at":"2026-08-08T00:00:00.000Z"}\n',
+      "utf8",
+    );
+
+    const target = path.join(await tempDirs.createTempDir(), "copy-residual-target");
+    await convertOverlayToStandalone({ root: source, target });
+
+    expect(await readFile(runtimeSentinel, "utf8")).toBe("retired runtime\n");
+    expect(await readFile(retiredReceipt, "utf8")).toBe("{retired receipt bytes");
+    expect(await pathExists(path.join(target, ".assay", "trellis"))).toBe(false);
+    expect(await pathExists(path.join(target, ".assay", "plugins.json"))).toBe(false);
+    expect(await readFile(path.join(target, ".assay", "external-plugins.json"), "utf8")).toBe(
+      await readFile(externalState, "utf8"),
+    );
+  }, 30_000);
+
+  it("fails a destructive move on a redirected retired residual without following or deleting it", async () => {
+    const source = path.join(await tempDirs.createTempDir(), "redirect-residual-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "package.json"), '{"name":"product"}\n', "utf8");
+    await execa("git", ["init"], { cwd: source });
+    await execa("git", ["config", "user.email", "assay@example.test"], { cwd: source });
+    await execa("git", ["config", "user.name", "Assay Test"], { cwd: source });
+    await execa("git", ["add", "package.json"], { cwd: source });
+    await execa("git", ["commit", "-m", "initial"], { cwd: source });
+    await attachExistingRepo({ root: source, name: "RedirectResidual", noTrack: true });
+
+    const outside = path.join(await tempDirs.createTempDir(), "outside-retired-runtime");
+    await mkdir(outside, { recursive: true });
+    const sentinel = path.join(outside, "sentinel.txt");
+    await writeFile(sentinel, "outside bytes\n", "utf8");
+    const redirect = path.join(source, ".assay", "trellis");
+    await symlink(outside, redirect, process.platform === "win32" ? "junction" : "dir");
+    const target = path.join(await tempDirs.createTempDir(), "redirect-residual-target");
+
+    await expect(
+      convertOverlayToStandalone({ root: source, target, move: true, keepOverlay: false }),
+    ).rejects.toThrow(/unknown state/);
+    expect(await pathExists(target)).toBe(false);
+    expect(await readFile(sentinel, "utf8")).toBe("outside bytes\n");
+    expect(await pathExists(redirect)).toBe(true);
+  }, 30_000);
 });

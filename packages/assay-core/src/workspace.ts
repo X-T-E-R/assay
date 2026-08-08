@@ -32,7 +32,7 @@ import {
   resolveContainedPath,
   slugify,
 } from "./paths.js";
-import { collectPluginCheckRows } from "./plugins/reconcile.js";
+import { externalPluginCheckRows } from "./plugins/external.js";
 import {
   type Archetype,
   dirsForArchetype,
@@ -695,7 +695,7 @@ export async function checkFramework(
   }
 
   if (manifest) {
-    rows.push(...(await collectPluginCheckRows(root)));
+    rows.push(...(await externalPluginCheckRows(root)));
   }
 
   // Semantic check 2: systems registry consistency

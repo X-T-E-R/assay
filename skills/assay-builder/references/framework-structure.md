@@ -87,19 +87,11 @@ The CLI writes and maintains these files automatically:
 
 - `.assay/VERSION` — installed framework template version.
 - `.assay/manifest.json` — managed file manifest with template IDs, hashes, desired plugins, and exclusive provider bindings.
-- `.assay/plugins.json` — installed plugin receipts.
 - `.assay/task-contexts.json` — exact host-context bindings for native Tasks; the CLI owns this file.
-- `.assay/trellis/` — legacy operational task/session/journal/config/channel/worker state, WAL, terminal archive, and migration receipts. Native Tasks do not automatically import or migrate it. Codex sessions remain external and read-only.
 - `.assay/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain.
 - `.assay/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
 - `.assay/backups/` — pre-update and pre-migration backups.
 - `.assay/migrations/` — migration records.
-
-
-`.trellis/` is not an Assay-managed path and is not used by the legacy
-`assay.trellis` plugin. Its operational task/session/journal/config/channel/worker state lives under
-`.assay/trellis/`; hook registration calls the installed Assay command directly
-and does not copy a project hook script.
 
 ## `systems/` and version control
 

@@ -66,29 +66,26 @@ none。Assay 不按 active 数量、创建时间或标题推断。文件合同�
 每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。Project 使用 `project-<slug>`。Roadmap Item 位于 `roadmap/<roadmap-id>/`：`item.yaml` 保存封闭机器状态，`outcome.md` 保存读者可直接编辑且生命周期命令不会重写的结果说明；根 `roadmap/README.md` 只作说明，不生成动态索引。原生 Spec 按需位于 `specs/<spec-id>/{spec.yaml,specification.md}`，可从 Analysis 或 Task 显式提升当前约束而不修改来源。Project 选择的 `relay/` 与 `extensions/` 也按需创建。Source、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。详见 [Native specifications](docs/spec.md)。
 
 
-## 用插件扩展工作区，不增加新的 setup 生命周期
+## 注册外部插件元数据
 
+外部插件由 Assay 之外的 host 安装、激活和执行。工作区创建后，可以注册独立发布的 descriptor：
 
 ```bash
-# 先创建或接入工作区。插件状态只由之后的显式操作创建。
 assay init ../product-assay --name Product
-assay plugin add assay.trellis
-# 从独立发布的 descriptor 注册元数据；Assay 不执行插件。
 assay plugin register ./assay-plugin.json
 assay plugin observe ./host-observation.json
 assay plugin list
 assay plugin check
+assay plugin disable <external-id>
+assay plugin enable <external-id>
+assay plugin remove <external-id>
 ```
 
-manifest 记录期望启用的插件和责任绑定，`.assay/plugins.json` 记录当前工作区实际安装的内容。`assay reconcile` 对照这些状态与现有文件并输出计划；默认只预览，只有加上 `--apply` 才会修改。它只收敛一个已经存在 manifest 的 Assay 工作区，不负责创建或 attach，也不会自动删除孤立回执。
+Assay 把精确 descriptor 与 artifact 元数据锁定在 `.assay/external-plugins.json`（schema 1），并分别呈现 descriptor verification、Assay enablement、host installation/activation 和 health。这些命令不会安装、激活、停用、卸载、导入或执行外部 package；host-owned locator 始终是不透明元数据，Assay 不解析也不删除。
 
-外部 descriptor 使用独立且通用的 control-plane 路径。Assay 把精确 artifact 元数据锁定在 `.assay/external-plugins.json`，只接受与 descriptor 完全匹配的 host observation，并分别呈现 descriptor verification、Assay enablement、host installation/activation 和 health。disable、enable、remove 只改变 Assay 记录；不会安装、激活、停用、卸载、导入或执行外部 package。
+manifest schema 3 继续允许可选的通用 `plugins` 与 `bindings` 字段，但 core 不再根据它们安装或 reconcile built-in。新建工作区不会创建 built-in plugin receipt state。
 
-descriptor 可以声明多个 host，未知版本时不伪造精确版本；provenance 记录 SPDX 与权威 license URL。state ownership 明确区分安全的 Assay 相对路径与不透明的 host locator，Assay 永不解析或删除后者。
-
-本仓库还包含未发布的 metadata/control-plane adapter：`packages/assay-plugin-ponytail/assay-plugin.json`。它只引用外部 Ponytail artifact，不在 host 中安装或激活 Ponytail，不执行 Ponytail，也不表示上游 Ponytail 项目认可该 adapter。
-
-添加 `assay.trellis` 只创建缺失的 `.assay/trellis/` runtime state 和安装回执；它不调用 Trellis CLI，也不依赖根目录 `.trellis/`。operational v1 提供完整 task/session/journal/config/channel/worker/mem/legacy-migration 命令族、只读外部 Channel 源迁移、带回执的旧 Codex writer hook 清理、`protocol --json` 与 Codex hook registration。外部 worker 通过 CLI 驱动持久状态机；Assay 不伪装已启动 provider process。会话指针不一致时，无 scope 的 current/context 会 fail closed。
+本仓库包含未发布的 metadata/control-plane descriptor：`packages/assay-plugin-ponytail/assay-plugin.json`。它只引用外部 Ponytail artifact，不安装或执行 Ponytail，也不表示上游项目认可。
 
 ## 快速开始
 

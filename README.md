@@ -68,57 +68,37 @@ authority boundaries.
 Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Project ids use `project-<slug>`. `README.md` explains authority boundaries. Roadmap items live under `roadmap/<roadmap-id>/`, with closed machine state in `item.yaml` and reader-owned outcome prose in `outcome.md`; the root `roadmap/README.md` is explanatory, not a dynamic index. Native Specs are lazy under `specs/<spec-id>/{spec.yaml,specification.md}` and explicitly promote current constraints from Analysis or Task without changing their source. Project-selected `relay/` and `extensions/` remain lazy. Sources, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority. See [Roadmap items](docs/roadmap.md) and [Native specifications](docs/spec.md).
 
 
-## Add workspace plugins without another setup lifecycle
+## Register external plugin metadata
 
-Plugins extend an existing Assay workspace; they do not replace `init`,
-`attach`, or the evidence workbench itself. `assay.trellis` is the legacy in-package
-operational surface. Its dynamic state lives under `.assay/trellis/`; native
-Project, Task, Roadmap, Spec, and knowledge authorities remain
-separate. Installing the runtime does not rewrite or automatically migrate
-legacy Trellis state.
+External plugins are hosted and executed outside Assay. Register a packaged
+descriptor only after the workspace exists:
 
 ```bash
-# Create or attach first. Plugin state is added only by a later explicit operation.
 assay init ../product-assay --name Product
-assay plugin add assay.trellis
-# Register metadata from an independently packaged descriptor; Assay executes nothing.
 assay plugin register ./assay-plugin.json
 assay plugin observe ./host-observation.json
 assay plugin list
 assay plugin check
+assay plugin disable <external-id>
+assay plugin enable <external-id>
+assay plugin remove <external-id>
 ```
 
-The manifest records desired plugins. `.assay/plugins.json` records what this
-workspace has actually installed. `assay reconcile` compares those two layers
-with the existing files and prints a plan; it is a dry-run unless `--apply` is
-given. Reconcile only converges plugins in a workspace that already has an
-Assay manifest. It never creates or attaches a workspace or removes an
-orphaned plugin receipt.
+Assay locks exact descriptor and artifact metadata in
+`.assay/external-plugins.json` (schema 1). A matching host observation keeps
+descriptor verification, Assay enablement, host installation/activation, and
+health separate. These commands never install, activate, deactivate,
+uninstall, import, or execute an external package. Host-owned locators remain
+opaque and are never resolved or deleted by Assay.
 
-External descriptors take a separate generic control-plane path. Assay locks
-their exact artifact metadata in `.assay/external-plugins.json`, accepts only a
-matching host-reported observation, and keeps descriptor verification, Assay
-enablement, host installation/activation, and health separate. Disable,
-re-enable, and remove affect Assay records only; they do not install, activate,
-deactivate, uninstall, import, or execute the external package.
-Descriptors can name multiple hosts without inventing versions, carry SPDX and
-license-source metadata, and distinguish safe Assay-relative state from opaque
-host-owned locators that Assay never resolves or deletes.
+The manifest's optional generic `plugins` and `bindings` fields remain part of
+schema 3, but core does not install or reconcile built-ins from them. Fresh
+workspaces do not create built-in plugin receipt state.
 
-This repository also includes the unpublished metadata/control-plane adapter
-`packages/assay-plugin-ponytail/assay-plugin.json`. It only references the
-external Ponytail artifact: it does not install or activate Ponytail in a host,
-execute it, or imply endorsement by the upstream Ponytail project.
-
-Adding `assay.trellis` creates only its missing `.assay/trellis/` runtime state
-and installation receipt. It does not invoke a Trellis CLI or depend on a root
-`.trellis/` sidecar. Operational v1 includes task/session/journal/config,
-durable channels and external-worker leases, bounded read-only Codex memory,
-legacy migration (including strictly read-only explicit external channel sources),
-receipt-governed legacy Codex writer-hook scrubbing, and `protocol --json`, in
-addition to `context --host codex`.
-External workers invoke the CLI; Assay does not pretend to spawn a provider.
-Optional session ids fail closed when an unscoped lookup is ambiguous.
+This repository includes the unpublished metadata/control-plane descriptor
+`packages/assay-plugin-ponytail/assay-plugin.json`. It references Ponytail as
+an external artifact; it does not install or execute Ponytail and does not
+imply upstream endorsement.
 
 ## Quick start
 

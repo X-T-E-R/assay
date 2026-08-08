@@ -1,17 +1,15 @@
 import type {
-  AddPluginResult,
   AdoptExistingProjectResult,
   ApplyUpdateResult,
   AssayProjectRecord,
   AttachResult,
+  CheckExternalPluginsResult,
   CheckFrameworkResult,
-  CheckPluginsResult,
   ConvertOverlayResult,
+  ExternalPluginStatus,
   FrameworkStatusResult,
   InitFrameworkResult,
-  ListPluginsResult,
   OperationReport,
-  ReconcilePluginsResult,
   SourceAdoptionDecisionResult,
   SourceAdoptionHistoryResult,
   SourceAdoptionInspection,
@@ -24,9 +22,6 @@ import type {
   SourceStatusResult,
   SourceSyncResult,
   SystemRecord,
-  TrellisContextResult,
-  TrellisHookInstallResult,
-  TrellisTaskResult,
   UpdateAnalysis,
   UpdatePlan,
 } from "assay-core";
@@ -123,127 +118,35 @@ export function formatConvertResult(result: ConvertOverlayResult): string {
   ].join("\n");
 }
 
-function formatPluginActions(result: ReconcilePluginsResult): string[] {
-  if (result.plugins.length === 0) {
-    return ["  - (no desired plugins)"];
-  }
-  return result.plugins.flatMap((plugin) => {
-    const sources =
-      plugin.desiredSources.length > 0 ? `; desired by ${plugin.desiredSources.join(", ")}` : "";
-    const missing =
-      plugin.missingPaths.length > 0
-        ? plugin.missingPaths.map((file) => `      missing: ${file}`)
-        : [];
-    return [
-      `  - [${plugin.action}] ${plugin.id} (${plugin.kind}${sources}; health ${plugin.health}) - ${plugin.message}`,
-      ...missing,
-    ];
-  });
-}
-
-export function formatPluginAdd(result: AddPluginResult): string {
+export function formatPluginList(result: {
+  readonly root: string;
+  readonly plugins: readonly ExternalPluginStatus[];
+}): string {
   return [
-    result.alreadyDeclared
-      ? `Plugin already declared: ${result.plugin}`
-      : `Added plugin: ${result.plugin}`,
-    "Reconcile:",
-    ...formatPluginActions(result),
-    formatReport(result.report),
-    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+    `External plugins for ${result.root}:`,
+    ...(result.plugins.length === 0
+      ? ["  - (none registered)"]
+      : result.plugins.map((plugin) => {
+          const observedHost =
+            plugin.observedHost && plugin.observedHostVersion
+              ? `${plugin.observedHost}@${plugin.observedHostVersion}`
+              : "(none)";
+          return `  - ${plugin.id}: descriptor ${plugin.descriptorVerification}; payload ${plugin.payload.ref} referenced; Assay ${plugin.assayEnabled ? "enabled" : "disabled"}; observed host ${observedHost}; host installation ${plugin.hostInstallation}; host activation ${plugin.hostActivation}; health ${plugin.health}; execution ${plugin.executionOwner}; Assay executes nothing`;
+        })),
   ].join("\n");
 }
 
-export function formatPluginList(result: ListPluginsResult): string {
-  return [
-    `Plugins for ${result.project}:`,
-    ...result.plugins.map((plugin) => {
-      if (plugin.external) {
-        const external = plugin.external;
-        const observedHost =
-          external.observedHost && external.observedHostVersion
-            ? `${external.observedHost}@${external.observedHostVersion}`
-            : "(none)";
-        return `  - ${plugin.id} (external descriptor): descriptor ${external.descriptorVerification}; payload ${external.payload.ref} referenced; Assay ${external.assayEnabled ? "enabled" : "disabled"}; observed host ${observedHost}; host installation ${external.hostInstallation}; host activation ${external.hostActivation}; health ${external.health}; execution ${external.executionOwner}; Assay executes nothing`;
-      }
-      const desired = plugin.desired
-        ? `desired by ${plugin.desiredSources.join(", ")}`
-        : "not desired";
-      const installed = plugin.installed ? "installed" : "not installed";
-      const versions = `${plugin.protocolVersion === null ? "" : `; protocol v${plugin.protocolVersion}`}; state v${plugin.stateVersion ?? "unknown"}`;
-      const support = plugin.supported ? "" : "; unsupported";
-      const runtime =
-        plugin.runtimeCapabilities.length > 0
-          ? `; runtime ${plugin.runtimeCapabilities.join(", ")}`
-          : "";
-      const operations =
-        plugin.operationalResponsibilities.length > 0
-          ? `; operates ${plugin.operationalResponsibilities.join(", ")}`
-          : "";
-      const responsibilities =
-        plugin.providedResponsibilities.length > 0
-          ? `; provides ${plugin.providedResponsibilities.join(", ")}`
-          : "";
-      const active =
-        plugin.activeResponsibilities.length > 0
-          ? `; active for ${plugin.activeResponsibilities.join(", ")}`
-          : "";
-      return `  - ${plugin.id} (${plugin.kind}): ${desired}; ${installed}${versions}; ${plugin.action}; health ${plugin.health}${runtime}${operations}${responsibilities}${active}${support}`;
-    }),
-    "Responsibilities:",
-    ...result.responsibilities.map(
-      (responsibility) =>
-        `  - ${responsibility.id}: desired ${responsibility.desiredProvider}; active ${responsibility.activeProvider ?? "(none)"}; ${responsibility.state}`,
-    ),
-  ].join("\n");
-}
-
-export function formatTrellisTask(result: TrellisTaskResult): string {
-  if (!result.task) return "Current Trellis task: (none)";
-  return [
-    `Trellis task: ${result.task.id}`,
-    `Title: ${result.task.title}`,
-    `Status: ${result.task.status}`,
-    `Session: ${result.session_id ?? "(workspace)"}`,
-  ].join("\n");
-}
-
-export function formatTrellisContext(result: TrellisContextResult): string {
-  return [
-    `Trellis context for ${result.host}:`,
-    `Root: ${result.workspace_root}`,
-    formatTrellisTask(result),
-  ].join("\n");
-}
-
-export function formatTrellisHookInstall(result: TrellisHookInstallResult): string {
-  return [
-    `Trellis ${result.host} hook: ${result.action}`,
-    `Target: ${result.target}`,
-    `Command: ${result.command}`,
-    `Applied: ${result.applied ? "yes" : "no"}`,
-  ].join("\n");
-}
-
-export function formatPluginCheck(result: CheckPluginsResult): string {
+export function formatPluginCheck(result: CheckExternalPluginsResult): string {
   const rows =
     result.rows.length > 0
       ? result.rows.map(
           (row) => `[${row.status}] ${row.path}${row.message ? ` - ${row.message}` : ""}`,
         )
-      : ["[ok] no desired or installed plugins"];
-  return [`Plugin check: ${result.ok ? "ok" : "failed"}`, `Root: ${result.root}`, ...rows].join(
-    "\n",
-  );
-}
-
-export function formatPluginReconcile(result: ReconcilePluginsResult): string {
+      : ["[ok] no external plugins registered"];
   return [
-    `Plugin reconcile: ${result.dryRun ? "dry-run" : "applied"}`,
+    `External plugin check: ${result.ok ? "ok" : "failed"}`,
     `Root: ${result.root}`,
-    "Plan:",
-    ...formatPluginActions(result),
-    formatReport(result.report),
-    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
+    ...rows,
   ].join("\n");
 }
 

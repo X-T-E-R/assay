@@ -678,11 +678,37 @@ export async function externalPluginCheckRows(rootValue: string): Promise<
     readonly message: string;
   }[]
 > {
-  const statuses = await listExternalPlugins(rootValue);
-  return statuses.map((status) => ({
-    path: EXTERNAL_PLUGINS_STATE_FILE,
-    status:
-      status.health === "unhealthy" ? "error" : status.health === "healthy" ? "ok" : "warning",
-    message: `${status.id}: descriptor verified; payload ${status.payload.ref} referenced; host installation ${status.hostInstallation}; host activation ${status.hostActivation}; health ${status.health}; Assay executes nothing; Assay contribution ${status.assayEnabled ? "enabled" : "disabled"}`,
-  }));
+  try {
+    const statuses = await listExternalPlugins(rootValue);
+    return statuses.map((status) => ({
+      path: EXTERNAL_PLUGINS_STATE_FILE,
+      status:
+        status.health === "unhealthy" ? "error" : status.health === "healthy" ? "ok" : "warning",
+      message: `${status.id}: descriptor verified; payload ${status.payload.ref} referenced; host installation ${status.hostInstallation}; host activation ${status.hostActivation}; health ${status.health}; Assay executes nothing; Assay contribution ${status.assayEnabled ? "enabled" : "disabled"}`,
+    }));
+  } catch (error) {
+    const expectedPath = path.resolve(rootValue, EXTERNAL_PLUGINS_STATE_FILE);
+    if (error instanceof InvalidManifestError && path.resolve(error.path) === expectedPath) {
+      return [
+        {
+          path: EXTERNAL_PLUGINS_STATE_FILE,
+          status: "error",
+          message: error.message,
+        },
+      ];
+    }
+    throw error;
+  }
+}
+
+export interface CheckExternalPluginsResult {
+  readonly root: string;
+  readonly ok: boolean;
+  readonly rows: Awaited<ReturnType<typeof externalPluginCheckRows>>;
+}
+
+export async function checkExternalPlugins(rootValue: string): Promise<CheckExternalPluginsResult> {
+  const root = path.resolve(rootValue);
+  const rows = await externalPluginCheckRows(root);
+  return { root, ok: !rows.some((row) => row.status === "error"), rows };
 }

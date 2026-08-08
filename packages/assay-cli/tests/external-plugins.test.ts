@@ -86,8 +86,7 @@ describe("external plugin CLI", () => {
     expect(JSON.parse(listed.stdout).plugins).toContainEqual(
       expect.objectContaining({
         id: "assay-fixture.readonly-command",
-        installed: false,
-        providedResponsibilities: [],
+        assayExecutes: false,
       }),
     );
 
@@ -156,7 +155,10 @@ describe("external plugin CLI", () => {
     ]);
     expect(disabled.exitCode, disabled.stderr).toBe(0);
     expect(JSON.parse(disabled.stdout)).toEqual(
-      expect.objectContaining({ changed: true, dataPreserved: true, hookRemoved: false }),
+      expect.objectContaining({
+        changed: true,
+        plugin: expect.objectContaining({ assayEnabled: false, assayExecutes: false }),
+      }),
     );
 
     const enabled = await runCli([
@@ -230,14 +232,12 @@ describe("external plugin CLI", () => {
       expect(listedJson.plugins).toContainEqual(
         expect.objectContaining({
           id,
-          external: expect.objectContaining({
-            descriptorVerification: "verified",
-            hostInstallation: "unobserved",
-            hostActivation: "unobserved",
-            health: "unverifiable",
-            payload: expect.objectContaining({ ref: expect.any(String) }),
-            assayExecutes: false,
-          }),
+          descriptorVerification: "verified",
+          hostInstallation: "unobserved",
+          hostActivation: "unobserved",
+          health: "unverifiable",
+          payload: expect.objectContaining({ ref: expect.any(String) }),
+          assayExecutes: false,
         }),
       );
     }
@@ -307,7 +307,10 @@ describe("external plugin CLI", () => {
 
     const disabled = await runCli(["plugin", "disable", ponytail.id, "--root", root, "--json"]);
     expect(JSON.parse(disabled.stdout)).toEqual(
-      expect.objectContaining({ changed: true, dataPreserved: true, hookRemoved: false }),
+      expect.objectContaining({
+        changed: true,
+        plugin: expect.objectContaining({ assayEnabled: false, assayExecutes: false }),
+      }),
     );
     const disabledList = JSON.parse(
       (await runCli(["plugin", "list", "--root", root, "--json"])).stdout,
@@ -315,10 +318,8 @@ describe("external plugin CLI", () => {
     expect(disabledList.plugins).toContainEqual(
       expect.objectContaining({
         id: ponytail.id,
-        external: expect.objectContaining({
-          assayEnabled: false,
-          hostInstallation: "unobserved",
-        }),
+        assayEnabled: false,
+        hostInstallation: "unobserved",
       }),
     );
 
@@ -332,8 +333,7 @@ describe("external plugin CLI", () => {
     }
 
     const after = JSON.parse((await runCli(["plugin", "list", "--root", root, "--json"])).stdout);
-    expect(after.plugins.filter((plugin: { external?: unknown }) => plugin.external)).toEqual([]);
-    expect(after.plugins.map((plugin: { id: string }) => plugin.id)).toEqual(["assay.trellis"]);
+    expect(after.plugins).toEqual([]);
     expect(
       createHash("sha256")
         .update(await readFile(descriptorPath))

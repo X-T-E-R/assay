@@ -79,52 +79,27 @@ attempts. `.assay/task-contexts.json` stores exact host-context bindings, but
 Task never guesses current from active count, age, or title. It does not replace
 dispatch state. See [Task records](task.md) for its lifecycle and command guide.
 
-## Plugin structure
+## External plugin metadata
 
-The manifest's top-level `plugins` map is desired state;
-`.assay/plugins.json` is the operational install receipt. Fresh `init`,
-`attach`, and `update` do not create either layer. A later explicit plugin
-operation establishes plugin state.
+The manifest's optional top-level `plugins` and `bindings` maps remain generic
+schema 3 metadata. Core does not install, reconcile, execute, or remove a
+built-in provider from those fields, and fresh `init`, `attach`, and `update`
+workspaces do not create built-in receipt state.
 
-The manifest's `bindings` map remains available for genuinely exclusive,
-generic providers. `assay.trellis` does not use it: its operational plugin
-stores v1 runtime state under `.assay/trellis/` and reports its runtime
-capabilities on reconcile.
+Independently packaged descriptors use `.assay/external-plugins.json` schema 1.
+Each record contains the validated descriptor, computed SHA-256 lock, Assay
+enabled flag, and at most one host-reported observation. Descriptor
+verification, Assay enablement, host installation, host activation, and health
+remain separate. Missing host evidence stays `unobserved`/`unverifiable`.
+Requested capabilities, scopes, and surfaces are opaque host requests, not
+native Assay authority. Assay-owned paths must be safe and relative;
+host-owned locators remain symbolic and are never resolved or deleted.
+Removing a record never deletes the referenced package or host state.
 
-Independently packaged external descriptors use a separate control-plane file,
-`.assay/external-plugins.json`. Each record contains the validated descriptor,
-its computed SHA-256 lock, Assay's enabled flag, and at most one externally
-reported host observation. Descriptor verification, Assay enablement, host
-installation, host activation, and health remain separate fields. Missing host
-evidence stays `unobserved`/`unverifiable`; it is never inferred from the
-descriptor or payload locator. Descriptors may list several hosts and omit a
-target version rather than fabricate one; observations always name a concrete
-host version, and exact comparison occurs only when the target declared one.
-State ownership entries are either safe Assay-relative paths or opaque
-host-owned symbolic locators. Assay never resolves or deletes a host locator.
-External records contribute no native authority, responsibility binding, runtime
-hook, or workspace writer.
-Removing a record never deletes the referenced package or host-owned state.
-
-Operational v1 remains entirely project-local:
-
-```text
-.assay/trellis/
-  state.json                 strict task/current/hook state v1
-  tasks/                     active strict task records
-  archive/{tasks,index.json} terminal task archive
-  sessions.json              external session reducer v1
-  journal/events.jsonl       structured journal v1
-  config.json                allowlisted configuration v1
-  channels/<name>/           events, cursors, leases, sequence metadata v1
-  workers.json               external worker reducer v1
-  wal/active.json            recoverable multi-file mutation journal
-  migrations/<generation>/   legacy provenance, backups, and receipts
-```
-
-No second global project registry is created. Codex sessions stay in the host
-store and are read only. Plugin removal preserves this tree unless separately
-confirmed with `--purge --yes` after backup.
+Native Task is independent of plugin metadata. Its files own durable task
+identity and lifecycle; the host runtime continues to own dispatch, agent DAGs,
+execution permissions, and activation. Assay does not alias or import another
+task store.
 
 ```yaml
 __schema: 1
@@ -189,4 +164,13 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/sources` to `sources`, `.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`, and `.assay/project` to `project`, carrying `.assay/task-contexts.json`, the Source-owned adoption receipt store, and `.assay/trellis` runtime state. Managed Source and System paths are rewritten to match, and conversion fails before writing if any Source adoption or System target would stop resolving. Unknown directories under `.assay/` are not interpreted, copied, rewritten, or deleted; their presence keeps the source state directory in place after a move. Task and native Project directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into a sibling standalone workbench. Conversion hoists
+`.assay/sources`, `.assay/analyses`, `.assay/tasks`, and `.assay/project` to
+their standalone locations. It carries current state such as
+`.assay/task-contexts.json`, Source-adoption receipts, and
+`.assay/external-plugins.json`, then rewrites managed Source and System paths.
+
+Unknown state is never opened, followed, copied, moved, parsed, or deleted.
+Copy leaves it at the source; `--move --no-keep-overlay` fails before target
+creation. Task and native Project directories are never merged into non-empty
+targets. Use `assay convert --to standalone --target <sibling>`.

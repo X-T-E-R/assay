@@ -19,9 +19,7 @@ import {
   createAnalysis,
   initFramework,
   loadManifest,
-  reconcilePlugins,
   saveManifest,
-  savePluginsState,
   switchSource,
   syncSource,
 } from "../src/index.js";

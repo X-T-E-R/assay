@@ -327,15 +327,14 @@ describe("assay plugin CLI", () => {
     expect(await exists(path.join(root, ".assay", "manifest.json"))).toBe(false);
   });
 
-  it("installs the built-in Trellis runtime only through an explicit later operation", async () => {
-    const root = path.join(await tempDir(), "BuiltInTrellis");
-    const initialized = await runCli(["init", root, "--name", "BuiltInTrellis"]);
+  it("creates no built-in plugin state and exposes no install or uninstall leaves", async () => {
+    const root = path.join(await tempDir(), "NoBuiltInPlugins");
+    const initialized = await runCli(["init", root, "--name", "NoBuiltInPlugins"]);
     expect(initialized.exitCode, initialized.stderr).toBe(0);
     expect(await exists(path.join(root, ".assay", "plugins.json"))).toBe(false);
-    const result = await runCli(["plugin", "add", "assay.trellis", "--root", root]);
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(await exists(path.join(root, ".assay", "trellis", "state.json"))).toBe(true);
-    expect(await exists(path.join(root, ".trellis"))).toBe(false);
+    const help = await runCli(["plugin", "--help"]);
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).not.toMatch(/^\s+(add|uninstall)\b/m);
   });
 
   it("exposes neither capability nor native intent commands", async () => {

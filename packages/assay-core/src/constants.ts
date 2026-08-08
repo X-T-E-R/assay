@@ -1,4 +1,4 @@
-export const CURRENT_VERSION = "0.10.0";
+export const CURRENT_VERSION = "0.11.0";
 
 /**
  * Layout version written by this build of Assay. New workspaces always carry
@@ -19,4 +19,3 @@ export const MANIFEST_FILE = `${MANAGED_DIR}/manifest.json`;
 export const EVENTS_DIR = `${MANAGED_DIR}/events`;
 export const BACKUPS_DIR = `${MANAGED_DIR}/backups`;
 export const SYSTEMS_REGISTRY_FILE = `${MANAGED_DIR}/systems-registry.json`;
-export const PLUGINS_STATE_FILE = `${MANAGED_DIR}/plugins.json`;

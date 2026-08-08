@@ -10,4 +10,4 @@ Assay runtime metadata. Do not store external evidence or long-lived user knowle
 - `migrations/`: migration notes and plans.
 - `backups/`: timestamped backups before update or migration.
 
-Current template release is 0.10.0; layout release is 7.
+Current template release is 0.11.0; layout release is 7.

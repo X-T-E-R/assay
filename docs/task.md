@@ -229,7 +229,6 @@ they do not take ownership from these systems. Creating, binding, relating, or
 finishing a Task never expands the caller's permission or proves project
 acceptance.
 
-`assay.trellis` remains a legacy compatibility surface with state under
-`.assay/trellis/`. Native Tasks do not delete, rewrite, import, or automatically
-migrate that state. An existing workspace may keep using the legacy surface
-while new durable Task identities use `assay task`.
+Native Task is the only Assay task lifecycle. Host runtimes still own dispatch,
+agent DAGs, execution permissions, and activation. Task records do not alias or
+import a host task store.

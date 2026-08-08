@@ -13,8 +13,6 @@ export type FrameworkErrorCode =
   | "SOURCE_ADOPTION_POLICY_BLOCKED"
   | "SOURCE_ADOPTION_STALE"
   | "SOURCE_ADOPTION_BUSY"
-  | "PROVIDER_OPERATION_UNSUPPORTED"
-  | "PROVIDER_UNAVAILABLE"
   | "ALREADY_EXISTS"
   | "NOT_FOUND"
   | "IO_ERROR";
@@ -49,16 +47,16 @@ export class InvalidManifestError extends FrameworkError {
 
 export class WorkspaceCutoverRequiredError extends FrameworkError {
   readonly observed: string;
-  readonly required = "0.10.0+s3+l7";
+  readonly required = "0.11.0+s3+l7";
   readonly locator: string;
 
   constructor(observed: string) {
-    const locator = `assay-cutover:${observed}->0.10.0+s3+l7`;
+    const locator = `assay-cutover:${observed}->0.11.0+s3+l7`;
     super(
-      `Workspace cutover required: observed ${observed}; required 0.10.0+s3+l7; locator ${locator}`,
+      `Workspace cutover required: observed ${observed}; required 0.11.0+s3+l7; locator ${locator}`,
       {
         code: "WORKSPACE_CUTOVER_REQUIRED",
-        details: { observed, required: "0.10.0+s3+l7", locator },
+        details: { observed, required: "0.11.0+s3+l7", locator },
       },
     );
     this.name = "WorkspaceCutoverRequiredError";

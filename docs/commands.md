@@ -1,6 +1,6 @@
 # Commands
 
-Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`. Pass `--root <dir>` to operate on another workspace. Any workspace outside the exact `0.10.0+s3+l7` envelope fails closed with a cutover locator and requires a separate external tool.
+Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`. Pass `--root <dir>` to operate on another workspace. Any workspace outside the exact `0.11.0+s3+l7` envelope fails closed with a cutover locator and requires a separate external tool.
 
 ## Workspace lifecycle
 
@@ -218,131 +218,37 @@ assay spec validate [id] [--root <dir>] [--json]
 ```
 
 
-## Workspace plugins and reconcile
+## External plugin metadata
 
 ```bash
-assay plugin add <id> [--root <dir>]
 assay plugin register <descriptor.json> [--root <dir>] [--json]
 assay plugin observe <observation.json> [--root <dir>] [--json]
 assay plugin disable|enable <external-id> [--root <dir>] [--json]
 assay plugin remove <external-id> [--root <dir>] [--json]
 assay plugin list [--root <dir>] [--json]
 assay plugin check [--root <dir>] [--json]
-assay reconcile [--root <dir>] [--plugin <id...>] [--dry-run | --apply] [--json]
 ```
 
-`plugin register` is the separate, declaration-only path for an independently
-packaged external descriptor. Assay validates and locks the descriptor and its
-exact payload reference in `.assay/external-plugins.json`; it does not import,
-install, activate, or execute the payload. Qualified external IDs cannot use
-the reserved `assay.*` namespace. A descriptor declares one or more target
-hosts; a target carries an exact version only when the adapter knows one. The
-payload provenance carries an SPDX identifier and authoritative license URL.
-Payload integrity is either exact lowercase `sha256:<64-hex>` or npm-style
-`sha512-<64-byte-base64>`, and its ref ends in an exact `@version` or
-`#version` token.
+`plugin register` validates and locks an independently packaged descriptor and
+its exact payload reference in `.assay/external-plugins.json` (schema 1). It
+does not import, install, activate, or execute the payload. Qualified external
+IDs cannot use the reserved `assay.*` namespace. Descriptors may declare
+several target hosts, exact artifact integrity, SPDX/license provenance,
+requested capabilities/scopes/surfaces, and safe Assay-relative or opaque
+host-owned state ownership.
 
-State ownership distinguishes safe Assay-relative paths from opaque symbolic
-host locators, which Assay never resolves or deletes. `plugin observe` imports
-one concrete host/version report and rejects identity, descriptor/payload
-integrity, undeclared host, known exact-version, scope, surface, or ownership
-mismatches. Until that report exists, list/check show host installation and
-activation as unobserved and health as unverifiable. Observations require an
-RFC 3339 timestamp with timezone; `active`, `healthy`, or `unhealthy` states
-require `installed`, while a `not-installed` report must remain inactive and
-unverifiable. List output keeps the concrete observed host/version and health
-aligned across its generic and external status fields. Disable/enable changes
-only Assay contribution state. Remove deletes only Assay's descriptor record
-and preserves package and host state.
+`plugin observe` records one concrete host/version report and rejects identity,
+descriptor/payload integrity, host, exact-version, grant, surface, or ownership
+mismatches. Before a matching observation exists, list/check report host state
+as unobserved and health as unverifiable. Disable/enable changes only the Assay
+control-plane flag. Remove deletes only the descriptor record; package and host
+state are preserved. Assay never executes the payload or resolves host-owned
+locators.
 
-`assay.trellis` (alias: `trellis`) is the legacy built-in
-`workspace-runtime` plugin. Native Tasks do not delete, rewrite, import, or
-automatically migrate existing Trellis state.
-
-Its protocol version, per-plugin receipt `state_version`, and dedicated runtime
-state schema are all exactly `1`. Dynamic task state is stored only in
-`.assay/trellis/`; no Trellis CLI or root `.trellis/` sidecar is used. It
-declares task-store, context-provider, and host-hook-registration runtime
-
-```bash
-assay trellis task create --title "Implement slice" [--session-id <id>] --json
-assay trellis task current [--session-id <id>] --json
-assay trellis task complete|cancel|list|show|archive ... --json
-assay trellis session start|current|end|rebind ... --json
-assay trellis journal append|list|show ... --json
-assay trellis config show|set ... --json
-assay trellis channel create|send|read|watch-once|cursor|repair ... --json
-assay trellis channel lease acquire|renew|release ... --json
-assay trellis worker register|claim|heartbeat|complete|stop|list ... --json
-assay trellis mem list|show|search|context ... --json
-assay trellis migrate legacy plan|apply|rollback|cleanup ... --json
-assay trellis protocol --json
-assay trellis context --host codex [--session-id <id>] --json
-assay trellis hook install --host codex [--dry-run | --apply] --json
-assay trellis hook legacy plan|apply|restore --host codex --json
-assay plugin disable|uninstall assay.trellis [--purge --yes] --json
-```
-
-`ASSAY_TRELLIS_SESSION_ID` and then `CODEX_SESSION_ID` are session-id fallbacks
-for the ordinary API. The Codex SessionStart adapter reads hook stdin first and
-falls back to `CODEX_THREAD_ID`.
-When session pointers disagree, unscoped `current` and `context` fail instead
-of selecting the newest task. The Codex hook installer edits only the
-proven-owned command entry in project `.codex/hooks.json`, preserves neighboring
-hooks, and registers an absolute Node + Assay CLI invocation of
-`trellis context --host codex --hook-adapter`
-directly; it does not copy a script. Ownership marker and fingerprint live in
-`.assay/trellis/state.json`. A matching unreceipted canonical entry is adopted;
-modified or duplicated candidates fail as conflicts without being removed.
-
-All mutation domains share reparse-safe workspace paths, PID-aware stale locks,
-atomic JSON/JSONL replacement, and a recoverable v1 WAL. Existing `state.json`
-and task-record byte contracts stay strict v1; every added domain file declares
-its own `__schema: 1`. Tasks close current pointers on terminal transitions.
-Channel sequence numbers and cursors are monotonic, idempotency keys are durable,
-and active leases are unique until release or expiry. External workers register
-and drive this CLI state machine; Assay does not claim to spawn a provider.
-
-`trellis hook legacy plan` recognizes only the two v1 legacy writer groups
-(`UserPromptSubmit` workflow-state injection and `SubagentStart` Trellis-subagent
-context injection) with exact event, matcher, command, and group structure.
-`apply` removes only those exact groups under the project hook lock, using
-whole-file hash and identity CAS, an atomic replacement, a backup, and a durable
-receipt. Modified, duplicated, ambiguous, reparse, hardlink, or concurrently
-changed hook files fail closed. `restore` is explicit and requires the exact
-receipted post-scrub file; later neighboring edits are preserved by refusal,
-never overwritten. The current Assay-owned SessionStart hook is not a legacy
-candidate.
-
-`trellis mem` is bounded and read-only over `~/.codex/sessions` or an explicit
-fixture root; it never ingests transcripts. Legacy migration reads explicit
-roots, preserves sources, records hashes/provenance/identity/backups, rejects
-rollback after subsequent target writes, and requires `--yes` for cleanup. An explicitly
-supplied absolute `--channel-root` may be outside the workspace; it is a strictly
-read-only source with canonical-root, reparse, hardlink, opened-handle identity,
-containment, enumeration, item-size, and total-byte checks. Every converted or
-archived target and receipt remains under the bound workspace `.assay/trellis`.
-Unknown or malformed records are archived rather than silently discarded, and
-apply revalidates the complete source set against its plan before committing.
-
-Plugin disable/uninstall preserves `.assay/trellis` by default. Disable keeps a
-manifest declaration marked `enabled: false`, while uninstall removes the
-declaration. Purge is uninstall-only, requires `--purge --yes`, validates a
-full backup first, and records recoverable lifecycle phases outside the runtime
-before deletion.
-
-`reconcile` is state convergence for an existing Assay workspace. It compares
-the desired plugin declarations, installation receipts, and runtime or
-provider state. Its actions are
-`install`, `adopt`, `repair`, `refresh`, `noop`, and `blocked`. `refresh`
-updates only Assay's recorded provider observations. It is a dry-run by
-default; `--apply`
-is required to write. `--plugin` filters plugins the workspace already desires
-and does not install a new one.
-
-Reconcile never creates a workspace, changes its standalone/overlay mode,
-removes declarations, or purges orphaned receipts. Re-running `--apply` after convergence is an exact
-no-op: it does not refresh timestamps or append another event.
+The manifest's optional generic `plugins` and `bindings` fields remain valid in
+manifest schema 3 for external hosts and future protocol consumers. Core does
+not install, reconcile, or remove built-ins from those fields. There is no
+built-in plugin receipt file or top-level reconcile command.
 
 ## Attach an existing repository
 
@@ -368,9 +274,9 @@ assay convert --to standalone --target ../existing-repo-assay
 
 The new workbench hoists `.assay/sources` to `sources`,
 `.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`,
-`.assay/project` to `project`, and so on. Assay state travels
-with it, including `.assay/task-contexts.json` and the legacy
-`.assay/trellis/` runtime state.
+`.assay/project` to `project`, and so on. Current Assay state travels with it,
+including `.assay/task-contexts.json`, Source-adoption receipts, and
+`.assay/external-plugins.json` when present.
 
 Task and native Project directories are copied or moved without merging.
 Conversion refuses a non-empty target `tasks/` or `project/` before
@@ -379,9 +285,10 @@ Source-adoption target keeps resolving to the same System; conversion fails
 before target writes rather than dropping a secondary target.
 
 Use `--move` to move instead of copy. `--no-keep-overlay` removes the emptied
-`.assay/` from the source and requires `--move`; with a copy the overlay still
-holds that state and the request is refused. The product repo and its `.git/`
-are never modified.
+`.assay/` from the source and requires `--move`. Unknown state entries are not
+opened, followed, copied, moved, parsed, or deleted: copy leaves them at the
+source, while a destructive move fails before target creation. The product
+repo and its `.git/` are never modified.
 
 `assay update` follows the workspace layout. In an overlay workspace, managed templates are written under `.assay/`, and root `README.md`, `.gitignore`, and `AGENTS.md` are never created or replaced — including with `--force`.
 

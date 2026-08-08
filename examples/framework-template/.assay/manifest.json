@@ -2,7 +2,7 @@
   "__schema": 3,
   "applied_migrations": [],
   "created_at": "2026-08-08T13:20:41+08:00",
-  "framework_version": "0.10.0",
+  "framework_version": "0.11.0",
   "layout": {
     "mode": "standalone",
     "paths": {
@@ -24,16 +24,16 @@
   "managed_files": {
     ".assay/README.md": {
       "executable": false,
-      "hash": "729754b30722859330d6b793aee794075f8cc9f2887cfd087de7e59a017a72ed",
-      "installed_version": "0.10.0",
+      "hash": "5eb22cc54cea09bd1c39437f2c9e4cf2bcda963a8538cdf2ac74131b148ade91",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "framework.readme",
       "updated_at": "2026-08-08T15:57:24+08:00"
     },
     ".assay/VERSION": {
       "executable": false,
-      "hash": "dc24feb5bd35084d8ae32a4eafbec12352707d4662401fcbcc9bbd696cde77a9",
-      "installed_version": "0.10.0",
+      "hash": "795d6bc79574d2aec03ad9cfec404bb95083c9dd210e6521e0d4199772d28d44",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "framework.version",
       "updated_at": "2026-08-08T15:57:24+08:00"
@@ -41,7 +41,7 @@
     ".assay/backups/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "framework.backups.gitkeep",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -49,7 +49,7 @@
     ".assay/migrations/README.md": {
       "executable": false,
       "hash": "f15464f357cfacdc9da4bc9ca369c78429814cb45eaa9ba9e08ee55d5b38311c",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "framework.migrations.readme",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -57,7 +57,7 @@
     ".gitignore": {
       "executable": false,
       "hash": "a2805ee7f944374e1e29d8e518828d58afa11b3f616e94eedf15d1c038dd4ed1",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "root.gitignore",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -65,7 +65,7 @@
     "README.md": {
       "executable": false,
       "hash": "f5c6b72f72a4312f82604e137e2cff031e09d69d030cf4c6782b823175ddd820",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "root.readme",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -73,7 +73,7 @@
     "analyses/README.md": {
       "executable": false,
       "hash": "adca5d897546a41e00bf7668f8a05e23ea05ff07057bf4ee190f4a467c3a4fc7",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "analyses.readme",
       "updated_at": "2026-08-08T15:57:24+08:00"
@@ -81,7 +81,7 @@
     "analyses/gaps/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "analyses.gaps.gitkeep",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -89,7 +89,7 @@
     "analyses/patterns/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "analyses.patterns.gitkeep",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -97,7 +97,7 @@
     "analyses/references/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "analyses.references.gitkeep",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -105,7 +105,7 @@
     "analyses/templates/gap-analysis.md": {
       "executable": false,
       "hash": "2ad913da03f45627a8dbe3b037146f3c0b5f0f13b10ccaf63bc5d75f84025cfd",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "analysis.template.gap",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -113,7 +113,7 @@
     "analyses/templates/pattern-card.md": {
       "executable": false,
       "hash": "b35b7c626469ecd99e7ac6d82e948827c113312b23186989fda3672263e8533c",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "analysis.template.pattern",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -121,7 +121,7 @@
     "analyses/templates/source-analysis-card.md": {
       "executable": false,
       "hash": "1f08d13007973426472c2c8be58de2cbfa11da9fa0247cba4685599b3a4ea6f5",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "analysis.template.source",
       "updated_at": "2026-08-08T16:51:40+08:00"
@@ -129,7 +129,7 @@
     "knowledge/README.md": {
       "executable": false,
       "hash": "bce19cbcee4007901559a6384c5d03e7562d1c843d2c064e16a65c0f4fe49f59",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "knowledge.readme",
       "updated_at": "2026-08-08T13:20:41+08:00"
@@ -137,7 +137,7 @@
     "sources/README.md": {
       "executable": false,
       "hash": "a4cdff7630518abcc87075d01a93c89507802112513aec262410f29ed61c24b4",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "sources.readme",
       "updated_at": "2026-08-08T15:57:24+08:00"
@@ -145,13 +145,13 @@
     "systems/README.md": {
       "executable": false,
       "hash": "d38e6bbded4f7e1da770357041bf5529619f0941c273809b97e171865bb6bd48",
-      "installed_version": "0.10.0",
+      "installed_version": "0.11.0",
       "protected": false,
       "template_id": "systems.readme",
       "updated_at": "2026-08-08T13:20:41+08:00"
     }
   },
-  "minimum_assay_version": "0.10.0",
+  "minimum_assay_version": "0.11.0",
   "project": {
     "archetype": "study",
     "mode": "learning",

@@ -178,45 +178,15 @@ export const frameworkManifestSchema = z
     managed_files: z.record(managedFileRecordSchema),
     user_deleted: z.array(z.string()),
     applied_migrations: z.array(z.string()),
-    // Desired Assay plugins. Operational installation state lives separately
-    // in `.assay/plugins.json`, so ordinary manifest reads never confuse a
-    // declaration with a successful install.
+    // Generic desired-plugin metadata is retained for external hosts and
+    // future protocol consumers. Core does not install or execute it.
     plugins: z.record(z.string().trim().min(1), pluginDeclarationSchema).optional(),
-    // Exclusive provider selections replace the native owner for a semantic
-    // area and therefore fail-close while their provider is unavailable.
+    // Generic provider binding metadata is retained without activating or
+    // probing a provider in this core build.
     bindings: z.record(z.string().trim().min(1), responsibilityBindingSchema).optional(),
     layout: workspaceLayoutSchema,
   })
   .strict();
-
-export const pluginInstallReceiptSchema = z
-  .object({
-    kind: z.string().trim().min(1),
-    state_version: z.number().int().positive(),
-    installed_at: z.string().min(1),
-    updated_at: z.string().min(1),
-    observations: z.record(z.string().trim().min(1), z.string()).optional(),
-  })
-  .strict();
-
-export const pluginsStateSchema = z
-  .object({
-    __schema: z.union([z.literal(1), z.literal(2)]),
-    plugins: z.record(z.string().trim().min(1), pluginInstallReceiptSchema),
-    updated_at: z.string().min(1),
-  })
-  .strict()
-  .superRefine((state, context) => {
-    if (
-      state.__schema === 1 &&
-      Object.values(state.plugins).some((receipt) => receipt.observations !== undefined)
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "plugin state schema 1 cannot carry federated observations",
-      });
-    }
-  });
 
 export const eventEntrySchema = z
   .object({
@@ -326,8 +296,6 @@ export type FrameworkManifest = z.infer<typeof frameworkManifestSchema>;
 export type PluginDeclaration = z.infer<typeof pluginDeclarationSchema>;
 export type ProviderTarget = z.infer<typeof providerTargetSchema>;
 export type ResponsibilityBinding = z.infer<typeof responsibilityBindingSchema>;
-export type PluginInstallReceipt = z.infer<typeof pluginInstallReceiptSchema>;
-export type PluginsState = z.infer<typeof pluginsStateSchema>;
 export type WorkspaceLayoutMode = z.infer<typeof workspaceLayoutModeSchema>;
 export type WorkspacePrivacy = z.infer<typeof workspacePrivacySchema>;
 export type WorkspaceLayoutPaths = z.infer<typeof workspaceLayoutPathsSchema>;

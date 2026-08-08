@@ -86,6 +86,8 @@ describe("assay Commander registration", () => {
       "reference",
       "absorb",
       "donor",
+      "trellis",
+      "reconcile",
     ]) {
       expect(help).not.toMatch(new RegExp(`^\\s+${command}(?:\\s|$)`, "m"));
     }
@@ -100,6 +102,8 @@ describe("assay Commander registration", () => {
       ["reference", "add", "retired", "--root", root],
       ["absorb", "retired", "--root", root],
       ["donor", "list", "--root", root],
+      ["trellis", "task", "current", "--root", root],
+      ["reconcile", "--root", root],
     ]) {
       const result = await runCli(args);
       expect(result.exitCode).not.toBe(0);
@@ -119,22 +123,6 @@ describe("assay Commander registration", () => {
     expect(knowledge.exitCode).toBe(0);
     expect(knowledge.stdout).toContain("--from-analysis <path>");
     expect(knowledge.stdout).not.toContain("--from-iteration");
-  });
-
-  it("exposes legacy hook plan/apply/restore help", async () => {
-    const parent = await runCli(["trellis", "hook", "legacy", "--help"]);
-    expect(parent.exitCode, parent.stderr).toBe(0);
-    expect(parent.stdout).toContain("plan");
-    expect(parent.stdout).toContain("apply");
-    expect(parent.stdout).toContain("restore");
-    for (const operation of ["plan", "apply", "restore"]) {
-      const result = await runCli(["trellis", "hook", "legacy", operation, "--help"]);
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(result.stdout).toContain(`Usage: assay trellis hook legacy ${operation} [options]`);
-      expect(result.stdout).toContain("--host <host>");
-      expect(result.stdout).toContain("--root <target-dir>");
-      expect(result.stdout).toContain("--json");
-    }
   });
 
   it("prints init help with archetype options and no core option", async () => {

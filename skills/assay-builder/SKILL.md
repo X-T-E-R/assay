@@ -1,6 +1,6 @@
 ---
 name: assay-builder
-description: "Use when building, adopting, updating, or analyzing a current Assay workspace through native Project, Task, Roadmap, Spec, Source, Analysis, Knowledge, System, Plugin, or Trellis workflows."
+description: "Use when building, adopting, updating, or analyzing a current Assay workspace through native Project, Task, Roadmap, Spec, Source, Analysis, Knowledge, System, or external Plugin metadata workflows."
 ---
 
 # Assay Builder
@@ -58,22 +58,13 @@ assay task validate [id] [--json]
 
 # Every Task leaf also accepts --root <dir> and --json.
 
-# Workspace plugins (installed explicitly after workspace creation)
-assay plugin add assay.trellis
-assay trellis task create --title <title> --json
-assay trellis task current --json
-assay trellis protocol --json
-assay trellis task complete|cancel|list|show|archive ... --json
-assay trellis session|journal|config|channel|worker|mem ... --help
-assay trellis migrate legacy plan|apply|rollback|cleanup ... --json
-assay trellis context --host codex --json
-assay trellis hook install --host codex [--dry-run | --apply] --json
-assay trellis hook legacy plan|apply|restore --host codex --json
-assay plugin disable assay.trellis                 # preserves runtime data
-assay plugin uninstall assay.trellis --purge --yes # backup, then purge
+# External plugin metadata (host-owned execution only)
+assay plugin register <descriptor.json> [--json]
+assay plugin observe <observation.json> [--json]
 assay plugin list [--json]
 assay plugin check [--json]
-assay reconcile [--plugin <id>...] [--dry-run | --apply] [--json]  # dry-run by default
+assay plugin disable|enable <external-id> [--json]
+assay plugin remove <external-id> [--json]
 
 # Sources / analysis / knowledge
 assay source add <repo-or-dir> [alias] [--mode living|frozen] [--branch <branch>] [--capture checkout|archive]
@@ -192,15 +183,16 @@ approval or Project acceptance. Keep agent DAGs, dispatch, ownership, and
 permissions in the host. Relay owns fork and promotion semantics. Keep product
 learning and durable findings in analyses and knowledge.
 
-## Workspace plugins
+## External plugin metadata
 
-- `assay plugin add assay.trellis` explicitly declares and installs the retained built-in workspace runtime. Fresh `init`, `attach`, `study`, `solve`, and `explore` workspaces do not install a plugin implicitly.
-- `reconcile` only operates on a workspace that already has a current `.assay/manifest.json`. It is a write-free preview unless `--apply` is present, and a converged apply does not update timestamps or append an event.
-- `plugin register` validates and locks an independently packaged external descriptor under `.assay/external-plugins.json`. It never imports, installs, activates, or executes the payload. A descriptor may list several hosts and omit unknown target versions, records SPDX/license-source metadata, and distinguishes safe Assay-relative state from opaque host locators. `plugin observe` requires a concrete host version and rejects identity, integrity, undeclared-host, declared exact-version, grant, surface, or ownership mismatches. Assay never resolves or deletes host locators. Missing evidence remains unobserved or unverifiable. Disable, enable, and remove change only Assay control-plane records and grant no native responsibility, Task, or workspace authority.
-- External descriptor `requests.capabilities` remains opaque host-request metadata. Status exposes it as `requestedCapabilities`; it does not enable a native Assay feature or grant host permission.
-- Trellis `runtimeCapabilities` describe only the retained Phase 6 workspace runtime. They are not project capability modules.
+- `plugin register` validates and locks an independently packaged descriptor under `.assay/external-plugins.json` schema 1. It never imports, installs, activates, or executes the payload.
+- `plugin observe` requires a concrete host version and rejects identity, integrity, host, exact-version, grant, surface, or ownership mismatches. Assay never resolves or deletes host locators.
+- Disable, enable, and remove change only Assay control-plane records. Requested capabilities remain opaque host metadata and grant no native responsibility, Task, workspace, or execution authority.
+- The manifest's optional generic `plugins` and `bindings` fields remain valid metadata, but core does not install or reconcile built-ins from them. Fresh workspaces create no built-in receipt state.
+- Native Task owns durable Assay task identity and lifecycle. The host runtime owns dispatch, agent DAGs, execution permissions, and activation; do not alias or import another task store.
 
-Assay 0.9 has no native product-Intent object or capability-module commands. A manually created `intent/` or `.assay/intent/` directory is generic unowned content: Assay does not parse, promote, rewrite, migrate, or delete it. Keep product requirements in native Specifications or reader-owned Project prose, and preserve verbatim external evidence in its authoritative source or an Analysis when appropriate.
+
+Assay 0.11 has no native product-Intent object or capability-module commands. A manually created `intent/` or `.assay/intent/` directory is generic unowned content: Assay does not parse, promote, rewrite, migrate, or delete it. Keep product requirements in native Specifications or reader-owned Project prose, and preserve verbatim external evidence in its authoritative source or an Analysis when appropriate.
 
 
 ## Systems and version control

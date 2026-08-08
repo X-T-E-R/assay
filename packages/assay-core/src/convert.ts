@@ -1,5 +1,15 @@
 import type { Stats } from "node:fs";
-import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -349,6 +359,9 @@ async function convertOverlayToStandaloneLocked(
       !OVERLAY_WORK_DIRECTORIES.includes(directory as (typeof OVERLAY_WORK_DIRECTORIES)[number]) &&
       directory !== "systems",
   );
+  if (move && !keepOverlay) {
+    await assertNoUnknownOverlayState(sourceRoot, sourceLayout, additionalWorkDirectories);
+  }
   await assertSourceAdoptionStoreTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const sourceRegistry = await requireSystemsRegistry(sourceRoot);
@@ -418,7 +431,7 @@ async function convertOverlayToStandaloneLocked(
       await copyOrMoveDir(from, to, move);
     }
   }
-  for (const directory of ["donors", "trellis"] as const) {
+  for (const directory of ["donors"] as const) {
     const from = path.join(sourceRoot, sourceLayout.state_root, directory);
     const to = path.join(targetRoot, targetLayout.state_root, directory);
     if (await exists(from)) {
@@ -828,7 +841,6 @@ async function transferStateRootFiles(
   // external cutover tool owns them.
   const portableLooseState = new Set([
     "README.md",
-    "plugins.json",
     "external-plugins.json",
     "task-contexts.json",
     "queue.json",
@@ -839,6 +851,52 @@ async function transferStateRootFiles(
       path.join(from, entry.name),
       path.join(targetRoot, targetLayout.state_root, entry.name),
       move,
+    );
+  }
+}
+
+/**
+ * A destructive detach may remove the source state root only when every
+ * top-level entry belongs to the current layout contract. Unknown residuals
+ * are neither opened nor followed; their directory entry alone blocks the
+ * move before target creation or source cleanup.
+ */
+async function assertNoUnknownOverlayState(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  additionalWorkDirectories: readonly string[],
+): Promise<void> {
+  const stateRoot = path.join(sourceRoot, sourceLayout.state_root);
+  const currentNames = new Set([
+    path.basename(sourceLayout.paths.manifest),
+    path.basename(sourceLayout.paths.systems_registry),
+    path.basename(VERSION_FILE),
+    "events",
+    "backups",
+    "archetypes",
+    "migrations",
+    "donors",
+    "external-plugins.json",
+    "README.md",
+    "task-contexts.json",
+    "queue.json",
+    "coordination",
+    "task-locks",
+    "roadmap-locks",
+    "spec-locks",
+    ".task-context.lock",
+    ...OVERLAY_WORK_AREAS,
+    ...OVERLAY_WORK_DIRECTORIES,
+    "systems",
+    ...additionalWorkDirectories,
+  ]);
+  const residuals = (await readdir(stateRoot, { withFileTypes: true }))
+    .filter((entry) => !currentNames.has(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+  if (residuals.length > 0) {
+    throw new FrameworkError(
+      `source overlay contains unknown state that cannot be moved or deleted safely: ${residuals.join(", ")}`,
     );
   }
 }
@@ -885,10 +943,9 @@ function relayoutWorkPath(
 }
 
 /**
- * Remove the overlay state directory once its contents have been moved out.
- * Deletes the runtime VERSION marker and any directories that are now empty,
- * then the state root itself. Returns false and leaves everything in place when
- * unmoved content remains.
+ * Remove only the known VERSION marker and the state root when it is already
+ * empty. Unknown entries are never traversed or deleted; an ENOTEMPTY result
+ * leaves the source boundary in place.
  */
 async function removeEmptiedOverlayState(
   sourceRoot: string,
@@ -899,23 +956,22 @@ async function removeEmptiedOverlayState(
     return false;
   }
   await rm(path.join(sourceRoot, VERSION_FILE), { force: true });
-  await removeEmptyDirectories(stateRoot);
-  if (await exists(stateRoot)) {
-    return false;
-  }
-  return true;
-}
-
-/** Depth-first removal of directories that hold no files. */
-async function removeEmptyDirectories(directory: string): Promise<void> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      await removeEmptyDirectories(path.join(directory, entry.name));
+  for (const directory of ["task-locks", "roadmap-locks", "spec-locks", "spec-staging"]) {
+    try {
+      await rmdir(path.join(stateRoot, directory));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
     }
   }
-  if ((await readdir(directory)).length === 0) {
-    await rm(directory, { recursive: true, force: true });
+  try {
+    await rmdir(stateRoot);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return true;
+    if (code === "ENOTEMPTY" || code === "EEXIST") return false;
+    throw error;
   }
 }
 

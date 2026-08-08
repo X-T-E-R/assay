@@ -17,98 +17,52 @@ import {
   type SystemVcs,
   type WorkspacePrivacy,
   addKnowledge,
-  addPlugin,
   addSource,
   adoptExistingProject,
-  appendTrellisJournal,
-  applyTrellisLegacyHookScrub,
-  applyTrellisLegacyMigration,
   applyUpdate,
   archiveSystem,
-  archiveTrellisTask,
   attachExistingRepo,
   captureEvent,
+  checkExternalPlugins,
   checkFramework,
-  checkPlugins,
-  claimTrellisWorker,
-  cleanupTrellisLegacyMigration,
   closeAnalysis,
-  contextTrellisMemory,
   convertOverlayToStandalone,
   createAnalysis,
-  createTrellisChannel,
-  createTrellisTask,
-  currentTrellisSession,
   decideSourceAdoption,
   diffSource,
   discoverFrameworkRoot,
-  endTrellisSession,
   findProjectRecord,
   findSystem,
-  finishTrellisWorker,
   forgetProject,
-  getCurrentTrellisTask,
   getFrameworkStatus,
   getSourceAdoption,
   getSourceAdoptionHistory,
   getSourceAdoptionStatus,
   getSourceLog,
   getSourceStatus,
-  getTrellisContext,
-  getTrellisProtocol,
-  heartbeatTrellisWorker,
   initFramework,
   inspectSourceAdoption,
-  installTrellisHook,
   listAvailableArchetypes,
-  listPlugins,
+  listExternalPlugins,
   listProjectRecords,
   listSourceAdoptions,
   listSystems,
-  listTrellisJournal,
-  listTrellisMemory,
-  listTrellisTasks,
-  listTrellisWorkers,
   loadManifest,
-  mutateTrellisLease,
   observeExternalPluginFromFile,
-  parseTrellisJson,
-  planTrellisLegacyHookScrub,
-  planTrellisLegacyMigration,
   promoteSystem,
   pruneProjects,
-  readTrellisChannel,
-  readTrellisSessionIdFromStdin,
-  rebindTrellisSession,
-  reconcilePlugins,
   recordSourceAdoptionEvidenceFromFile,
   recordSourceAdoptionRollback,
   registerExternalPluginFromFile,
   registerSourceAdoptionFromFile,
   registerSystem,
-  registerTrellisWorker,
   removeExternalPlugin,
-  removePlugin,
-  renderCodexSessionStartHook,
-  repairTrellisChannel,
   requireSystemsRegistry,
-  restoreTrellisLegacyHookScrub,
-  rollbackTrellisLegacyMigration,
   scanForProjects,
-  searchTrellisMemory,
-  sendTrellisChannel,
   setExternalPluginEnabled,
-  setTrellisChannelCursor,
-  setTrellisConfig,
-  showTrellisConfig,
-  showTrellisJournal,
-  showTrellisMemory,
-  showTrellisTask,
-  startTrellisSession,
   switchSource,
   syncSource,
   takeSourceAdoptionMaterial,
-  transitionTrellisTask,
   updateSourceAdoptionFromFile,
   updateSystem,
   verifySourceAdoptionInspection,
@@ -122,10 +76,8 @@ import {
   formatCheckResult,
   formatConvertResult,
   formatInitResult,
-  formatPluginAdd,
   formatPluginCheck,
   formatPluginList,
-  formatPluginReconcile,
   formatProjectList,
   formatProjectRecord,
   formatSourceAdoption,
@@ -142,9 +94,6 @@ import {
   formatStatusResult,
   formatSystemList,
   formatSystemRecord,
-  formatTrellisContext,
-  formatTrellisHookInstall,
-  formatTrellisTask,
   formatUpdateResult,
 } from "./format.js";
 import { addRoadmapCommand } from "./roadmap-command.js";
@@ -668,25 +617,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   const plugin = program
     .command("plugin")
-    .description("Declare, install, and inspect Assay workspace plugins");
-
-  plugin
-    .command("add")
-    .description("Declare and install a built-in plugin in an existing workspace")
-    .argument("<plugin>", "plugin id or built-in alias")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--system <name>", "bind a federated provider to a registered system")
-    .action(async (pluginId, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await addPlugin({
-        root,
-        plugin: pluginId,
-        ...(commandOptions.system === undefined
-          ? {}
-          : { target: { kind: "system" as const, name: commandOptions.system } }),
-      });
-      writeLine(output, "stdout", formatPluginAdd(result));
-    });
+    .description("Register and inspect external plugin metadata");
 
   plugin
     .command("register")
@@ -728,12 +659,12 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   plugin
     .command("list")
-    .description("List desired, installed, and available plugins")
+    .description("List registered external plugins")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await listPlugins(root);
+      const result = { root, plugins: await listExternalPlugins(root) };
       if (commandOptions.json) {
         writeJson(output, result);
         return;
@@ -741,37 +672,23 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", formatPluginList(result));
     });
 
-  for (const mode of ["disable", "uninstall"] as const) {
-    plugin
-      .command(mode)
-      .description(
-        mode === "disable"
-          ? "Disable a built-in runtime or an external descriptor's Assay contribution"
-          : "Uninstall a built-in workspace plugin",
-      )
-      .argument("<plugin>", "plugin id or built-in alias")
-      .option("--root <target-dir>", "target workspace directory", process.cwd())
-      .option("--purge", "after backup, remove plugin-owned durable data")
-      .option("--yes", "confirm purge")
-      .option("--json", "emit JSON")
-      .action(async (pluginId, commandOptions) => {
-        const root = await discoveredRoot(commandOptions.root);
-        const result = await removePlugin({
-          root,
-          plugin: pluginId,
-          mode,
-          ...(commandOptions.purge === undefined ? {} : { purge: commandOptions.purge }),
-          ...(commandOptions.yes === undefined ? {} : { yes: commandOptions.yes }),
-        });
-        if (commandOptions.json) writeJson(output, result);
-        else
-          writeLine(
-            output,
-            "stdout",
-            `${mode} ${result.plugin}: ${result.changed ? "applied" : "already absent"}; data ${result.dataPreserved ? "preserved" : "purged after backup"}`,
-          );
-      });
-  }
+  plugin
+    .command("disable")
+    .description("Disable an external descriptor's Assay-side contribution")
+    .argument("<plugin>", "qualified external plugin id")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (pluginId, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await setExternalPluginEnabled({ root, plugin: pluginId, enabled: false });
+      if (commandOptions.json) writeJson(output, result);
+      else
+        writeLine(
+          output,
+          "stdout",
+          `disable ${result.plugin.id}: ${result.changed ? "applied" : "already disabled"}; host state unchanged`,
+        );
+    });
 
   plugin
     .command("enable")
@@ -811,12 +728,12 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   plugin
     .command("check")
-    .description("Check plugin declarations, receipts, and workspace scaffolds")
+    .description("Check registered external plugin metadata and host observations")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await checkPlugins(root);
+      const result = await checkExternalPlugins(root);
       if (commandOptions.json) {
         writeJson(output, result);
       } else {
@@ -830,860 +747,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   addTaskCommand(program, { output, resolveRoot: discoveredRoot });
   addRoadmapCommand(program, { output, resolveRoot: discoveredRoot });
   addSpecCommand(program, { output, resolveRoot: discoveredRoot });
-
-  const trellis = program
-    .command("trellis")
-    .description("Operate the built-in assay.trellis workspace runtime");
-
-  const trellisTask = trellis.command("task").description("Manage assay.trellis tasks");
-
-  trellisTask
-    .command("create")
-    .description("Create a task and make it current")
-    .requiredOption("--title <title>", "task title")
-    .option("--session-id <id>", "session-specific current task")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const sessionId =
-        commandOptions.sessionId ??
-        process.env.ASSAY_TRELLIS_SESSION_ID ??
-        process.env.CODEX_SESSION_ID;
-      const result = await createTrellisTask({
-        root,
-        title: commandOptions.title,
-        ...(sessionId === undefined ? {} : { sessionId }),
-      });
-      if (commandOptions.json) {
-        writeJson(output, result);
-        return;
-      }
-      writeLine(output, "stdout", formatTrellisTask(result));
-    });
-
-  trellisTask
-    .command("current")
-    .description("Show the current task without guessing across ambiguous sessions")
-    .option("--session-id <id>", "session-specific current task")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const sessionId =
-        commandOptions.sessionId ??
-        process.env.ASSAY_TRELLIS_SESSION_ID ??
-        process.env.CODEX_SESSION_ID;
-      const result = await getCurrentTrellisTask({
-        root,
-        ...(sessionId === undefined ? {} : { sessionId }),
-      });
-      if (commandOptions.json) {
-        writeJson(output, result);
-        return;
-      }
-      writeLine(output, "stdout", formatTrellisTask(result));
-    });
-
-  for (const [commandName, status] of [
-    ["complete", "completed"],
-    ["cancel", "cancelled"],
-  ] as const) {
-    trellisTask
-      .command(commandName)
-      .description(
-        `${commandName === "complete" ? "Complete" : "Cancel"} a task and close its pointers`,
-      )
-      .argument("[task-id]", "task id; defaults to current")
-      .option("--session-id <id>", "session-specific current task")
-      .option("--root <target-dir>", "target workspace directory", process.cwd())
-      .option("--json", "emit JSON")
-      .action(async (taskId, commandOptions) => {
-        const root = await discoveredRoot(commandOptions.root);
-        const result = await transitionTrellisTask({
-          root,
-          status,
-          ...(taskId === undefined ? {} : { taskId }),
-          ...(commandOptions.sessionId === undefined
-            ? {}
-            : { sessionId: commandOptions.sessionId }),
-        });
-        if (commandOptions.json) writeJson(output, result);
-        else
-          writeLine(
-            output,
-            "stdout",
-            formatTrellisTask({
-              protocol_version: 1,
-              plugin: "assay.trellis",
-              session_id: commandOptions.sessionId ?? null,
-              task: result.task,
-            }),
-          );
-      });
-  }
-
-  trellisTask
-    .command("show")
-    .description("Show one task")
-    .argument("<task-id>", "task id")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (taskId, commandOptions) => {
-      const result = await showTrellisTask({
-        root: await discoveredRoot(commandOptions.root),
-        taskId,
-      });
-      if (commandOptions.json) writeJson(output, result);
-      else writeLine(output, "stdout", JSON.stringify(result, null, 2));
-    });
-
-  trellisTask
-    .command("list")
-    .description("List tasks with bounded pagination")
-    .option("--status <status>", "open|completed|cancelled")
-    .option("--limit <number>", "maximum records", Number)
-    .option("--after <cursor>", "task id cursor")
-    .option("--archived", "list archived tasks")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      if (
-        commandOptions.status &&
-        !["open", "completed", "cancelled"].includes(commandOptions.status)
-      )
-        throw new Error("--status must be open, completed, or cancelled");
-      const result = await listTrellisTasks({
-        root: await discoveredRoot(commandOptions.root),
-        ...(commandOptions.status === undefined
-          ? {}
-          : { status: commandOptions.status as "open" | "completed" | "cancelled" }),
-        ...(commandOptions.limit === undefined ? {} : { limit: commandOptions.limit }),
-        ...(commandOptions.after === undefined ? {} : { after: commandOptions.after }),
-        ...(commandOptions.archived === undefined ? {} : { archived: commandOptions.archived }),
-      });
-      writeJson(output, result);
-    });
-
-  trellisTask
-    .command("archive")
-    .description("Archive a terminal task")
-    .argument("<task-id>", "terminal task id")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (taskId, commandOptions) => {
-      const result = await archiveTrellisTask({
-        root: await discoveredRoot(commandOptions.root),
-        taskId,
-      });
-      writeJson(output, result);
-    });
-
-  trellis
-    .command("protocol")
-    .description("Report the built-in Trellis compatibility contract")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(output, await getTrellisProtocol(await discoveredRoot(commandOptions.root)));
-    });
-
-  const trellisSession = trellis
-    .command("session")
-    .description("Manage durable external session identities");
-  trellisSession
-    .command("start")
-    .description("Start or resume a session")
-    .option("--session-id <id>", "explicit identity (wins over stdin and env)")
-    .option("--task-id <id>", "initial task binding")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const sessionId = await readTrellisSessionIdFromStdin(
-        await readStdinText(),
-        process.env,
-        commandOptions.sessionId,
-      );
-      if (!sessionId)
-        throw new Error("session identity is required via --session-id, stdin, or environment");
-      writeJson(
-        output,
-        await startTrellisSession({
-          root: await discoveredRoot(commandOptions.root),
-          sessionId,
-          ...(commandOptions.taskId === undefined ? {} : { taskId: commandOptions.taskId }),
-        }),
-      );
-    });
-  trellisSession
-    .command("current")
-    .description("Show the current session; ambiguity fails closed")
-    .option("--session-id <id>", "explicit identity")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const sessionId = await readTrellisSessionIdFromStdin(
-        await readStdinText(),
-        process.env,
-        commandOptions.sessionId,
-      );
-      writeJson(
-        output,
-        await currentTrellisSession({
-          root: await discoveredRoot(commandOptions.root),
-          ...(sessionId === undefined ? {} : { sessionId }),
-        }),
-      );
-    });
-  trellisSession
-    .command("end")
-    .description("End a session and atomically close its pointer")
-    .option("--session-id <id>", "explicit identity")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const sessionId = await readTrellisSessionIdFromStdin(
-        await readStdinText(),
-        process.env,
-        commandOptions.sessionId,
-      );
-      writeJson(
-        output,
-        await endTrellisSession({
-          root: await discoveredRoot(commandOptions.root),
-          ...(sessionId === undefined ? {} : { sessionId }),
-        }),
-      );
-    });
-  trellisSession
-    .command("rebind")
-    .description("Bind an active session to an open task")
-    .requiredOption("--session-id <id>", "session identity")
-    .requiredOption("--task-id <id>", "open task id")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await rebindTrellisSession({
-          root: await discoveredRoot(commandOptions.root),
-          sessionId: commandOptions.sessionId,
-          taskId: commandOptions.taskId,
-        }),
-      );
-    });
-
-  const trellisJournal = trellis
-    .command("journal")
-    .description("Append and inspect structured journal records");
-  trellisJournal
-    .command("append")
-    .requiredOption("--kind <kind>", "record kind")
-    .requiredOption("--message <message>", "record message")
-    .option("--task-id <id>")
-    .option("--session-id <id>")
-    .option("--data <json>", "structured JSON data")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const data =
-        commandOptions.data === undefined ? undefined : parseTrellisJson(commandOptions.data);
-      if (data !== undefined && data !== null && (typeof data !== "object" || Array.isArray(data)))
-        throw new Error("--data must be a JSON object");
-      writeJson(
-        output,
-        await appendTrellisJournal({
-          root: await discoveredRoot(commandOptions.root),
-          kind: commandOptions.kind,
-          message: commandOptions.message,
-          ...(commandOptions.taskId === undefined ? {} : { taskId: commandOptions.taskId }),
-          ...(commandOptions.sessionId === undefined
-            ? {}
-            : { sessionId: commandOptions.sessionId }),
-          ...(data == null ? {} : { data: data as Record<string, unknown> }),
-        }),
-      );
-    });
-  trellisJournal
-    .command("list")
-    .option("--kind <kind>")
-    .option("--after <cursor>")
-    .option("--limit <number>", "maximum records", Number)
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await listTrellisJournal({
-          root: await discoveredRoot(commandOptions.root),
-          ...(commandOptions.kind === undefined ? {} : { kind: commandOptions.kind }),
-          ...(commandOptions.after === undefined ? {} : { after: commandOptions.after }),
-          ...(commandOptions.limit === undefined ? {} : { limit: commandOptions.limit }),
-        }),
-      );
-    });
-  trellisJournal
-    .command("show")
-    .argument("<id>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (id, commandOptions) => {
-      writeJson(
-        output,
-        await showTrellisJournal({ root: await discoveredRoot(commandOptions.root), id }),
-      );
-    });
-
-  const trellisConfig = trellis
-    .command("config")
-    .description("Inspect or update strict Trellis configuration");
-  trellisConfig
-    .command("show")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await showTrellisConfig({ root: await discoveredRoot(commandOptions.root) }),
-      );
-    });
-  trellisConfig
-    .command("set")
-    .argument("<key>")
-    .argument("<value>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (key, value, commandOptions) => {
-      writeJson(
-        output,
-        await setTrellisConfig({
-          root: await discoveredRoot(commandOptions.root),
-          key,
-          value: Number(value),
-        }),
-      );
-    });
-
-  const trellisChannel = trellis
-    .command("channel")
-    .description("Operate durable project-local channels");
-  trellisChannel
-    .command("create")
-    .argument("<name>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (name, commandOptions) => {
-      writeJson(
-        output,
-        await createTrellisChannel({ root: await discoveredRoot(commandOptions.root), name }),
-      );
-    });
-  trellisChannel
-    .command("send")
-    .argument("<channel>")
-    .requiredOption("--type <type>")
-    .requiredOption("--payload <json>")
-    .option("--sender <id>")
-    .option("--idempotency-key <key>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (channel, commandOptions) => {
-      writeJson(
-        output,
-        await sendTrellisChannel({
-          root: await discoveredRoot(commandOptions.root),
-          channel,
-          type: commandOptions.type,
-          payload: parseTrellisJson(commandOptions.payload),
-          ...(commandOptions.sender === undefined ? {} : { sender: commandOptions.sender }),
-          ...(commandOptions.idempotencyKey === undefined
-            ? {}
-            : { idempotencyKey: commandOptions.idempotencyKey }),
-        }),
-      );
-    });
-  for (const commandName of ["read", "watch-once"] as const) {
-    trellisChannel
-      .command(commandName)
-      .argument("<channel>")
-      .option("--consumer <id>")
-      .option("--after <seq>", "sequence cursor", Number)
-      .option("--limit <number>", "maximum records", Number)
-      .option("--advance", "advance named consumer cursor")
-      .option("--root <target-dir>", "target workspace directory", process.cwd())
-      .option("--json", "emit JSON")
-      .action(async (channel, commandOptions) => {
-        writeJson(
-          output,
-          await readTrellisChannel({
-            root: await discoveredRoot(commandOptions.root),
-            channel,
-            ...(commandOptions.consumer === undefined ? {} : { consumer: commandOptions.consumer }),
-            ...(commandOptions.after === undefined ? {} : { after: commandOptions.after }),
-            ...(commandOptions.limit === undefined ? {} : { limit: commandOptions.limit }),
-            ...(commandOptions.advance === undefined ? {} : { advance: commandOptions.advance }),
-          }),
-        );
-      });
-  }
-  trellisChannel
-    .command("cursor")
-    .argument("<channel>")
-    .requiredOption("--consumer <id>")
-    .requiredOption("--seq <number>", "monotonic sequence", Number)
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (channel, commandOptions) => {
-      writeJson(
-        output,
-        await setTrellisChannelCursor({
-          root: await discoveredRoot(commandOptions.root),
-          channel,
-          consumer: commandOptions.consumer,
-          seq: commandOptions.seq,
-        }),
-      );
-    });
-  trellisChannel
-    .command("repair")
-    .argument("<channel>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (channel, commandOptions) => {
-      writeJson(
-        output,
-        await repairTrellisChannel({ root: await discoveredRoot(commandOptions.root), channel }),
-      );
-    });
-  const trellisLease = trellisChannel
-    .command("lease")
-    .description("Manage expiring channel leases");
-  for (const action of ["acquire", "renew", "release"] as const) {
-    trellisLease
-      .command(action)
-      .argument("<channel>")
-      .argument("<lease>")
-      .requiredOption("--owner <id>")
-      .option("--token <token>")
-      .option("--ttl-ms <number>", "lease duration", Number)
-      .option("--root <target-dir>", "target workspace directory", process.cwd())
-      .option("--json", "emit JSON")
-      .action(async (channel, lease, commandOptions) => {
-        writeJson(
-          output,
-          await mutateTrellisLease({
-            root: await discoveredRoot(commandOptions.root),
-            channel,
-            lease,
-            action,
-            owner: commandOptions.owner,
-            ...(commandOptions.token === undefined ? {} : { token: commandOptions.token }),
-            ...(commandOptions.ttlMs === undefined ? {} : { ttlMs: commandOptions.ttlMs }),
-          }),
-        );
-      });
-  }
-
-  const trellisWorker = trellis
-    .command("worker")
-    .description("External worker registration and claim state machine");
-  trellisWorker
-    .command("register")
-    .argument("<worker-id>")
-    .requiredOption("--channel <channel>")
-    .option("--lease <name>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (workerId, commandOptions) => {
-      writeJson(
-        output,
-        await registerTrellisWorker({
-          root: await discoveredRoot(commandOptions.root),
-          workerId,
-          channel: commandOptions.channel,
-          ...(commandOptions.lease === undefined ? {} : { lease: commandOptions.lease }),
-        }),
-      );
-    });
-  trellisWorker
-    .command("claim")
-    .argument("<worker-id>")
-    .option("--ttl-ms <number>", "lease duration", Number)
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (workerId, commandOptions) => {
-      writeJson(
-        output,
-        await claimTrellisWorker({
-          root: await discoveredRoot(commandOptions.root),
-          workerId,
-          ...(commandOptions.ttlMs === undefined ? {} : { ttlMs: commandOptions.ttlMs }),
-        }),
-      );
-    });
-  trellisWorker
-    .command("heartbeat")
-    .argument("<worker-id>")
-    .requiredOption("--token <token>", "claim token")
-    .option("--ttl-ms <number>", "lease duration", Number)
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (workerId, commandOptions) => {
-      writeJson(
-        output,
-        await heartbeatTrellisWorker({
-          root: await discoveredRoot(commandOptions.root),
-          workerId,
-          token: commandOptions.token,
-          ...(commandOptions.ttlMs === undefined ? {} : { ttlMs: commandOptions.ttlMs }),
-        }),
-      );
-    });
-  trellisWorker
-    .command("complete")
-    .argument("<worker-id>")
-    .requiredOption("--token <token>", "claim token")
-    .option("--result <json>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (workerId, commandOptions) => {
-      writeJson(
-        output,
-        await finishTrellisWorker({
-          root: await discoveredRoot(commandOptions.root),
-          workerId,
-          status: "completed",
-          token: commandOptions.token,
-          ...(commandOptions.result === undefined
-            ? {}
-            : { result: parseTrellisJson(commandOptions.result) }),
-        }),
-      );
-    });
-  trellisWorker
-    .command("stop")
-    .argument("<worker-id>")
-    .requiredOption("--token <token>", "claim token")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (workerId, commandOptions) => {
-      writeJson(
-        output,
-        await finishTrellisWorker({
-          root: await discoveredRoot(commandOptions.root),
-          workerId,
-          status: "stopped",
-          token: commandOptions.token,
-        }),
-      );
-    });
-  trellisWorker
-    .command("list")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await listTrellisWorkers({ root: await discoveredRoot(commandOptions.root) }),
-      );
-    });
-
-  const trellisMem = trellis.command("mem").description("Read-only Codex host session adapter");
-  trellisMem
-    .command("list")
-    .option("--memory-root <path>", "explicit fixture/session root")
-    .option("--limit <number>", "maximum records", Number)
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await listTrellisMemory({
-          workspaceRoot: await discoveredRoot(commandOptions.root),
-          ...(commandOptions.memoryRoot === undefined
-            ? {}
-            : { memoryRoot: commandOptions.memoryRoot }),
-          ...(commandOptions.limit === undefined ? {} : { limit: commandOptions.limit }),
-        }),
-      );
-    });
-  trellisMem
-    .command("show")
-    .argument("<id>")
-    .option("--memory-root <path>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (id, commandOptions) => {
-      writeJson(
-        output,
-        await showTrellisMemory({
-          workspaceRoot: await discoveredRoot(commandOptions.root),
-          id,
-          ...(commandOptions.memoryRoot === undefined
-            ? {}
-            : { memoryRoot: commandOptions.memoryRoot }),
-        }),
-      );
-    });
-  trellisMem
-    .command("search")
-    .argument("<query>")
-    .option("--memory-root <path>")
-    .option("--limit <number>", "maximum records", Number)
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (query, commandOptions) => {
-      writeJson(
-        output,
-        await searchTrellisMemory({
-          workspaceRoot: await discoveredRoot(commandOptions.root),
-          query,
-          ...(commandOptions.memoryRoot === undefined
-            ? {}
-            : { memoryRoot: commandOptions.memoryRoot }),
-          ...(commandOptions.limit === undefined ? {} : { limit: commandOptions.limit }),
-        }),
-      );
-    });
-  trellisMem
-    .command("context")
-    .option("--query <query>")
-    .option("--memory-root <path>")
-    .option("--limit <number>", "maximum records", Number)
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await contextTrellisMemory({
-          workspaceRoot: await discoveredRoot(commandOptions.root),
-          ...(commandOptions.query === undefined ? {} : { query: commandOptions.query }),
-          ...(commandOptions.memoryRoot === undefined
-            ? {}
-            : { memoryRoot: commandOptions.memoryRoot }),
-          ...(commandOptions.limit === undefined ? {} : { limit: commandOptions.limit }),
-        }),
-      );
-    });
-
-  const trellisMigrateLegacy = trellis
-    .command("migrate")
-    .description("Migrate explicitly selected legacy state")
-    .command("legacy");
-  trellisMigrateLegacy
-    .command("plan")
-    .option("--legacy-root <path>")
-    .option("--channel-root <path>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await planTrellisLegacyMigration({
-          root: await discoveredRoot(commandOptions.root),
-          ...(commandOptions.legacyRoot === undefined
-            ? {}
-            : { legacyRoot: commandOptions.legacyRoot }),
-          ...(commandOptions.channelRoot === undefined
-            ? {}
-            : { channelRoot: commandOptions.channelRoot }),
-        }),
-      );
-    });
-  trellisMigrateLegacy
-    .command("apply")
-    .option("--legacy-root <path>")
-    .option("--channel-root <path>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await applyTrellisLegacyMigration({
-          root: await discoveredRoot(commandOptions.root),
-          ...(commandOptions.legacyRoot === undefined
-            ? {}
-            : { legacyRoot: commandOptions.legacyRoot }),
-          ...(commandOptions.channelRoot === undefined
-            ? {}
-            : { channelRoot: commandOptions.channelRoot }),
-        }),
-      );
-    });
-  trellisMigrateLegacy
-    .command("rollback")
-    .option("--generation <uuid>")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await rollbackTrellisLegacyMigration({
-          root: await discoveredRoot(commandOptions.root),
-          ...(commandOptions.generation === undefined
-            ? {}
-            : { generation: commandOptions.generation }),
-        }),
-      );
-    });
-  trellisMigrateLegacy
-    .command("cleanup")
-    .requiredOption("--generation <uuid>")
-    .option("--yes", "confirm cleanup")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await cleanupTrellisLegacyMigration({
-          root: await discoveredRoot(commandOptions.root),
-          generation: commandOptions.generation,
-          ...(commandOptions.yes === undefined ? {} : { yes: commandOptions.yes }),
-        }),
-      );
-    });
-
-  trellis
-    .command("context")
-    .description("Render structured workspace context for a supported host")
-    .requiredOption("--host <host>", "context host (codex)")
-    .option("--session-id <id>", "session-specific current task")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .addOption(new Option("--json", "emit JSON").conflicts("hookAdapter"))
-    .addOption(
-      new Option(
-        "--hook-adapter",
-        "emit Codex SessionStart hook output from stdin/environment",
-      ).conflicts("json"),
-    )
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      if (commandOptions.hookAdapter) {
-        writeJson(
-          output,
-          await renderCodexSessionStartHook({
-            root,
-            stdin: await readStdinText(),
-            env: process.env,
-          }),
-        );
-        return;
-      }
-      const sessionId =
-        commandOptions.sessionId ??
-        process.env.ASSAY_TRELLIS_SESSION_ID ??
-        process.env.CODEX_SESSION_ID;
-      const result = await getTrellisContext({
-        root,
-        host: commandOptions.host,
-        ...(sessionId === undefined ? {} : { sessionId }),
-      });
-      if (commandOptions.json) {
-        writeJson(output, result);
-        return;
-      }
-      writeLine(output, "stdout", formatTrellisContext(result));
-    });
-
-  const trellisHook = trellis
-    .command("hook")
-    .description("Manage current and legacy assay.trellis host hooks");
-
-  trellisHook
-    .command("install")
-    .description("Plan or apply a marker-owned host hook registration")
-    .requiredOption("--host <host>", "hook host (codex)")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .addOption(new Option("--dry-run", "preview without writing (default)").conflicts("apply"))
-    .addOption(new Option("--apply", "write the registration").conflicts("dryRun"))
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await installTrellisHook({
-        root,
-        host: commandOptions.host,
-        apply: commandOptions.apply === true,
-      });
-      if (commandOptions.json) {
-        writeJson(output, result);
-        return;
-      }
-      writeLine(output, "stdout", formatTrellisHookInstall(result));
-    });
-
-  const trellisHookLegacy = trellisHook
-    .command("legacy")
-    .description("Remove exact allowlisted legacy Trellis Codex writer hooks");
-  trellisHookLegacy
-    .command("plan")
-    .description("Read-only plan for removing exact legacy writer hook groups")
-    .requiredOption("--host <host>", "hook host (codex)")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await planTrellisLegacyHookScrub({
-          root: await discoveredRoot(commandOptions.root),
-          host: commandOptions.host,
-        }),
-      );
-    });
-  trellisHookLegacy
-    .command("apply")
-    .description("Transactionally remove exact legacy writer hook groups")
-    .requiredOption("--host <host>", "hook host (codex)")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await applyTrellisLegacyHookScrub({
-          root: await discoveredRoot(commandOptions.root),
-          host: commandOptions.host,
-        }),
-      );
-    });
-  trellisHookLegacy
-    .command("restore")
-    .description("Explicitly restore the exact receipt-governed pre-scrub hook file")
-    .requiredOption("--host <host>", "hook host (codex)")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      writeJson(
-        output,
-        await restoreTrellisLegacyHookScrub({
-          root: await discoveredRoot(commandOptions.root),
-          host: commandOptions.host,
-        }),
-      );
-    });
-
-  program
-    .command("reconcile")
-    .description("Preview or apply convergence of desired plugins in an existing workspace")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--plugin <plugin...>", "limit reconciliation to already desired plugins")
-    .addOption(new Option("--dry-run", "preview without writing (default)").conflicts("apply"))
-    .addOption(new Option("--apply", "apply the reconciliation plan").conflicts("dryRun"))
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await reconcilePlugins({
-        root,
-        apply: commandOptions.apply === true,
-        ...(commandOptions.plugin === undefined ? {} : { plugins: commandOptions.plugin }),
-      });
-      if (commandOptions.json) {
-        writeJson(output, result);
-      } else {
-        writeLine(output, "stdout", formatPluginReconcile(result));
-      }
-      if (result.plugins.some((entry) => entry.action === "blocked")) {
-        output.setExitCode(1);
-      }
-    });
 
   const source = program.command("source").description("External Source operations");
   source
