@@ -9,7 +9,6 @@ export * from "./donors/index.js";
 export * from "./errors.js";
 export * from "./events.js";
 export * from "./hashing.js";
-export * from "./intent.js";
 export * from "./layout.js";
 export * from "./manifest.js";
 export * from "./paths.js";

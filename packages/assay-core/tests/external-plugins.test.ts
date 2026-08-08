@@ -8,7 +8,6 @@ import {
   EXTERNAL_PLUGINS_STATE_FILE,
   checkPlugins,
   initFramework,
-  isCapabilityEnabled,
   listPlugins,
   loadExternalPluginsState,
   observeExternalPlugin,
@@ -40,7 +39,7 @@ function fixtureDescriptor(id = "example.readonly-command") {
     __schema: 1,
     id,
     adapter_version: "1.0.0",
-    assay: { spi_version: 1, version: "0.8.0" },
+    assay: { spi_version: 1, version: "0.9.0" },
     provenance: {
       source: "npm:@example/assay-plugin-fixture",
       ref: "v1.0.0",
@@ -306,7 +305,7 @@ describe("external plugin descriptor control plane", () => {
     expect(repeated.plugin.descriptorDigest).toBe(first.plugin.descriptorDigest);
   });
 
-  it("keeps declaration-only state separate and grants no native capability or authority", async () => {
+  it("keeps declaration-only state separate and grants no native authority", async () => {
     const root = await workspace("DeclarationOnly");
     await registerExternalPlugin({ root, descriptor: fixtureDescriptor() });
 
@@ -316,7 +315,6 @@ describe("external plugin descriptor control plane", () => {
         id: "example.readonly-command",
         installed: false,
         health: "unverifiable",
-        contributedCapabilities: [],
         operationalResponsibilities: [],
         providedResponsibilities: [],
         external: expect.objectContaining({
@@ -328,7 +326,9 @@ describe("external plugin descriptor control plane", () => {
         }),
       }),
     );
-    expect(await isCapabilityEnabled(root, "intent")).toBe(false);
+    expect(
+      listed.plugins.find((plugin) => plugin.id === "example.readonly-command")?.external,
+    ).toMatchObject({ requestedCapabilities: ["fixture.readonly-command", "fixture.status.read"] });
     const checked = await checkPlugins(root);
     expect(checked.ok).toBe(true);
     expect(checked.rows).toContainEqual(

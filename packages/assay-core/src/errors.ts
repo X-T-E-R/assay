@@ -5,6 +5,9 @@ export type FrameworkErrorCode =
   | "INVALID_OPERATION_REPORT"
   | "INVALID_UPDATE_PLAN"
   | "WORKSPACE_CUTOVER_REQUIRED"
+  | "AUTHORITY_REPAIR_REQUIRED"
+  | "AUTHORITY_WRITE_CONFLICT"
+  | "RETIRED_ARCHETYPE_FIELD"
   | "RETIRED_ARCHETYPE_PATH"
   | "INVALID_DONOR"
   | "DONOR_POLICY_BLOCKED"
@@ -46,21 +49,42 @@ export class InvalidManifestError extends FrameworkError {
 
 export class WorkspaceCutoverRequiredError extends FrameworkError {
   readonly observed: string;
-  readonly required = "0.8.0+s2+l6";
+  readonly required = "0.9.0+s3+l6";
   readonly locator: string;
 
   constructor(observed: string) {
-    const locator = `assay-cutover:${observed}->0.8.0+s2+l6`;
+    const locator = `assay-cutover:${observed}->0.9.0+s3+l6`;
     super(
-      `Workspace cutover required: observed ${observed}; required 0.8.0+s2+l6; locator ${locator}`,
+      `Workspace cutover required: observed ${observed}; required 0.9.0+s3+l6; locator ${locator}`,
       {
         code: "WORKSPACE_CUTOVER_REQUIRED",
-        details: { observed, required: "0.8.0+s2+l6", locator },
+        details: { observed, required: "0.9.0+s3+l6", locator },
       },
     );
     this.name = "WorkspaceCutoverRequiredError";
     this.observed = observed;
     this.locator = locator;
+  }
+}
+
+export class AuthorityRepairRequiredError extends FrameworkError {
+  constructor(message: string, cause?: unknown, details?: unknown) {
+    super(message, {
+      code: "AUTHORITY_REPAIR_REQUIRED",
+      ...(cause === undefined ? {} : { cause }),
+      ...(details === undefined ? {} : { details }),
+    });
+    this.name = "AuthorityRepairRequiredError";
+  }
+}
+
+export class AuthorityWriteConflictError extends FrameworkError {
+  constructor(message: string, cause?: unknown) {
+    super(message, {
+      code: "AUTHORITY_WRITE_CONFLICT",
+      ...(cause === undefined ? {} : { cause }),
+    });
+    this.name = "AuthorityWriteConflictError";
   }
 }
 

@@ -1,32 +1,23 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  BARE_ARCHETYPE,
-  createTempDirectoryFixture,
-  pathExists as exists,
-  writeBareArchetype,
-} from "assay-test-support";
+
+import { createTempDirectoryFixture, pathExists } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  FrameworkError,
-  addCapability,
-  analyzeUpdate,
+  addPlugin,
   applyUpdate,
   attachExistingRepo,
   checkFramework,
-  effectiveCapabilities,
+  convertOverlayToStandalone,
+  getFrameworkStatus,
   initFramework,
-  isCapabilityEnabled,
-  listCapabilities,
-  loadArchetype,
   loadManifest,
-  requireCapability,
-  saveManifest,
+  loadSystemsRegistry,
 } from "../src/index.js";
 
-const tempDirs = createTempDirectoryFixture("assay-core-capability");
+const tempDirs = createTempDirectoryFixture("assay-core-removed-capability-intent");
 
 beforeAll(() => {
   process.env.ASSAY_NO_TRACK = "1";
@@ -36,154 +27,166 @@ afterEach(async () => {
   await tempDirs.cleanup();
 });
 
-async function git(cwd: string, args: readonly string[]): Promise<string> {
-  const result = await execa("git", [...args], { cwd, reject: false });
-  expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-  return result.stdout;
-}
-
-async function standaloneWorkspace(name: string, archetype = "study"): Promise<string> {
-  const root = path.join(await tempDirs.createTempDir(), name);
-  if (archetype === BARE_ARCHETYPE) await writeBareArchetype(root);
-  await initFramework({ target: root, name, archetype });
-  return root;
-}
-
-async function overlayWorkspace(name: string): Promise<string> {
-  const root = path.join(await tempDirs.createTempDir(), name);
-  await mkdir(root, { recursive: true });
-  await writeBareArchetype(root);
-  await writeFile(path.join(root, "package.json"), '{"name":"product"}\n', "utf8");
-  await git(root, ["init"]);
-  await git(root, ["config", "user.email", "assay@example.test"]);
-  await git(root, ["config", "user.name", "Assay Test"]);
-  await git(root, ["add", "package.json"]);
-  await git(root, ["commit", "-m", "initial"]);
-  await attachExistingRepo({
-    root,
-    name,
-    archetype: BARE_ARCHETYPE,
-    privacy: "private",
-    noTrack: true,
-  });
-  return root;
-}
-
-async function readEvents(root: string): Promise<Record<string, unknown>[]> {
-  const eventsDir = path.join(root, ".assay", "events");
-  const { readdir } = await import("node:fs/promises");
-  const entries: Record<string, unknown>[] = [];
-  for (const file of await readdir(eventsDir)) {
-    const content = await readFile(path.join(eventsDir, file), "utf8");
-    for (const line of content.split("\n").filter((value) => value.trim().length > 0)) {
-      entries.push(JSON.parse(line) as Record<string, unknown>);
+async function tree(root: string): Promise<string[]> {
+  const result: string[] = [];
+  async function walk(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(root, absolute).replaceAll("\\", "/");
+      result.push(`${entry.isDirectory() ? "d" : "f"}:${relative}`);
+      if (entry.isDirectory()) await walk(absolute);
     }
   }
-  return entries;
+  await walk(root);
+  return result.sort();
 }
 
-describe("effectiveCapabilities", () => {
-  it("keeps intent and drops unsupported names", async () => {
-    const study = await loadArchetype("study");
-    expect(effectiveCapabilities(study, undefined)).toEqual([]);
-    expect(effectiveCapabilities(study, ["intent"])).toEqual(["intent"]);
-    expect(effectiveCapabilities(study, ["iteration", "telepathy"])).toEqual([]);
-    expect(effectiveCapabilities(null, ["intent"])).toEqual(["intent"]);
-  });
-});
+describe("0.9 capability and native Intent removal", () => {
+  it("writes the closed 0.9.0+s3+l6 envelope without capability or plugin state", async () => {
+    const root = path.join(await tempDirs.createTempDir(), "fresh");
+    await initFramework({ target: root, name: "Fresh" });
+    await applyUpdate({ root, dryRun: false });
 
-describe("addCapability", () => {
-  it("scaffolds intent and keeps the workspace checkable", async () => {
-    const root = await standaloneWorkspace("AddIntent", BARE_ARCHETYPE);
-    expect(await isCapabilityEnabled(root, "intent")).toBe(false);
-
-    const result = await addCapability({ root, module: "intent" });
-    expect(result).toMatchObject({
-      alreadyEnabled: false,
-      source: "added",
-      capabilities: ["intent"],
+    const manifestText = await readFile(path.join(root, ".assay", "manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestText) as Record<string, unknown>;
+    expect(manifest).toMatchObject({
+      __schema: 3,
+      framework_version: "0.9.0",
+      minimum_assay_version: "0.9.0",
+      layout_version: 6,
     });
-    expect(await exists(path.join(root, "intent", "original", "README.md"))).toBe(true);
-    expect((await loadManifest(root))?.project.capabilities).toEqual(["intent"]);
-    expect((await checkFramework({ root })).ok).toBe(true);
-    expect(await requireCapability(root, "intent")).toEqual(
-      await loadArchetype(BARE_ARCHETYPE, { root }),
+    expect((manifest.project as Record<string, unknown>).capabilities).toBeUndefined();
+    expect(manifest.plugins).toBeUndefined();
+    expect(await pathExists(path.join(root, ".assay", "plugins.json"))).toBe(false);
+    expect(await pathExists(path.join(root, "intent"))).toBe(false);
+  });
+
+  it("rejects any custom archetype modules key before the first workspace write", async () => {
+    for (const declaration of [
+      "modules: []",
+      "Modules: []",
+      "MODULES: []",
+      "modules: &retired []",
+      "MODULES: *retired",
+    ]) {
+      const root = path.join(await tempDirs.createTempDir(), declaration.replace(/[^a-z]+/gi, "-"));
+      const archetypeDir = path.join(root, ".assay", "archetypes");
+      await mkdir(archetypeDir, { recursive: true });
+      const prefix = declaration.includes("*retired") ? "retired: &retired []\n" : "";
+      await writeFile(
+        path.join(archetypeDir, "retired.yaml"),
+        `${prefix}extends: base\nmode: learning\n${declaration}\ndirs: []\ntemplates: []\n`,
+        "utf8",
+      );
+      const before = await tree(root);
+      await expect(
+        initFramework({ target: root, name: "NoWrite", archetype: "retired" }),
+      ).rejects.toMatchObject({ code: "RETIRED_ARCHETYPE_FIELD" });
+      expect(await tree(root)).toEqual(before);
+    }
+  });
+
+  it("rejects a retired modules key before update or plugin mutation writes", async () => {
+    const root = path.join(await tempDirs.createTempDir(), "existing-custom");
+    await initFramework({ target: root, name: "Existing" });
+    const archetypePath = path.join(root, ".assay", "archetypes", "study.yaml");
+    await mkdir(path.dirname(archetypePath), { recursive: true });
+    await writeFile(
+      archetypePath,
+      "extends: base\nmode: learning\nmodules: []\ndirs: []\ntemplates: []\n",
+      "utf8",
+    );
+    const before = await tree(root);
+    const beforeManifest = await readFile(path.join(root, ".assay", "manifest.json"), "utf8");
+
+    await expect(applyUpdate({ root, dryRun: false })).rejects.toThrow(
+      /retired archetype key 'modules'/,
+    );
+    await expect(addPlugin({ root, plugin: "assay.trellis" })).rejects.toThrow(
+      /retired archetype key 'modules'/,
+    );
+    expect(await tree(root)).toEqual(before);
+    expect(await readFile(path.join(root, ".assay", "manifest.json"), "utf8")).toBe(beforeManifest);
+  });
+
+  it("treats manually created intent directories as generic undeclared content", async () => {
+    const root = path.join(await tempDirs.createTempDir(), "manual-intent");
+    await initFramework({ target: root, name: "Manual" });
+    await mkdir(path.join(root, "intent", "original"), { recursive: true });
+    await writeFile(path.join(root, "intent", "original", "record.md"), "not native\n", "utf8");
+
+    const status = await getFrameworkStatus({ root });
+    expect(status.zones.map((zone) => zone.path)).not.toContain("intent");
+    const check = await checkFramework({ root, includeAdvisories: true });
+    expect(check.rows).toContainEqual(
+      expect.objectContaining({ path: "intent", status: "warning" }),
     );
   });
 
-  it("writes one event and is idempotent", async () => {
-    const root = await standaloneWorkspace("CapabilityEvent", BARE_ARCHETYPE);
-    const first = await addCapability({ root, module: "intent" });
-    const rerun = await addCapability({ root, module: "intent" });
+  it("rejects systems registry schema 1 and the retired field instead of ignoring them", async () => {
+    const root = path.join(await tempDirs.createTempDir(), "registry");
+    await initFramework({ target: root, name: "Registry" });
+    const registryPath = path.join(root, ".assay", "systems-registry.json");
+    await writeFile(
+      registryPath,
+      `${JSON.stringify({
+        __schema: 1,
+        primary: "app",
+        systems: {
+          app: {
+            name: "app",
+            path: "systems/app",
+            status: "primary",
+            vcs: "embedded",
+            vcs_ref: "",
+            version: "0.1.0",
+            contract_file: null,
+            supersedes: [],
+            absorbed_on: null,
+            archived_on: null,
+            archive_path: null,
+            intent_authority: { mode: "inline" },
+          },
+        },
+        updated_at: "2026-08-08T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await expect(loadSystemsRegistry(root)).rejects.toThrow(/systems registry failed validation/);
 
-    expect(first.eventFile).toBeDefined();
-    expect(rerun).toMatchObject({ alreadyEnabled: true, source: "added" });
-    expect(rerun.report.created_files).toEqual([]);
-    expect((await readEvents(root)).filter((event) => event.event === "capability.added")).toEqual([
-      expect.objectContaining({ module: "intent", archetype: BARE_ARCHETYPE }),
-    ]);
+    const current = JSON.parse(await readFile(registryPath, "utf8")) as Record<string, unknown>;
+    current.__schema = 2;
+    await writeFile(registryPath, `${JSON.stringify(current)}\n`, "utf8");
+    await expect(loadSystemsRegistry(root)).rejects.toThrow(/systems registry failed validation/);
   });
 
-  it("rejects retired and unknown modules without changing the manifest", async () => {
-    const root = await standaloneWorkspace("UnsupportedModules", BARE_ARCHETYPE);
-    for (const module of ["iteration", "telepathy"]) {
-      await expect(addCapability({ root, module })).rejects.toThrow(FrameworkError);
-      await expect(addCapability({ root, module })).rejects.toThrow(/supported modules: intent/);
-    }
-    expect((await loadManifest(root))?.project.capabilities).toBeUndefined();
-  });
+  it("does not copy, move, or rewrite unknown overlay intent residue during conversion", async () => {
+    const source = path.join(await tempDirs.createTempDir(), "overlay-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "package.json"), '{"name":"product"}\n', "utf8");
+    await execa("git", ["init"], { cwd: source });
+    await execa("git", ["config", "user.email", "assay@example.test"], { cwd: source });
+    await execa("git", ["config", "user.name", "Assay Test"], { cwd: source });
+    await execa("git", ["add", "package.json"], { cwd: source });
+    await execa("git", ["commit", "-m", "initial"], { cwd: source });
+    await attachExistingRepo({ root: source, name: "Overlay", privacy: "private", noTrack: true });
+    expect((await loadManifest(source))?.plugins).toBeUndefined();
+    expect(await pathExists(path.join(source, ".assay", "plugins.json"))).toBe(false);
+    expect(await pathExists(path.join(source, ".assay", "intent"))).toBe(false);
+    await mkdir(path.join(source, ".assay", "intent"), { recursive: true });
+    await writeFile(path.join(source, ".assay", "intent", "unknown.md"), "preserve me\n", "utf8");
+    const target = path.join(await tempDirs.createTempDir(), "standalone-target");
 
-  it("scaffolds overlay intent under .assay and never the product root", async () => {
-    const root = await overlayWorkspace("OverlayCapability");
-    await addCapability({ root, module: "intent" });
-    expect(await exists(path.join(root, ".assay", "intent", "original", "README.md"))).toBe(true);
-    expect(await exists(path.join(root, "intent"))).toBe(false);
-    expect((await git(root, ["status", "--short"])).trim()).toBe("");
-    expect((await checkFramework({ root })).ok).toBe(true);
-  });
-});
-
-describe("capability-scaffolded templates stay under update management", () => {
-  it("detects deletion and restores a declared capability scaffold", async () => {
-    const root = await standaloneWorkspace("UpdateReconcile", BARE_ARCHETYPE);
-    await addCapability({ root, module: "intent" });
-    expect(
-      (await analyzeUpdate({ root })).changes.unchanged.map((change) => change.path),
-    ).toContain("intent/original/README.md");
-
-    await rm(path.join(root, "intent", "original", "README.md"), { force: true });
-    expect(
-      (await analyzeUpdate({ root })).changes.user_deleted.map((change) => change.path),
-    ).toContain("intent/original/README.md");
-  });
-
-  it("creates intent templates declared directly in a manifest", async () => {
-    const root = await standaloneWorkspace("UpdateCreate", BARE_ARCHETYPE);
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    manifest.project.capabilities = ["intent"];
-    await saveManifest(root, manifest);
-
-    const result = await applyUpdate({ root, action: "skip" });
-    expect(result.report.created_files).toContain("intent/README.md");
-    expect(await exists(path.join(root, "intent", "requirements", "README.md"))).toBe(true);
-  });
-});
-
-describe("manifest capability compatibility", () => {
-  it("ignores unsupported manifest names while keeping them visible", async () => {
-    const root = await standaloneWorkspace("UnknownCapability", BARE_ARCHETYPE);
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    manifest.project.capabilities = ["iteration", "telepathy"];
-    await saveManifest(root, manifest);
-
-    expect(await isCapabilityEnabled(root, "intent")).toBe(false);
-    expect((await checkFramework({ root })).ok).toBe(true);
-    expect((await listCapabilities({ root })).capabilities).toEqual([
-      { module: "intent", enabled: false, source: null, supported: true },
-      { module: "iteration", enabled: false, source: "added", supported: false },
-      { module: "telepathy", enabled: false, source: "added", supported: false },
-    ]);
+    const result = await convertOverlayToStandalone({
+      root: source,
+      target,
+      move: true,
+      keepOverlay: false,
+    });
+    expect(result.overlayStateRemoved).toBe(false);
+    expect(await pathExists(path.join(target, "intent"))).toBe(false);
+    expect(await readFile(path.join(source, ".assay", "intent", "unknown.md"), "utf8")).toBe(
+      "preserve me\n",
+    );
   });
 });

@@ -5,17 +5,10 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
-import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
-import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
+import { MANAGED_DIR } from "./constants.js";
+import { FrameworkError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
-import { pluginCapabilities } from "./plugins/registry.js";
-import { loadPluginsState } from "./plugins/state.js";
-import type {
-  FrameworkManifest,
-  PluginsState,
-  ProjectArchetype,
-  ProjectMode,
-} from "./schemas/index.js";
+import type { FrameworkManifest, ProjectArchetype, ProjectMode } from "./schemas/index.js";
 
 export interface ArchetypeTemplateEntry {
   readonly path: string;
@@ -66,7 +59,6 @@ export interface Archetype {
   /** One line stating what this archetype is for; empty when not declared. */
   readonly description: string;
   readonly mode: ProjectMode;
-  readonly modules: readonly CapabilityModule[];
   /** Directories created in all modes. */
   readonly dirs: readonly ArchetypeDirectory[];
   /** Directories created only in learning mode. */
@@ -94,100 +86,6 @@ export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): reado
 export type ProfileTemplateEntry = ArchetypeTemplateEntry;
 export type Profile = Archetype;
 
-export const SUPPORTED_CAPABILITY_MODULES = ["intent"] as const;
-export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
-
-const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
-
-/** Directories and templates one capability module owns. */
-export interface ModuleScaffold {
-  readonly dirs: readonly ArchetypeDirectory[];
-  readonly templates: readonly ArchetypeTemplateEntry[];
-}
-
-/**
- * Structure each capability module contributes to a workspace. `init` and
- * `assay capability add` scaffold through this table, so a module enabled
- * after init lands the same layout it would have at init time. Paths are
- * declared workspace-root-relative like archetype templates and are translated
- * through the workspace layout before anything is written.
- *
- * Archetype YAML may declare the same paths; both scaffold paths merge by path
- * so an overlapping file is written once.
- */
-export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>> = {
-  intent: {
-    dirs: [
-      { path: "intent/original", purpose: "Verbatim intent captures, append-only" },
-      { path: "intent/requirements", purpose: "Requirements derived from a capture" },
-    ],
-    templates: [
-      { path: "intent/README.md", templateId: "intent.readme" },
-      { path: "intent/original/README.md", templateId: "intent.original.readme" },
-      { path: "intent/requirements/README.md", templateId: "intent.requirements.readme" },
-    ],
-  },
-};
-
-/** Directories the given capability modules own, deduplicated by path. */
-export function capabilityDirectories(
-  capabilities: readonly CapabilityModule[],
-): ArchetypeDirectory[] {
-  return mergeDirectories(...capabilities.map((capability) => MODULE_SCAFFOLDS[capability].dirs));
-}
-
-export function isCapabilityModule(value: string): value is CapabilityModule {
-  return SUPPORTED_CAPABILITY_SET.has(value);
-}
-
-/**
- * Narrow user input to a capability module this build can scaffold. Unknown
- * names are rejected here rather than recorded in the manifest, so a typo
- * cannot leave a workspace declaring a capability nothing implements.
- */
-export function requireCapabilityModule(value: string): CapabilityModule {
-  const trimmed = value.trim();
-  if (isCapabilityModule(trimmed)) {
-    return trimmed;
-  }
-  throw new FrameworkError(
-    `unsupported capability module '${value}'; supported modules: ${SUPPORTED_CAPABILITY_MODULES.join(", ")}`,
-  );
-}
-
-/** Supported capability modules a manifest declares, deduplicated and sorted. */
-export function declaredCapabilities(
-  manifest: Pick<FrameworkManifest, "project"> | null | undefined,
-): CapabilityModule[] {
-  const declared = new Set<CapabilityModule>();
-  for (const value of manifest?.project.capabilities ?? []) {
-    if (isCapabilityModule(value)) {
-      declared.add(value);
-    }
-  }
-  return [...declared].sort();
-}
-
-/**
- * Capability modules a workspace actually has: the archetype's own modules
- * plus every module added later through `assay capability add`. Manifest
- * entries this build does not implement are ignored here; `capability list`
- * reports them so they stay visible.
- */
-export function effectiveCapabilities(
-  archetype: Pick<Archetype, "modules"> | null | undefined,
-  capabilities: readonly string[] | undefined,
-  plugins?: FrameworkManifest["plugins"],
-  pluginState?: PluginsState | null,
-): CapabilityModule[] {
-  const modules = new Set<CapabilityModule>(archetype?.modules ?? []);
-  for (const value of [...(capabilities ?? []), ...pluginCapabilities(plugins, pluginState)]) {
-    if (isCapabilityModule(value)) {
-      modules.add(value);
-    }
-  }
-  return [...modules].sort();
-}
 const DEFAULT_ARCHETYPE: ProjectArchetype = "study";
 const PROJECT_ARCHETYPES_DIR = path.join(MANAGED_DIR, "archetypes");
 const BUILTIN_ARCHETYPES_DIR = path.resolve(fileURLToPath(import.meta.url), "..", "..", "profiles");
@@ -236,7 +134,6 @@ const BASE_ARCHETYPE: Archetype = {
   name: "base",
   description: "",
   mode: "learning",
-  modules: [],
   dirs: [
     { path: `${MANAGED_DIR}/backups`, purpose: "" },
     { path: `${MANAGED_DIR}/migrations`, purpose: "" },
@@ -291,6 +188,9 @@ export async function loadArchetype(
   name: string | undefined = DEFAULT_ARCHETYPE,
   options: ArchetypeLookupOptions = {},
 ): Promise<Archetype> {
+  if (options.root) {
+    await loadManifest(options.root);
+  }
   const archetypeName = normalizeArchetypeName(name ?? DEFAULT_ARCHETYPE);
   if (archetypeName === "base") {
     throw await archetypeNotFoundError(archetypeName, options);
@@ -334,6 +234,9 @@ async function readArchetypeByName(
 export async function listAvailableArchetypes(
   options: ArchetypeLookupOptions = {},
 ): Promise<AvailableArchetype[]> {
+  if (options.root) {
+    await loadManifest(options.root);
+  }
   const byName = new Map<string, AvailableArchetype>();
   for (const location of archetypeLookupLocations(options)) {
     for (const archetype of await listArchetypesInDirectory(location)) {
@@ -354,6 +257,16 @@ function parseArchetypeYaml(raw: string, name: ProjectArchetype): ParsedArchetyp
   }
 
   const record = value as Record<string, unknown>;
+  const retiredModulesKey = Object.keys(record).find((key) => key.toLowerCase() === "modules");
+  if (retiredModulesKey !== undefined) {
+    throw new FrameworkError(
+      `retired archetype key 'modules' in archetype ${name}; remove '${retiredModulesKey}' before using this archetype`,
+      {
+        code: "RETIRED_ARCHETYPE_FIELD",
+        details: { archetype: name, field: "modules", declared_field: retiredModulesKey },
+      },
+    );
+  }
   const extendsName = parseOptionalString(record.extends, "extends", name);
   if (extendsName && extendsName !== "base") {
     throw new FrameworkError(
@@ -363,7 +276,6 @@ function parseArchetypeYaml(raw: string, name: ProjectArchetype): ParsedArchetyp
   }
 
   const mode = parseProjectMode(record.mode, name);
-  const modules = parseModuleList(record.modules, name);
   const description = parseOptionalString(record.description, "description", name) ?? "";
   const dirs = parseDirectoryList(record.dirs, "dirs", name);
   const dirsLearning = parseDirectoryList(record.dirs_learning, "dirs_learning", name);
@@ -379,7 +291,6 @@ function parseArchetypeYaml(raw: string, name: ProjectArchetype): ParsedArchetyp
     description: collapseWhitespace(description),
     extendsName,
     mode,
-    modules,
     dirs,
     dirsLearning,
     dirsAbsorption,
@@ -404,28 +315,6 @@ function parseProjectMode(value: unknown, archetypeName: string): ProjectMode {
     `unsupported mode '${String(value)}' in archetype ${archetypeName}; supported modes: learning, absorption`,
     { code: "IO_ERROR" },
   );
-}
-
-function parseModuleList(value: unknown, archetypeName: ProjectArchetype): CapabilityModule[] {
-  const modules = parseStringList(value, "modules", archetypeName);
-  return modules.map((module) => parseCapabilityModule(module, archetypeName));
-}
-
-function parseStringList(value: unknown, field: string, archetypeName: string): string[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) {
-    throw new FrameworkError(`invalid ${field} in archetype ${archetypeName}: expected list`, {
-      code: "IO_ERROR",
-    });
-  }
-  return value.map((item) => {
-    if (typeof item !== "string" || item.trim() === "") {
-      throw new FrameworkError(`invalid ${field} entry in archetype ${archetypeName}`, {
-        code: "IO_ERROR",
-      });
-    }
-    return item.trim();
-  });
 }
 
 /**
@@ -636,16 +525,6 @@ async function resolveTemplateFileContents(
   return { ...archetype, templates };
 }
 
-function parseCapabilityModule(value: string, archetypeName: ProjectArchetype): CapabilityModule {
-  if (SUPPORTED_CAPABILITY_SET.has(value)) {
-    return value as CapabilityModule;
-  }
-  throw new FrameworkError(
-    `unsupported capability module '${value}' in archetype ${archetypeName}; supported modules: ${SUPPORTED_CAPABILITY_MODULES.join(", ")}`,
-    { code: "IO_ERROR" },
-  );
-}
-
 function mergeBaseArchetype(archetype: ParsedArchetype): Archetype {
   const { extendsName: _extendsName, ...definition } = archetype;
   if (!archetype.extendsName) {
@@ -664,7 +543,7 @@ function mergeBaseArchetype(archetype: ParsedArchetype): Archetype {
  * Merge directory lists by path. The first list to declare a path owns its
  * position and its wording; later lists only fill in a purpose the earlier one
  * left empty. Callers order the lists by authority — an archetype's own
- * declaration comes before the base and capability-module defaults, so an
+ * declaration comes before the base defaults, so an
  * archetype can name a shared directory in its own terms.
  */
 export function mergeDirectories(
@@ -696,13 +575,6 @@ function mergeTemplatesByPath(
   return [...merged.values()];
 }
 
-export function archetypeHasCapability(
-  archetype: Archetype,
-  capability: CapabilityModule,
-): boolean {
-  return archetype.modules.includes(capability);
-}
-
 async function readInstalledManifest(root: string): Promise<FrameworkManifest | null> {
   try {
     return await loadManifest(root);
@@ -719,57 +591,6 @@ export async function readInstalledArchetype(root: string): Promise<ProjectArche
 export async function loadInstalledArchetype(root: string): Promise<Archetype | null> {
   const archetype = await readInstalledArchetype(root);
   return archetype ? loadArchetype(archetype, { root }) : null;
-}
-
-export async function installedArchetypeHasCapability(
-  root: string,
-  capability: CapabilityModule,
-): Promise<boolean> {
-  const manifest = await readInstalledManifest(root);
-  if (!manifest) {
-    return false;
-  }
-  const archetype = await loadArchetype(manifest.project.archetype, { root });
-  const state = await loadPluginsState(root);
-  return effectiveCapabilities(
-    archetype,
-    manifest.project.capabilities,
-    manifest.plugins,
-    state,
-  ).includes(capability);
-}
-
-export const isCapabilityEnabled = installedArchetypeHasCapability;
-
-export async function requireCapability(
-  root: string,
-  capability: CapabilityModule,
-): Promise<Archetype> {
-  const manifest = await loadManifest(root);
-  if (!manifest) {
-    throw new FrameworkNotFoundError(
-      `No framework manifest found at ${path.join(root, MANIFEST_FILE)}.`,
-    );
-  }
-  const archetype = await loadArchetype(manifest.project.archetype, { root });
-  const state = await loadPluginsState(root);
-  if (
-    !effectiveCapabilities(
-      archetype,
-      manifest.project.capabilities,
-      manifest.plugins,
-      state,
-    ).includes(capability)
-  ) {
-    const enableCommand =
-      capability === "intent"
-        ? "assay plugin add assay.intent"
-        : `assay capability add ${capability}`;
-    throw new FrameworkError(
-      `capability not enabled in archetype ${manifest.project.archetype}: ${capability}. Run \`${enableCommand}\` to enable it in this workspace.`,
-    );
-  }
-  return archetype;
 }
 
 function archetypeLookupLocations(options: ArchetypeLookupOptions): ArchetypeLookupLocation[] {

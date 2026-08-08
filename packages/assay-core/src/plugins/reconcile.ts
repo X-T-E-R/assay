@@ -1,32 +1,20 @@
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { CURRENT_VERSION, MANIFEST_FILE, PLUGINS_STATE_FILE } from "../constants.js";
 import { FrameworkError, FrameworkNotFoundError, InvalidManifestError } from "../errors.js";
 import { appendEvent } from "../events.js";
-import {
-  defaultStandaloneLayout,
-  resolveWorkspaceLayout,
-  workspaceTemplateRelativePath,
-} from "../layout.js";
-import { loadManifest, projectFromManifest, recordTemplate, saveManifest } from "../manifest.js";
+import { loadManifest, saveManifest } from "../manifest.js";
 import { relativeDisplayPath } from "../paths.js";
-import {
-  type Archetype,
-  type CapabilityModule,
-  capabilityDirectories,
-  loadArchetype,
-} from "../profile.js";
+import { loadArchetype } from "../profile.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "../results.js";
 import type {
   FrameworkManifest,
   PluginInstallReceipt,
   PluginsState,
   ProviderTarget,
-  WorkspaceLayout,
 } from "../schemas/index.js";
 import { withWorkspaceMutationCoordination } from "../tasks/task-storage.js";
-import { type TemplateFile, capabilityTemplates } from "../templates.js";
 import { nowIso } from "../time.js";
 import {
   type ProviderHealth,
@@ -62,11 +50,7 @@ import {
   withTrellisLock,
 } from "./trellis-storage.js";
 
-export type PluginDesiredSource =
-  | "manifest"
-  | "archetype"
-  | "legacy-capability"
-  | "external-descriptor";
+export type PluginDesiredSource = "manifest" | "external-descriptor";
 export type PluginReconcileAction = "install" | "adopt" | "repair" | "refresh" | "noop" | "blocked";
 
 export interface PluginReconcileEntry {
@@ -130,7 +114,6 @@ export interface PluginStatus {
   readonly stateVersion: number | null;
   readonly healthy: boolean;
   readonly health: ProviderHealth;
-  readonly contributedCapabilities: readonly string[];
   readonly runtimeCapabilities: readonly string[];
   readonly operationalResponsibilities: readonly string[];
   readonly providedResponsibilities: readonly string[];
@@ -163,16 +146,10 @@ interface DesiredPlugin {
   readonly declaredKind?: string;
 }
 
-interface PluginScaffold {
-  readonly directories: readonly string[];
-  readonly templates: readonly TemplateFile[];
-}
-
 interface ReconcileContext {
   readonly manifest: FrameworkManifest;
   readonly state: PluginsState | null;
   readonly entries: readonly PluginReconcileEntry[];
-  readonly scaffolds: ReadonlyMap<string, PluginScaffold>;
   readonly observations: ReadonlyMap<string, ProviderObservation>;
 }
 
@@ -197,14 +174,7 @@ function requireManifest(manifest: FrameworkManifest | null, root: string): Fram
   return manifest;
 }
 
-function layoutForManifest(manifest: FrameworkManifest): WorkspaceLayout {
-  return resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
-}
-
-function desiredPlugins(
-  manifest: FrameworkManifest,
-  archetypeModules: readonly CapabilityModule[],
-): Map<string, DesiredPlugin> {
+function desiredPlugins(manifest: FrameworkManifest): Map<string, DesiredPlugin> {
   const desired = new Map<string, DesiredPlugin>();
   const add = (id: string, source: PluginDesiredSource, declaredKind?: string): void => {
     const current = desired.get(id);
@@ -224,55 +194,14 @@ function desiredPlugins(
     add(id, "manifest", declaration.kind);
   }
 
-  const legacyCapabilities = new Set([
-    ...archetypeModules,
-    ...(manifest.project.capabilities ?? []),
-  ]);
-  for (const plugin of listPluginDefinitions()) {
-    for (const capability of plugin.legacyCapabilities) {
-      if (legacyCapabilities.has(capability)) {
-        add(
-          plugin.id,
-          archetypeModules.includes(capability as CapabilityModule)
-            ? "archetype"
-            : "legacy-capability",
-        );
-      }
-    }
-  }
   return desired;
-}
-
-async function pluginScaffold(
-  root: string,
-  manifest: FrameworkManifest,
-  plugin: PluginDefinition,
-): Promise<PluginScaffold> {
-  const archetype = await loadArchetype(manifest.project.archetype, { root });
-  const layout = layoutForManifest(manifest);
-  const capabilities = plugin.legacyCapabilities.filter(
-    (value): value is CapabilityModule => value === "intent",
-  );
-  return {
-    directories: capabilityDirectories(capabilities).map((directory) =>
-      workspaceTemplateRelativePath(layout, directory.path),
-    ),
-    templates: capabilityTemplates(
-      projectFromManifest(manifest, root),
-      manifest.project.mode,
-      archetype,
-      capabilities,
-      layout,
-    ),
-  };
 }
 
 async function inspectPluginEntry(
   root: string,
   desired: DesiredPlugin,
   state: PluginsState | null,
-  manifest: FrameworkManifest,
-): Promise<{ readonly entry: PluginReconcileEntry; readonly scaffold?: PluginScaffold }> {
+): Promise<{ readonly entry: PluginReconcileEntry }> {
   const plugin = getPluginDefinition(desired.id);
   const sources = [...desired.sources].sort();
   if (!plugin) {
@@ -382,50 +311,9 @@ async function inspectPluginEntry(
     };
   }
 
-  const scaffold = await pluginScaffold(root, manifest, plugin);
-  const expectedPaths = [
-    ...scaffold.directories,
-    ...scaffold.templates.map((template) => template.path),
-  ];
-  const presence = await Promise.all(
-    expectedPaths.map(async (relativePath) => ({
-      relativePath,
-      present: await exists(path.join(root, relativePath)),
-    })),
+  throw new FrameworkError(
+    `unsupported built-in plugin install strategy: ${plugin.installStrategy}`,
   );
-  const missingPaths = presence.filter((item) => !item.present).map((item) => item.relativePath);
-  const presentCount = presence.length - missingPaths.length;
-
-  let action: PluginReconcileAction;
-  let message: string;
-  if (missingPaths.length > 0) {
-    action = receipt || presentCount > 0 ? "repair" : "install";
-    message =
-      action === "repair" ? "plugin scaffold is incomplete" : "plugin is desired but not installed";
-  } else if (!receipt) {
-    action = "adopt";
-    message = "existing scaffold can be adopted without rewriting it";
-  } else if (receipt.state_version < plugin.stateVersion) {
-    action = "repair";
-    message = `installed state version ${receipt.state_version} needs upgrade to ${plugin.stateVersion}`;
-  } else {
-    action = "noop";
-    message = "desired state, install receipt, and scaffold agree";
-  }
-
-  return {
-    entry: {
-      id: plugin.id,
-      kind: plugin.kind,
-      desiredSources: sources,
-      action,
-      missingPaths,
-      health: action === "noop" || action === "adopt" ? "healthy" : "unhealthy",
-      observations: null,
-      message,
-    },
-    scaffold,
-  };
 }
 
 async function inspectReconcile(
@@ -433,8 +321,8 @@ async function inspectReconcile(
   manifest: FrameworkManifest,
   filter: readonly string[] | undefined,
 ): Promise<ReconcileContext> {
-  const archetype = await loadArchetype(manifest.project.archetype, { root });
-  const desired = desiredPlugins(manifest, archetype.modules);
+  await loadArchetype(manifest.project.archetype, { root });
+  const desired = desiredPlugins(manifest);
   const selectedIds =
     filter === undefined
       ? [...desired.keys()]
@@ -450,59 +338,19 @@ async function inspectReconcile(
 
   const state = await loadPluginsState(root);
   const entries: PluginReconcileEntry[] = [];
-  const scaffolds = new Map<string, PluginScaffold>();
   const observations = new Map<string, ProviderObservation>();
   for (const id of selectedIds.sort()) {
     const desiredPlugin = desired.get(id);
     if (!desiredPlugin) {
       throw new FrameworkError(`plugin '${id}' is not desired by this workspace`);
     }
-    const inspected = await inspectPluginEntry(root, desiredPlugin, state, manifest);
+    const inspected = await inspectPluginEntry(root, desiredPlugin, state);
     entries.push(inspected.entry);
-    if (inspected.scaffold) {
-      scaffolds.set(id, inspected.scaffold);
-    }
     if (inspected.entry.observations) {
       observations.set(id, inspected.entry.observations);
     }
   }
-  return { manifest, state, entries, scaffolds, observations };
-}
-
-async function ensureDirectory(
-  root: string,
-  relativePath: string,
-  report: OperationReport,
-): Promise<void> {
-  const target = path.join(root, relativePath);
-  if (await exists(target)) {
-    report.existing_dirs.push(relativePath);
-    return;
-  }
-  await mkdir(target, { recursive: true });
-  report.created_dirs.push(relativePath);
-}
-
-async function ensureTemplate(
-  root: string,
-  manifest: FrameworkManifest,
-  template: TemplateFile,
-  report: OperationReport,
-): Promise<boolean> {
-  const target = path.join(root, template.path);
-  if (await exists(target)) {
-    report.skipped_files.push(template.path);
-    return false;
-  }
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, template.content, "utf8");
-  if (template.executable) {
-    const mode = (await stat(target)).mode;
-    await chmod(target, mode | 0o755);
-  }
-  recordTemplate(manifest, template);
-  report.created_files.push(template.path);
-  return true;
+  return { manifest, state, entries, observations };
 }
 
 function nextReceipt(
@@ -548,16 +396,6 @@ async function applyReconcileContext(
     const definition = getPluginDefinition(entry.id);
     if (!definition) {
       throw new FrameworkError(`plugin '${entry.id}' is not provided by this Assay build`);
-    }
-    const scaffold = context.scaffolds.get(entry.id);
-    if ((entry.action === "install" || entry.action === "repair") && scaffold) {
-      for (const directory of scaffold.directories) {
-        await ensureDirectory(root, directory, report);
-      }
-      for (const template of scaffold.templates) {
-        manifestChanged =
-          (await ensureTemplate(root, context.manifest, template, report)) || manifestChanged;
-      }
     }
     if (definition.installStrategy === "workspace-runtime") {
       const initialized = await initializeTrellisRuntime(root, now);
@@ -630,6 +468,9 @@ async function reconcilePluginsUnlocked(
 export async function reconcilePlugins(
   options: ReconcilePluginsOptions,
 ): Promise<ReconcilePluginsResult> {
+  const root = path.resolve(options.root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  await loadArchetype(manifest.project.archetype, { root });
   return withWorkspaceMutationCoordination(options.root, () => reconcilePluginsUnlocked(options));
 }
 
@@ -717,6 +558,9 @@ async function addPluginUnlocked(options: AddPluginOptions): Promise<AddPluginRe
 }
 
 export async function addPlugin(options: AddPluginOptions): Promise<AddPluginResult> {
+  const root = path.resolve(options.root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  await loadArchetype(manifest.project.archetype, { root });
   return withWorkspaceMutationCoordination(options.root, () => addPluginUnlocked(options));
 }
 
@@ -972,6 +816,9 @@ async function removePluginUnlocked(options: {
 export async function removePlugin(
   options: Parameters<typeof removePluginUnlocked>[0],
 ): ReturnType<typeof removePluginUnlocked> {
+  const root = path.resolve(options.root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  await loadArchetype(manifest.project.archetype, { root });
   return withWorkspaceMutationCoordination(options.root, () => removePluginUnlocked(options));
 }
 
@@ -981,16 +828,15 @@ async function statusForWorkspace(root: string): Promise<{
   readonly responsibilities: ResponsibilityStatus[];
 }> {
   const manifest = requireManifest(await loadManifest(root), root);
-  let archetype: Archetype;
   try {
-    archetype = await loadArchetype(manifest.project.archetype, { root });
+    await loadArchetype(manifest.project.archetype, { root });
   } catch (error) {
     // `checkFramework` already degrades an unavailable/removed archetype to a
     // warning. Do not turn that same condition into a plugin-state error when
-    // the workspace has no explicit plugin or legacy capability declaration.
+    // the workspace has no explicit plugin declaration.
     // Orphan receipts remain visible because they do not need archetype
     // templates to be inspected.
-    if (desiredPlugins(manifest, []).size > 0) {
+    if (desiredPlugins(manifest).size > 0) {
       throw error;
     }
     const state = await loadPluginsState(root);
@@ -1013,7 +859,6 @@ async function statusForWorkspace(root: string): Promise<{
           stateVersion: definition?.stateVersion ?? receipt?.state_version ?? null,
           healthy: receipt === undefined,
           health: receipt === undefined ? "not-checked" : "unhealthy",
-          contributedCapabilities: definition?.contributedCapabilities ?? [],
           runtimeCapabilities: definition?.runtimeCapabilities ?? [],
           operationalResponsibilities: definition?.operationalResponsibilities ?? [],
           providedResponsibilities: definition?.providedResponsibilities ?? [],
@@ -1030,7 +875,7 @@ async function statusForWorkspace(root: string): Promise<{
       responsibilities: [],
     };
   }
-  const desired = desiredPlugins(manifest, archetype.modules);
+  const desired = desiredPlugins(manifest);
   const context = await inspectReconcile(root, manifest, undefined);
   const state = context.state;
   const entries = new Map(context.entries.map((entry) => [entry.id, entry]));
@@ -1061,7 +906,6 @@ async function statusForWorkspace(root: string): Promise<{
       stateVersion: definition?.stateVersion ?? receipt?.state_version ?? null,
       healthy,
       health,
-      contributedCapabilities: definition?.contributedCapabilities ?? [],
       runtimeCapabilities: definition?.runtimeCapabilities ?? [],
       operationalResponsibilities: definition?.operationalResponsibilities ?? [],
       providedResponsibilities: definition?.providedResponsibilities ?? [],
@@ -1099,7 +943,6 @@ export async function listPlugins(rootValue: string): Promise<ListPluginsResult>
           stateVersion: 1,
           healthy: external.health === "healthy",
           health: external.health,
-          contributedCapabilities: [],
           runtimeCapabilities: [],
           operationalResponsibilities: [],
           providedResponsibilities: [],
@@ -1152,7 +995,7 @@ export async function collectPluginCheckRows(rootValue: string): Promise<CheckRo
           return {
             path: PLUGINS_STATE_FILE,
             status: "warning",
-            message: `${status.id}: scaffold exists without an install receipt; run \`assay reconcile --apply\``,
+            message: `${status.id}: runtime exists without an install receipt; run \`assay reconcile --apply\``,
           };
         }
         if (status.action === "orphan") {

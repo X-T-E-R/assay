@@ -7,8 +7,7 @@ import {
   workspaceTemplateRelativePath,
 } from "./layout.js";
 import { loadManifest } from "./manifest.js";
-import { loadPluginsState } from "./plugins/state.js";
-import { effectiveCapabilities, loadArchetype } from "./profile.js";
+import { loadArchetype } from "./profile.js";
 import { type WorkspaceZone, archetypeZones, zoneTable } from "./zones.js";
 
 export const ASSAY_AGENTS_FILE = "AGENTS.md";
@@ -83,13 +82,7 @@ export async function readAssayAgentsLayoutSection(
     }
     const archetype = await loadArchetype(manifest.project.archetype, { root });
     const workspaceLayout = resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
-    const capabilities = effectiveCapabilities(
-      archetype,
-      manifest.project.capabilities,
-      manifest.plugins,
-      await loadPluginsState(root),
-    );
-    const zones = archetypeZones(archetype, manifest.project.mode, capabilities).map((zone) => ({
+    const zones = archetypeZones(archetype, manifest.project.mode).map((zone) => ({
       path: workspaceTemplateRelativePath(workspaceLayout, zone.path),
       purpose: zone.purpose,
     }));

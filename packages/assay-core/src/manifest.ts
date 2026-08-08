@@ -1,6 +1,11 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  type AuthorityWriteProbe,
+  recoverAuthorityFile,
+  safelyWriteAuthorityFile,
+} from "./authority-file-write.js";
 import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
 import { InvalidManifestError, WorkspaceCutoverRequiredError } from "./errors.js";
 import { computeHash } from "./hashing.js";
@@ -38,6 +43,12 @@ export interface DefaultManifestOptions {
   readonly mode?: ProjectMode;
 }
 
+let manifestSaveProbe: AuthorityWriteProbe | undefined;
+
+export function setManifestSaveProbeForTests(probe: AuthorityWriteProbe | undefined): void {
+  manifestSaveProbe = probe;
+}
+
 export function manifestPath(root: string): string {
   return path.join(root, MANIFEST_FILE);
 }
@@ -48,7 +59,7 @@ export function defaultManifest(
 ): FrameworkManifest {
   const createdAt = nowIso();
   return {
-    __schema: 2,
+    __schema: 3,
     framework_version: CURRENT_VERSION,
     minimum_assay_version: CURRENT_VERSION,
     layout_version: LAYOUT_VERSION,
@@ -102,7 +113,7 @@ function assertCurrentEnvelope(data: unknown, location = ""): void {
   if (
     record?.framework_version !== CURRENT_VERSION ||
     record?.minimum_assay_version !== CURRENT_VERSION ||
-    record?.__schema !== 2 ||
+    record?.__schema !== 3 ||
     record?.layout_version !== LAYOUT_VERSION
   ) {
     throw new WorkspaceCutoverRequiredError(observedTuple(data, location));
@@ -140,8 +151,26 @@ async function loadManifestFromFile(file: string): Promise<FrameworkManifest | n
   return parseManifest(data, file);
 }
 
+function validateExistingManifestBytes(bytes: Buffer, file: string): void {
+  let data: unknown;
+  try {
+    data = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    throw new InvalidManifestError(file, "Framework manifest is not valid JSON.", { cause: error });
+  }
+  assertCurrentEnvelope(data);
+  parseManifest(data, file);
+}
+
 export async function loadManifest(root: string): Promise<FrameworkManifest | null> {
   const current = manifestPath(root);
+  await recoverAuthorityFile({
+    root,
+    file: current,
+    error: (message, cause) =>
+      new InvalidManifestError(current, message, cause === undefined ? {} : { cause }),
+    ...(manifestSaveProbe ? { probe: manifestSaveProbe } : {}),
+  });
   if (await exists(current)) return loadManifestFromFile(current);
 
   const legacy = path.join(root, ".framework", "manifest.json");
@@ -160,12 +189,25 @@ export async function saveManifest(
   root: string,
   manifest: FrameworkManifest,
 ): Promise<FrameworkManifest> {
-  assertCurrentEnvelope(manifest);
   const file = manifestPath(root);
-  manifest.updated_at = nowIso();
-  const nextManifest = frameworkManifestSchema.parse(manifest);
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, stringifySortedJson(nextManifest), "utf8");
+  if (!(await exists(file))) {
+    // Detect a legacy authority before a first create can make `.assay/`.
+    await loadManifest(root);
+  }
+
+  assertCurrentEnvelope(manifest);
+  const nextManifest = frameworkManifestSchema.parse({ ...manifest, updated_at: nowIso() });
+  await safelyWriteAuthorityFile({
+    root,
+    file,
+    content: stringifySortedJson(nextManifest),
+    validateExisting: (bytes) => {
+      if (bytes) validateExistingManifestBytes(bytes, file);
+    },
+    error: (message, cause) =>
+      new InvalidManifestError(file, message, cause === undefined ? {} : { cause }),
+    ...(manifestSaveProbe ? { probe: manifestSaveProbe } : {}),
+  });
   return nextManifest;
 }
 

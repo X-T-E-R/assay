@@ -60,7 +60,7 @@ const OVERLAY_WORK_AREAS = ["references", "analyses", "knowledge"] as const;
  * is missing from both the hoist and the managed-path rewrite would be
  * stranded in the source overlay after a move.
  */
-const OVERLAY_WORK_DIRECTORIES = ["intent", "project", "tasks"] as const;
+const OVERLAY_WORK_DIRECTORIES = ["project", "tasks"] as const;
 
 /**
  * Layout `paths` keys whose location differs between overlay and standalone.

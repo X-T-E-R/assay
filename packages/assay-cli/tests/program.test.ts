@@ -33,7 +33,6 @@ async function writeCustomArchetype(
   options: {
     readonly mode?: string;
     readonly dirs: readonly string[];
-    readonly modules?: readonly string[];
   },
 ): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
@@ -42,11 +41,6 @@ async function writeCustomArchetype(
     [
       "extends: base",
       `mode: ${options.mode ?? "learning"}`,
-      "modules:",
-      ...((options.modules ?? []).length === 0
-        ? []
-        : (options.modules ?? []).map((module) => `  - ${module}`)),
-      "",
       "dirs:",
       ...options.dirs.map((directory) => `  - ${directory}`),
       "",
@@ -494,7 +488,6 @@ describe("assay CLI subprocess behavior", () => {
     await writeCustomArchetype(path.join(projectRoot, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
       mode: "absorption",
-      modules: ["intent"],
     });
 
     const project = await runCli([

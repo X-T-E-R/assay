@@ -61,15 +61,7 @@ Task 使用 `task-0001-<slug>` 形式的可读稳定 ID 寻址。`finish` 只更
 none。Assay 不按 active 数量、创建时间或标题推断。文件合同、生命周期、关系
 和权限边界见 [Task records](docs/task.md)。
 
-## 需要时再打开能力模块
-
-能力模块是可选功能。archetype 会在 init 时启用其中一部分，其余的随时可以加到已有工作区里，第一天的选择不会把你锁死。
-
-| 模块 | 打开什么 | 启用方式 |
-| --- | --- | --- |
-| `intent` | 原样产品意图及其显式提升的 requirement | `assay capability add intent` |
-
-`assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。`assay capability add intent` 仍作为兼容入口保留；`assay reconcile --apply` 会接管已有文件并补写插件回执，不移动或改写 intent 记录。
+## 明确 Project、Roadmap 与 Spec 的 authority
 
 每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。Project 使用 `project-<slug>`。Roadmap Item 位于 `roadmap/<roadmap-id>/`：`item.yaml` 保存封闭机器状态，`outcome.md` 保存读者可直接编辑且生命周期命令不会重写的结果说明；根 `roadmap/README.md` 只作说明，不生成动态索引。原生 Spec 按需位于 `specs/<spec-id>/{spec.yaml,specification.md}`，可从 Analysis 或 Task 显式提升当前约束而不修改来源。Project 选择的 `relay/` 与 `extensions/` 也按需创建。Reference、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。详见 [Native specifications](docs/spec.md)。
 
@@ -78,12 +70,8 @@ none。Assay 不按 active 数量、创建时间或标题推断。文件合同�
 
 
 ```bash
-# 创建或接入时顺便安装 intent。
-assay init ../product-assay --name Product --plugin assay.intent
-assay attach --name Product --plugin assay.intent
-
-# 也可以之后再添加。
-assay plugin add assay.intent
+# 先创建或接入工作区。插件状态只由之后的显式操作创建。
+assay init ../product-assay --name Product
 assay plugin add assay.trellis
 # 从独立发布的 descriptor 注册元数据；Assay 不执行插件。
 assay plugin register ./assay-plugin.json
@@ -92,7 +80,7 @@ assay plugin list
 assay plugin check
 ```
 
-manifest 记录期望启用的插件和责任绑定，`.assay/plugins.json` 记录当前工作区实际安装的内容。`assay reconcile` 对照这些状态与现有文件并输出计划；默认只预览，只有加上 `--apply` 才会修改。它只收敛一个已经存在 manifest 的 Assay 工作区，不负责创建或 attach，不覆盖已有 intent 文件，也不会自动删除孤立回执。
+manifest 记录期望启用的插件和责任绑定，`.assay/plugins.json` 记录当前工作区实际安装的内容。`assay reconcile` 对照这些状态与现有文件并输出计划；默认只预览，只有加上 `--apply` 才会修改。它只收敛一个已经存在 manifest 的 Assay 工作区，不负责创建或 attach，也不会自动删除孤立回执。
 
 外部 descriptor 使用独立且通用的 control-plane 路径。Assay 把精确 artifact 元数据锁定在 `.assay/external-plugins.json`，只接受与 descriptor 完全匹配的 host observation，并分别呈现 descriptor verification、Assay enablement、host installation/activation 和 health。disable、enable、remove 只改变 Assay 记录；不会安装、激活、停用、卸载、导入或执行外部 package。
 

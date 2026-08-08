@@ -8,24 +8,18 @@ import {
 } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { parse as parseYaml } from "yaml";
 
 import {
-  addCapability,
   addSource,
   applyUpdate,
   attachExistingRepo,
-  captureIntent,
   checkFramework,
   closeAnalysis,
   convertOverlayToStandalone,
   createAnalysis,
   initFramework,
-  listIntent,
   loadManifest,
-  promoteIntent,
   reconcilePlugins,
-  registerSystem,
   saveManifest,
   savePluginsState,
   switchSource,
@@ -208,66 +202,6 @@ describe("git ref arguments cannot be parsed as git options", () => {
  * also carry a second `---` terminator. The record would still be written, and
  * only the next read would fail permanently because records are append-only.
  */
-const TERMINATOR_PAYLOAD = 'ticket #42\n---\n\ninjected: "yes"';
-
-/** The same payload plus the control characters a quoted scalar cannot hold raw. */
-const CONTROL_PAYLOAD = `${TERMINATOR_PAYLOAD}\r\tbell:\u0007`;
-
-function frontmatterOf(markdown: string): Record<string, unknown> {
-  const header = markdown.match(/^---\n([\s\S]*?)\n---\n/)?.[1];
-  expect(header, "record has no frontmatter block").toBeDefined();
-  return parseYaml(header as string) as Record<string, unknown>;
-}
-
-describe("frontmatter values cannot terminate their own record", () => {
-  it("round-trips an intent source carrying a frontmatter terminator", async () => {
-    const root = await standaloneWorkspace("IntentSourceInjection", BARE_ARCHETYPE);
-    await addCapability({ root, module: "intent" });
-    await mkdir(path.join(root, "systems", "app"), { recursive: true });
-    await registerSystem(root, { path: "systems/app", primary: true });
-    const text = "Exports must include every column the table shows.\n";
-
-    const captured = await captureIntent({ root, text, source: CONTROL_PAYLOAD });
-
-    const content = await readFile(path.join(root, captured.capture.path), "utf8");
-    expect(frontmatterOf(content).source).toBe(CONTROL_PAYLOAD);
-    expect(content.endsWith(`\n\n${text}`)).toBe(true);
-
-    // readCapture and the listing both have to survive it, and the digest has
-    // to still match, or the record is unusable from here on.
-    const listed = await listIntent({ root });
-    expect(listed.captures).toHaveLength(1);
-    expect(listed.captures[0]?.source).toBe(CONTROL_PAYLOAD);
-    expect(listed.captures[0]?.integrity).toBe("ok");
-
-    const again = await captureIntent({ root, text, source: CONTROL_PAYLOAD });
-    expect(again.created).toBe(false);
-    expect((await checkFramework({ root })).ok).toBe(true);
-  });
-
-  it("round-trips a promoted requirement title carrying a frontmatter terminator", async () => {
-    const root = await standaloneWorkspace("RequirementTitleInjection", BARE_ARCHETYPE);
-    await addCapability({ root, module: "intent" });
-    await mkdir(path.join(root, "systems", "app"), { recursive: true });
-    await registerSystem(root, { path: "systems/app", primary: true });
-    const captured = await captureIntent({ root, text: "Retention is ninety days.\n" });
-
-    const promoted = await promoteIntent({
-      root,
-      capture: captured.capture.id,
-      to: "requirement",
-      title: TERMINATOR_PAYLOAD,
-    });
-
-    const header = frontmatterOf(await readFile(path.join(root, promoted.path), "utf8"));
-    expect(header.title).toBe(TERMINATOR_PAYLOAD);
-    expect(header.derives_from).toBe(captured.capture.id);
-    expect(header.injected).toBeUndefined();
-    // The requirement is still discoverable from the capture it derives from.
-    expect((await listIntent({ root })).captures[0]?.requirements).toEqual([promoted.path]);
-  });
-});
-
 describe("workspace path arguments stay inside the workspace", () => {
   it("refuses `analysis close` on a path above the workspace and leaves the file untouched", async () => {
     const root = await standaloneWorkspace("AnalysisEscape");
@@ -562,7 +496,6 @@ describe("convert carries the full workspace state to the new standalone root", 
         [
           "extends: base",
           "mode: learning",
-          "modules: []",
           "dirs:",
           `  - .assay/work/../${retiredName}/history`,
           "dirs_learning: []",

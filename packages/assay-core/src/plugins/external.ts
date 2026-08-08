@@ -393,6 +393,7 @@ function validateState(state: ExternalPluginsState): ExternalPluginsState {
 }
 
 export async function loadExternalPluginsState(root: string): Promise<ExternalPluginsState | null> {
+  await loadManifest(root);
   const file = externalPluginsStatePath(root);
   let text: string;
   try {
@@ -415,6 +416,7 @@ async function saveExternalPluginsState(
   state: ExternalPluginsState,
   now: Date,
 ): Promise<ExternalPluginsState> {
+  await requireWorkspace(root);
   const next = validateState(
     externalPluginsStateSchema.parse({ ...state, updated_at: nowIso(now) }),
   );
@@ -492,6 +494,7 @@ async function registerExternalPluginUnlocked(options: {
 export async function registerExternalPlugin(
   options: Parameters<typeof registerExternalPluginUnlocked>[0],
 ): ReturnType<typeof registerExternalPluginUnlocked> {
+  await requireWorkspace(options.root);
   return withWorkspaceMutationCoordination(options.root, () =>
     registerExternalPluginUnlocked(options),
   );
@@ -502,6 +505,7 @@ export async function registerExternalPluginFromFile(options: {
   readonly file: string;
   readonly now?: Date;
 }): ReturnType<typeof registerExternalPlugin> {
+  await requireWorkspace(options.root);
   return registerExternalPlugin({
     root: options.root,
     descriptor: await readJsonFile(options.file),
@@ -543,6 +547,7 @@ async function observeExternalPluginUnlocked(options: {
 export async function observeExternalPlugin(
   options: Parameters<typeof observeExternalPluginUnlocked>[0],
 ): ReturnType<typeof observeExternalPluginUnlocked> {
+  await requireWorkspace(options.root);
   return withWorkspaceMutationCoordination(options.root, () =>
     observeExternalPluginUnlocked(options),
   );
@@ -553,6 +558,7 @@ export async function observeExternalPluginFromFile(options: {
   readonly file: string;
   readonly now?: Date;
 }): ReturnType<typeof observeExternalPlugin> {
+  await requireWorkspace(options.root);
   return observeExternalPlugin({
     root: options.root,
     observation: await readJsonFile(options.file),
@@ -589,6 +595,7 @@ async function setExternalPluginEnabledUnlocked(options: {
 export async function setExternalPluginEnabled(
   options: Parameters<typeof setExternalPluginEnabledUnlocked>[0],
 ): ReturnType<typeof setExternalPluginEnabledUnlocked> {
+  await requireWorkspace(options.root);
   return withWorkspaceMutationCoordination(options.root, () =>
     setExternalPluginEnabledUnlocked(options),
   );
@@ -618,6 +625,7 @@ async function removeExternalPluginUnlocked(options: {
 export async function removeExternalPlugin(
   options: Parameters<typeof removeExternalPluginUnlocked>[0],
 ): ReturnType<typeof removeExternalPluginUnlocked> {
+  await requireWorkspace(options.root);
   return withWorkspaceMutationCoordination(options.root, () =>
     removeExternalPluginUnlocked(options),
   );

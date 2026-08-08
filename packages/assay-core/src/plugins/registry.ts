@@ -1,10 +1,9 @@
 import { FrameworkError } from "../errors.js";
-import type { FrameworkManifest, PluginDeclaration, PluginsState } from "../schemas/index.js";
+import type { PluginDeclaration } from "../schemas/index.js";
 
-export const INTENT_PLUGIN_ID = "assay.intent";
 export const TRELLIS_PLUGIN_ID = "assay.trellis";
 
-export type PluginInstallStrategy = "workspace-scaffold" | "workspace-runtime";
+export type PluginInstallStrategy = "workspace-runtime";
 
 export interface PluginDefinition {
   readonly id: string;
@@ -13,27 +12,12 @@ export interface PluginDefinition {
   readonly protocolVersion: number | null;
   readonly stateVersion: number;
   readonly installStrategy: PluginInstallStrategy;
-  readonly contributedCapabilities: readonly string[];
   readonly runtimeCapabilities: readonly string[];
   readonly operationalResponsibilities: readonly string[];
   readonly providedResponsibilities: readonly string[];
-  readonly legacyCapabilities: readonly string[];
 }
 
 const BUILTIN_PLUGINS: readonly PluginDefinition[] = [
-  {
-    id: INTENT_PLUGIN_ID,
-    aliases: ["intent"],
-    kind: "workspace-module",
-    protocolVersion: null,
-    stateVersion: 1,
-    installStrategy: "workspace-scaffold",
-    contributedCapabilities: ["intent"],
-    runtimeCapabilities: [],
-    operationalResponsibilities: [],
-    providedResponsibilities: [],
-    legacyCapabilities: ["intent"],
-  },
   {
     id: TRELLIS_PLUGIN_ID,
     aliases: ["trellis"],
@@ -41,7 +25,6 @@ const BUILTIN_PLUGINS: readonly PluginDefinition[] = [
     protocolVersion: 1,
     stateVersion: 1,
     installStrategy: "workspace-runtime",
-    contributedCapabilities: [],
     runtimeCapabilities: [
       "task-store",
       "session-store",
@@ -65,7 +48,6 @@ const BUILTIN_PLUGINS: readonly PluginDefinition[] = [
       "codex-hook",
     ],
     providedResponsibilities: [],
-    legacyCapabilities: [],
   },
 ];
 
@@ -97,37 +79,4 @@ export function pluginDeclarationFor(value: string): {
     throw new FrameworkError(`unsupported plugin '${value}'; supported plugins: ${supported}`);
   }
   return { id: plugin.id, declaration: { kind: plugin.kind } };
-}
-
-/**
- * Capability modules supplied by explicit plugin declarations.
- *
- * This is a compatibility bridge while intent moves from the legacy
- * capability flag to `assay.intent`. Unknown plugins and kind mismatches
- * deliberately contribute nothing; plugin reconcile reports them instead of
- * granting command access.
- */
-export function pluginCapabilities(
-  plugins: FrameworkManifest["plugins"] | undefined,
-  state: PluginsState | null | undefined,
-): readonly string[] {
-  if (!plugins || !state) return [];
-  const capabilities = new Set<string>();
-  for (const [id, declaration] of Object.entries(plugins)) {
-    const definition = PLUGINS_BY_ID.get(id);
-    const receipt = state.plugins[id];
-    if (
-      !definition ||
-      declaration.enabled === false ||
-      definition.kind !== declaration.kind ||
-      receipt?.kind !== definition.kind ||
-      receipt.state_version !== definition.stateVersion
-    ) {
-      continue;
-    }
-    for (const capability of definition.contributedCapabilities) {
-      capabilities.add(capability);
-    }
-  }
-  return [...capabilities].sort();
 }

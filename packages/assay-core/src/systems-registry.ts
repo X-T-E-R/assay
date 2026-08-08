@@ -1,6 +1,11 @@
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  type AuthorityWriteProbe,
+  recoverAuthorityFile,
+  safelyWriteAuthorityFile,
+} from "./authority-file-write.js";
 import { SYSTEMS_REGISTRY_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
@@ -8,7 +13,6 @@ import { defaultStandaloneLayout, resolveWorkspaceLayout, workspaceSubpath } fro
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import {
-  type SystemIntentAuthority,
   type SystemRecord,
   type SystemStatus,
   type SystemVcs,
@@ -24,6 +28,12 @@ export interface SystemsRegistryOptions {
   readonly now?: Date;
 }
 
+let systemsRegistrySaveProbe: AuthorityWriteProbe | undefined;
+
+export function setSystemsRegistrySaveProbeForTests(probe: AuthorityWriteProbe | undefined): void {
+  systemsRegistrySaveProbe = probe;
+}
+
 export interface RegisterSystemInput {
   readonly name?: string;
   readonly path: string;
@@ -33,7 +43,6 @@ export interface RegisterSystemInput {
   readonly primary?: boolean;
   readonly supersedes?: readonly string[];
   readonly contractFile?: string | null;
-  readonly intentAuthority?: SystemIntentAuthority;
 }
 
 export interface RegisterSystemResult {
@@ -51,8 +60,6 @@ export interface UpdateSystemInput {
   readonly primary?: boolean;
   readonly supersedes?: readonly string[];
   readonly contractFile?: string | null;
-  /** `null` clears the field back to the default (`inline`). */
-  readonly intentAuthority?: SystemIntentAuthority | null;
 }
 
 export type SystemUpdateField =
@@ -62,8 +69,7 @@ export type SystemUpdateField =
   | "version"
   | "contract_file"
   | "supersedes"
-  | "status"
-  | "intent_authority";
+  | "status";
 
 export type SystemUpdateValue = string | readonly string[] | null;
 
@@ -111,7 +117,7 @@ export function systemsRegistryPath(root: string): string {
 export function defaultSystemsRegistry(): SystemsRegistry {
   const now = nowIso();
   return {
-    __schema: 1,
+    __schema: 2,
     primary: null,
     systems: {},
     updated_at: now,
@@ -119,7 +125,14 @@ export function defaultSystemsRegistry(): SystemsRegistry {
 }
 
 export async function loadSystemsRegistry(root: string): Promise<SystemsRegistry | null> {
+  await loadManifest(root);
   const file = systemsRegistryPath(root);
+  await recoverAuthorityFile({
+    root,
+    file,
+    error: (message, cause) => new FrameworkError(message, cause === undefined ? {} : { cause }),
+    ...(systemsRegistrySaveProbe ? { probe: systemsRegistrySaveProbe } : {}),
+  });
   let text: string;
   try {
     text = await readFile(file, "utf8");
@@ -147,14 +160,39 @@ export async function loadSystemsRegistry(root: string): Promise<SystemsRegistry
   return result.data;
 }
 
+function validateExistingRegistryBytes(bytes: Buffer, file: string): void {
+  let data: unknown;
+  try {
+    data = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    throw new FrameworkError(`systems registry is not valid JSON: ${file}`, { cause: error });
+  }
+  const result = systemsRegistrySchema.safeParse(data);
+  if (!result.success) {
+    throw new FrameworkError(`systems registry failed validation: ${file}`, {
+      details: result.error.flatten(),
+      cause: result.error,
+    });
+  }
+}
+
 export async function saveSystemsRegistry(
   root: string,
   registry: SystemsRegistry,
 ): Promise<SystemsRegistry> {
+  await loadManifest(root);
   const file = systemsRegistryPath(root);
   const next = systemsRegistrySchema.parse({ ...registry, updated_at: nowIso() });
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, stringifySortedJson(next), "utf8");
+  await safelyWriteAuthorityFile({
+    root,
+    file,
+    content: stringifySortedJson(next),
+    validateExisting: (bytes) => {
+      if (bytes) validateExistingRegistryBytes(bytes, file);
+    },
+    error: (message, cause) => new FrameworkError(message, cause === undefined ? {} : { cause }),
+    ...(systemsRegistrySaveProbe ? { probe: systemsRegistrySaveProbe } : {}),
+  });
   return next;
 }
 
@@ -220,21 +258,6 @@ function cloneSystemRecord(system: SystemRecord): SystemRecord {
   return { ...system, supersedes: [...system.supersedes] };
 }
 
-/**
- * Intent authority rendered for change reporting and event payloads, which
- * carry scalars rather than nested objects. An absent field means `inline`.
- */
-export function describeIntentAuthority(
-  authority: SystemIntentAuthority | undefined,
-): string | null {
-  if (!authority) {
-    return null;
-  }
-  return authority.pointer === undefined
-    ? authority.mode
-    : `${authority.mode} ${authority.pointer}`;
-}
-
 function normalizeRegistryPath(root: string, value: string): string {
   return relativeDisplayPath(path.resolve(root, value), root);
 }
@@ -285,12 +308,6 @@ function collectSystemUpdateChanges(
   addChange("contract_file", previous.contract_file, current.contract_file);
   addChange("supersedes", previous.supersedes, current.supersedes);
   addChange("status", previous.status, current.status);
-  addChange(
-    "intent_authority",
-    describeIntentAuthority(previous.intent_authority),
-    describeIntentAuthority(current.intent_authority),
-  );
-
   return changes;
 }
 
@@ -340,7 +357,6 @@ async function createSystemContractIfMissing(
     vcs: system.vcs,
     vcsRef: system.vcs_ref,
     supersedes: system.supersedes,
-    intentAuthority: system.intent_authority,
   });
 
   await mkdir(path.dirname(contractPath), { recursive: true });
@@ -388,7 +404,6 @@ export async function registerSystem(
     absorbed_on: dateStamp,
     archived_on: null,
     archive_path: null,
-    ...(input.intentAuthority === undefined ? {} : { intent_authority: input.intentAuthority }),
   };
 
   registry.systems[name] = record;
@@ -459,15 +474,6 @@ export async function updateSystem(
   if (input.supersedes !== undefined) {
     updated = { ...updated, supersedes: [...input.supersedes] };
   }
-  if (input.intentAuthority !== undefined) {
-    if (input.intentAuthority === null) {
-      const { intent_authority: _cleared, ...rest } = updated;
-      updated = rest;
-    } else {
-      updated = { ...updated, intent_authority: input.intentAuthority };
-    }
-  }
-
   registry.systems[system.name] = updated;
 
   const previousPrimary =

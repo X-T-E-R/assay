@@ -59,11 +59,6 @@ export const frameworkProjectSchema = z
     name: z.string().min(1),
     archetype: projectArchetypeSchema.default("study"),
     mode: projectModeSchema.default("learning"),
-    // Capability modules enabled after init by `assay capability add`. The
-    // effective set is the archetype's modules plus these. Kept as plain
-    // strings so a workspace stays loadable when it records a module this
-    // build does not implement; use sites decide what a name means.
-    capabilities: z.array(z.string().min(1)).optional(),
   })
   .strict();
 
@@ -72,21 +67,6 @@ export const frameworkProjectSchema = z
 export const systemVcsSchema = z.enum(["independent-git", "embedded", "none"]);
 
 export const systemStatusSchema = z.enum(["primary", "active", "archived", "superseded"]);
-
-export const systemIntentAuthorityModeSchema = z.enum(["inline", "external", "none"]);
-
-/**
- * Where a system's product intent is authoritatively recorded. `inline` (also
- * the meaning of an absent field) means this workspace owns it; `external`
- * names another home through `pointer`; `none` means the system deliberately
- * keeps no intent record. `assay intent capture` fail-closes on the last two.
- */
-export const systemIntentAuthoritySchema = z
-  .object({
-    mode: systemIntentAuthorityModeSchema,
-    pointer: z.string().min(1).optional(),
-  })
-  .strict();
 
 export const systemRecordSchema = z
   .object({
@@ -101,15 +81,12 @@ export const systemRecordSchema = z
     absorbed_on: z.string().nullable(),
     archived_on: z.string().nullable(),
     archive_path: z.string().nullable(),
-    // Optional so registries written before the intent module keep validating;
-    // absent means `inline`.
-    intent_authority: systemIntentAuthoritySchema.optional(),
   })
   .strict();
 
 export const systemsRegistrySchema = z
   .object({
-    __schema: z.literal(1),
+    __schema: z.literal(2),
     primary: z.string().min(1).nullable(),
     systems: z.record(systemRecordSchema),
     updated_at: z.string().min(1),
@@ -191,7 +168,7 @@ export const workspaceLayoutSchema = z
 
 export const frameworkManifestSchema = z
   .object({
-    __schema: z.literal(2),
+    __schema: z.literal(3),
     framework_version: z.string().min(1),
     minimum_assay_version: z.string().min(1),
     layout_version: z.literal(6),
@@ -205,9 +182,8 @@ export const frameworkManifestSchema = z
     // in `.assay/plugins.json`, so ordinary manifest reads never confuse a
     // declaration with a successful install.
     plugins: z.record(z.string().trim().min(1), pluginDeclarationSchema).optional(),
-    // Exclusive provider selections. Capability contributions remain additive;
-    // a responsibility binding replaces the native owner for that semantic
-    // area and therefore fail-closes while its provider is unavailable.
+    // Exclusive provider selections replace the native owner for a semantic
+    // area and therefore fail-close while their provider is unavailable.
     bindings: z.record(z.string().trim().min(1), responsibilityBindingSchema).optional(),
     layout: workspaceLayoutSchema,
   })
@@ -358,8 +334,6 @@ export type WorkspaceLayoutPaths = z.infer<typeof workspaceLayoutPathsSchema>;
 export type WorkspaceLayout = z.infer<typeof workspaceLayoutSchema>;
 export type SystemVcs = z.infer<typeof systemVcsSchema>;
 export type SystemStatus = z.infer<typeof systemStatusSchema>;
-export type SystemIntentAuthorityMode = z.infer<typeof systemIntentAuthorityModeSchema>;
-export type SystemIntentAuthority = z.infer<typeof systemIntentAuthoritySchema>;
 export type SystemRecord = z.infer<typeof systemRecordSchema>;
 export type SystemsRegistry = z.infer<typeof systemsRegistrySchema>;
 export type EventEntry = z.input<typeof eventEntrySchema>;

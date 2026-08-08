@@ -15,7 +15,6 @@ import {
   CODEX_TRELLIS_HOOK_MARKER,
   TRELLIS_RUNTIME_STATE_FILE,
   TRELLIS_TRANSACTION_FILE,
-  addCapability,
   addPlugin,
   checkFramework,
   checkPlugins,

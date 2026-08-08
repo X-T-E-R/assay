@@ -87,7 +87,6 @@ describe("external plugin CLI", () => {
       expect.objectContaining({
         id: "assay-fixture.readonly-command",
         installed: false,
-        contributedCapabilities: [],
         providedResponsibilities: [],
       }),
     );
@@ -334,9 +333,7 @@ describe("external plugin CLI", () => {
 
     const after = JSON.parse((await runCli(["plugin", "list", "--root", root, "--json"])).stdout);
     expect(after.plugins.filter((plugin: { external?: unknown }) => plugin.external)).toEqual([]);
-    expect(after.plugins.map((plugin: { id: string }) => plugin.id)).toEqual(
-      expect.arrayContaining(["assay.intent", "assay.trellis"]),
-    );
+    expect(after.plugins.map((plugin: { id: string }) => plugin.id)).toEqual(["assay.trellis"]);
     expect(
       createHash("sha256")
         .update(await readFile(descriptorPath))

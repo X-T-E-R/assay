@@ -1,9 +1,7 @@
 import {
   type Archetype,
   type ArchetypeDirectory,
-  type CapabilityModule,
   archetypeDirectories,
-  capabilityDirectories,
   mergeDirectories,
 } from "./profile.js";
 import type { ProjectMode } from "./schemas/index.js";
@@ -25,8 +23,7 @@ export interface WorkspaceZone {
 }
 
 /**
- * Zones a workspace has, given its archetype, mode, and enabled capability
- * modules.
+ * Zones a workspace has, given its archetype and mode.
  *
  * Two kinds of declared directory are left out:
  *
@@ -39,13 +36,8 @@ export interface WorkspaceZone {
 export function archetypeZones(
   archetype: Pick<Archetype, "dirs" | "dirsLearning" | "dirsAbsorption">,
   mode: ProjectMode,
-  capabilities: readonly CapabilityModule[] = [],
 ): WorkspaceZone[] {
-  const declared = mergeDirectories(
-    archetypeDirectories(archetype, mode),
-    capabilityDirectories(capabilities),
-    NATIVE_LAZY_DIRECTORIES,
-  );
+  const declared = mergeDirectories(archetypeDirectories(archetype, mode), NATIVE_LAZY_DIRECTORIES);
   return declared.filter(isZoneDirectory).map((directory) => ({
     path: directory.path,
     purpose: directory.purpose,

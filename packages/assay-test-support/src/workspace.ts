@@ -6,15 +6,14 @@ import type { TempDirectoryFixture } from "./filesystem.js";
 
 /**
  * Name of the archetype `writeBareArchetype` installs: extends base, declares
- * no directories of its own, and enables no capability modules.
+ * no directories of its own.
  */
 export const BARE_ARCHETYPE = "bare";
 
 /**
  * Write a project-local archetype into a workspace root before it is
  * initialized, so `init` and `attach` can resolve a shape no built-in
- * provides. The common case is a workspace with no capability modules at all,
- * which is the starting point every `capability add` test needs.
+ * provides.
  */
 export async function writeProjectArchetype(options: {
   readonly root: string;
@@ -27,7 +26,7 @@ export async function writeProjectArchetype(options: {
   const archetypeDir = path.join(options.root, ".assay", "archetypes");
   await mkdir(archetypeDir, { recursive: true });
   const archetypePath = path.join(archetypeDir, `${options.name}.yaml`);
-  const modules = options.modules ?? [];
+  const retiredModules = options.modules;
   const dirs = options.dirs ?? [];
   await writeFile(
     archetypePath,
@@ -35,8 +34,12 @@ export async function writeProjectArchetype(options: {
       "extends: base",
       `mode: ${options.mode ?? "learning"}`,
       `description: ${options.description ?? `Test archetype ${options.name}.`}`,
-      modules.length === 0 ? "modules: []" : "modules:",
-      ...modules.map((module) => `  - ${module}`),
+      ...(retiredModules === undefined
+        ? []
+        : [
+            retiredModules.length === 0 ? "modules: []" : "modules:",
+            ...retiredModules.map((module) => `  - ${module}`),
+          ]),
       dirs.length === 0 ? "dirs: []" : "dirs:",
       ...dirs.map((directory) => `  - ${directory}`),
       "dirs_learning: []",
@@ -54,7 +57,7 @@ export async function writeBareArchetype(root: string): Promise<string> {
   return writeProjectArchetype({
     root,
     name: BARE_ARCHETYPE,
-    description: "Shared core only, with no capability modules.",
+    description: "Shared core only.",
   });
 }
 

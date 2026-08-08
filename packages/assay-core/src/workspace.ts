@@ -20,7 +20,6 @@ import {
   type WorkspaceArea,
   defaultOverlayLayout,
   defaultStandaloneLayout,
-  intentRootPath,
   resolveWorkspaceLayout,
   workspacePath,
   workspaceRelativePath,
@@ -28,13 +27,7 @@ import {
   workspaceTemplateRelativePath,
   workspaceWorkRelativePath,
 } from "./layout.js";
-import {
-  defaultManifest,
-  loadManifest,
-  projectFromManifest,
-  recordTemplate,
-  saveManifest,
-} from "./manifest.js";
+import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
 import {
   assertNoAncestorWorkspaceAuthority,
   relativeDisplayPath,
@@ -42,21 +35,11 @@ import {
   slugify,
 } from "./paths.js";
 import { collectPluginCheckRows } from "./plugins/reconcile.js";
-import { pluginCapabilities } from "./plugins/registry.js";
-import { loadPluginsState } from "./plugins/state.js";
 import {
   type Archetype,
-  type CapabilityModule,
-  SUPPORTED_CAPABILITY_MODULES,
-  archetypeHasCapability,
-  capabilityDirectories,
-  declaredCapabilities,
   dirsForArchetype,
-  effectiveCapabilities,
-  isCapabilityModule,
   loadArchetype,
   readInstalledArchetype,
-  requireCapabilityModule,
 } from "./profile.js";
 import {
   ensureNativeProject,
@@ -85,7 +68,7 @@ import {
 import { SpecError, validateSpecs } from "./spec.js";
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
 import { TaskError, validateTasks } from "./task.js";
-import { archetypeTemplates, capabilityTemplates, mergeTemplateFiles } from "./templates.js";
+import { archetypeTemplates } from "./templates.js";
 import { nowIso } from "./time.js";
 import { type UpstreamStatus, collectUpstreamStatus } from "./upstream.js";
 import { NATIVE_LAZY_DIRECTORIES, archetypeZones } from "./zones.js";
@@ -108,10 +91,6 @@ const GENERATED_REFERENCE_DIRS = new Set([
  * `.gitignore`, `analyses/`, and `knowledge/` in an attached product
  * repository — the files `attach` deliberately leaves alone.
  *
- * Capability modules contribute their own templates, so files scaffolded by
- * `assay capability add` stay under update management instead of drifting
- * outside it. Callers that hold a manifest pass its `capabilities` list;
- * without it only the archetype's own modules contribute.
  */
 export async function desiredRuntimeTemplates(
   project: string,
@@ -120,24 +99,10 @@ export async function desiredRuntimeTemplates(
   options: {
     readonly root?: string;
     readonly layout?: WorkspaceLayout;
-    readonly capabilities?: readonly string[];
-    readonly plugins?: FrameworkManifest["plugins"];
-    readonly bindings?: FrameworkManifest["bindings"];
   } = {},
 ) {
   const archetypeDefinition = await loadArchetype(archetype, options);
-  const pluginState = options.root ? await loadPluginsState(options.root) : null;
-  const resolvedCapabilities = effectiveCapabilities(
-    archetypeDefinition,
-    options.capabilities,
-    options.plugins,
-    pluginState,
-  );
-  const capabilities = resolvedCapabilities;
-  return mergeTemplateFiles(
-    archetypeTemplates(project, mode, archetypeDefinition, options.layout),
-    capabilityTemplates(project, mode, archetypeDefinition, capabilities, options.layout),
-  );
+  return archetypeTemplates(project, mode, archetypeDefinition, options.layout);
 }
 
 export interface InitFrameworkOptions {
@@ -157,46 +122,6 @@ export interface InitFrameworkResult {
   readonly archetype: ProjectArchetype;
   readonly mode: ProjectMode;
   readonly report: OperationReport;
-}
-
-/** How a capability module became available to a workspace. */
-export type CapabilitySource = "archetype" | "added" | "plugin";
-
-export interface AddCapabilityOptions {
-  readonly root: string;
-  /** Capability module name; validated against the supported set. */
-  readonly module: string;
-  readonly now?: Date;
-}
-
-export interface AddCapabilityResult {
-  readonly root: string;
-  readonly module: CapabilityModule;
-  /** True when the workspace already had the module; nothing was written. */
-  readonly alreadyEnabled: boolean;
-  readonly source: CapabilitySource;
-  readonly capabilities: readonly CapabilityModule[];
-  readonly report: OperationReport;
-  readonly eventFile?: string;
-}
-
-export interface CapabilityStatus {
-  readonly module: string;
-  readonly enabled: boolean;
-  readonly source: CapabilitySource | null;
-  /** False for a manifest entry this build cannot scaffold or gate. */
-  readonly supported: boolean;
-}
-
-export interface ListCapabilitiesOptions {
-  readonly root: string;
-}
-
-export interface ListCapabilitiesResult {
-  readonly root: string;
-  readonly project: string;
-  readonly archetype: ProjectArchetype;
-  readonly capabilities: readonly CapabilityStatus[];
 }
 
 export interface CheckFrameworkOptions {
@@ -492,45 +417,6 @@ function layoutDirectoryPath(layout: WorkspaceLayout, directory: string): string
     : workspaceWorkRelativePath(layout, directory);
 }
 
-/** Workspace-root-relative directories owned by the given capability modules. */
-function capabilityDirs(capabilities: readonly CapabilityModule[]): string[] {
-  return capabilityDirectories(capabilities).map((directory) => directory.path);
-}
-
-/**
- * Capability modules a workspace actually has, for reporting paths that only
- * exist when a module is enabled. Falls back to the manifest's own list when
- * the archetype cannot be loaded, so a broken archetype hides structure rather
- * than failing the caller.
- */
-async function enabledCapabilities(
-  root: string,
-  manifest: FrameworkManifest | null,
-): Promise<CapabilityModule[]> {
-  if (!manifest) {
-    return [];
-  }
-  const pluginState = await loadPluginsState(root);
-  try {
-    const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
-    const capabilities = effectiveCapabilities(
-      archetypeDefinition,
-      manifest.project.capabilities,
-      manifest.plugins,
-      pluginState,
-    );
-    return capabilities;
-  } catch {
-    const capabilities = effectiveCapabilities(
-      null,
-      manifest.project.capabilities,
-      manifest.plugins,
-      pluginState,
-    );
-    return capabilities;
-  }
-}
-
 /**
  * Knowledge subdirectory names the workspace's archetype declares (both the
  * `dirs` and mode-specific lists), e.g. `knowledge/playbooks`. A custom
@@ -598,16 +484,6 @@ async function writeTemplateFile(
   return "written";
 }
 
-async function scaffoldCapabilityState(
-  root: string,
-  capability: CapabilityModule,
-  report: OperationReport,
-): Promise<void> {
-  void root;
-  void capability;
-  void report;
-}
-
 function recordAssayAgentsResult(report: OperationReport, result: AssayAgentsBlockResult): void {
   if (result.action === "skip") {
     if (result.reason === ASSAY_AGENTS_MALFORMED_REASON) {
@@ -646,20 +522,7 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   manifest.project.archetype = archetype;
   manifest.project.mode = mode;
 
-  // `init` always writes a standalone workspace, so archetype and capability
-  // paths need no layout translation here.
-  const pluginState = await loadPluginsState(root);
-  const resolvedCapabilities = effectiveCapabilities(
-    archetypeDefinition,
-    manifest.project.capabilities,
-    manifest.plugins,
-    pluginState,
-  );
-  const capabilities = resolvedCapabilities;
-  const directories = new Set([
-    ...dirsForArchetype(archetypeDefinition, mode),
-    ...capabilityDirs(capabilities),
-  ]);
+  const directories = new Set(dirsForArchetype(archetypeDefinition, mode));
   for (const directory of directories) {
     await ensureDir(path.join(root, directory), root, report);
   }
@@ -672,10 +535,7 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   report.created_dirs.push(...nativeProject.createdDirectories);
   report.created_files.push(...nativeProject.createdFiles);
 
-  for (const template of mergeTemplateFiles(
-    archetypeTemplates(project, mode, archetypeDefinition),
-    capabilityTemplates(project, mode, archetypeDefinition, capabilities),
-  )) {
+  for (const template of archetypeTemplates(project, mode, archetypeDefinition)) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,
@@ -685,10 +545,6 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
       recordTemplate(manifest, template);
     }
   }
-  for (const capability of capabilities) {
-    await scaffoldCapabilityState(root, capability, report);
-  }
-
   const manifestExisted = await exists(path.join(root, MANIFEST_FILE));
   manifest = await saveManifest(root, manifest);
   (manifestExisted ? report.updated_files : report.created_files).push(MANIFEST_FILE);
@@ -719,145 +575,6 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   }
 
   return { root, project, archetype, mode, report };
-}
-
-/**
- * Enable a capability module in an existing workspace.
- *
- * Enablement is decoupled from the init-time archetype choice: the module's
- * directories and templates are scaffolded through the workspace layout, its
- * state files are created, the manifest records the module, and a
- * `capability.added` event is written. Every step is idempotent, and a module
- * the workspace already has returns without writing anything, so re-running
- * the command is a no-op rather than an error.
- */
-export async function addCapability(options: AddCapabilityOptions): Promise<AddCapabilityResult> {
-  const root = path.resolve(options.root);
-  const manifest = requireManifest(await loadManifest(root), root);
-  const module = requireCapabilityModule(options.module);
-  const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
-  const layout = layoutForManifest(manifest);
-  const report = createEmptyReport();
-  const now = options.now ?? new Date();
-  const pluginState = await loadPluginsState(root);
-
-  const alreadyDeclared = declaredCapabilities(manifest).includes(module);
-  const providedByPlugin = pluginCapabilities(manifest.plugins, pluginState).includes(module);
-  if (archetypeHasCapability(archetypeDefinition, module) || alreadyDeclared || providedByPlugin) {
-    return {
-      root,
-      module,
-      alreadyEnabled: true,
-      source: archetypeHasCapability(archetypeDefinition, module)
-        ? "archetype"
-        : providedByPlugin
-          ? "plugin"
-          : "added",
-      capabilities: effectiveCapabilities(
-        archetypeDefinition,
-        manifest.project.capabilities,
-        manifest.plugins,
-        pluginState,
-      ),
-      report,
-    };
-  }
-
-  // Archetype template paths are workspace-root-relative literals. An overlay
-  // workspace keeps everything under `.assay/`, so both directories and
-  // templates are translated before any write; otherwise `capability add`
-  // would scaffold into an attached product repository's root.
-  for (const directory of capabilityDirs([module])) {
-    const relativePath = workspaceTemplateRelativePath(layout, directory);
-    await ensureDir(path.join(root, relativePath), root, report);
-  }
-
-  const project = projectFromManifest(manifest, root);
-  for (const template of capabilityTemplates(
-    project,
-    manifest.project.mode,
-    archetypeDefinition,
-    [module],
-    layout,
-  )) {
-    const result = await writeTemplateFile(root, template.path, template.content, report, {
-      force: false,
-      createNew: false,
-      executable: template.executable,
-    });
-    if (result === "written") {
-      recordTemplate(manifest, template);
-    }
-  }
-  await scaffoldCapabilityState(root, module, report);
-
-  manifest.project.capabilities = [
-    ...new Set([...(manifest.project.capabilities ?? []), module]),
-  ].sort();
-  const saved = await saveManifest(root, manifest);
-  const eventFile = await appendEvent(
-    root,
-    {
-      event: "capability.added",
-      module,
-      archetype: saved.project.archetype,
-      capabilities: saved.project.capabilities ?? [],
-    },
-    now,
-  );
-
-  return {
-    root,
-    module,
-    alreadyEnabled: false,
-    source: "added",
-    capabilities: effectiveCapabilities(
-      archetypeDefinition,
-      saved.project.capabilities,
-      saved.plugins,
-      pluginState,
-    ),
-    report,
-    eventFile: relativeDisplayPath(eventFile, root),
-  };
-}
-
-/**
- * Report every capability module and how this workspace obtained it: provided
- * by the archetype, added after init, or not enabled. Manifest entries this
- * build does not implement are listed as unsupported instead of being dropped.
- */
-export async function listCapabilities(
-  options: ListCapabilitiesOptions,
-): Promise<ListCapabilitiesResult> {
-  const root = path.resolve(options.root);
-  const manifest = requireManifest(await loadManifest(root), root);
-  const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
-  const declared = new Set(manifest.project.capabilities ?? []);
-  const fromPlugins = new Set(pluginCapabilities(manifest.plugins, await loadPluginsState(root)));
-  const capabilities: CapabilityStatus[] = SUPPORTED_CAPABILITY_MODULES.map((module) => {
-    const fromArchetype = archetypeHasCapability(archetypeDefinition, module);
-    const added = declared.has(module);
-    const fromPlugin = fromPlugins.has(module);
-    return {
-      module,
-      enabled: fromArchetype || added || fromPlugin,
-      source: fromArchetype ? "archetype" : fromPlugin ? "plugin" : added ? "added" : null,
-      supported: true,
-    };
-  });
-  for (const module of declared) {
-    if (!isCapabilityModule(module)) {
-      capabilities.push({ module, enabled: false, source: "added", supported: false });
-    }
-  }
-
-  return {
-    root,
-    project: manifest.project.name,
-    archetype: manifest.project.archetype,
-    capabilities,
-  };
 }
 
 export async function checkFramework(
@@ -955,35 +672,6 @@ export async function checkFramework(
     });
   }
 
-  // Directories owned by capability modules the workspace added after init.
-  // `capability add` scaffolds them, so a missing one is real drift. Modules
-  // the archetype itself declares are left to the archetype's own directory
-  // coverage: an overlay workspace may legitimately never have scaffolded
-  // them, and reporting those as missing would be a false failure.
-  const existingTargets = new Set(checkTargets.map(([, target]) => target));
-  const explicitlyEnabledCapabilities = new Set<CapabilityModule>(
-    declaredCapabilities(manifestForLayout),
-  );
-  let pluginStateForChecks = null;
-  try {
-    pluginStateForChecks = await loadPluginsState(root);
-  } catch {
-    // collectPluginCheckRows reports malformed plugin state; grant no module here
-  }
-  for (const capability of pluginCapabilities(manifestForLayout?.plugins, pluginStateForChecks)) {
-    if (isCapabilityModule(capability)) {
-      explicitlyEnabledCapabilities.add(capability);
-    }
-  }
-  for (const capability of explicitlyEnabledCapabilities) {
-    for (const directory of capabilityDirs([capability])) {
-      const target = workspaceTemplateRelativePath(layout, directory);
-      if (!existingTargets.has(target)) {
-        existingTargets.add(target);
-        checkTargets.push([`${directory} directory`, target]);
-      }
-    }
-  }
   const rows: CheckRow[] = [...archetypeDegradations];
 
   for (const [label, target] of checkTargets) {
@@ -1269,31 +957,8 @@ export async function checkFramework(
     }
   }
 
-  // Advisory check 5: intent captured into an unversioned private overlay.
-  // A private overlay keeps `.assay/` out of the product repository and gives
-  // it no history of its own, and intent captures are the least regenerable
-  // records Assay holds: nothing else can reconstruct what was originally
-  // asked for. Recommending `private-git` is a workspace-setup suggestion,
-  // never a failure.
-  if (includeAdvisories && layout.mode === "overlay" && layout.privacy === "private") {
-    try {
-      if ((await enabledCapabilities(root, manifestForLayout)).includes("intent")) {
-        rows.push({
-          path: intentRootPath(layout),
-          status: "warning",
-          message:
-            "intent is enabled in a private overlay, so captures live in the one directory that has no version history. Re-attach with `--privacy private-git`, or initialize a Git repository inside .assay/, so captured intent can be recovered.",
-        });
-      }
-    } catch {
-      // capability state is reported elsewhere; skip the advisory
-    }
-  }
-
-  // Advisory check 6: superseded systems no chain points at. `system promote`
-  // demotes the previous primary without writing a supersedes link, so an
-  // unreferenced superseded system is unreachable from the current primary and
-  // its intent captures drop out of `intent list --include-lineage`.
+  // Advisory check 5: superseded systems no chain points at. `system promote`
+  // demotes the previous primary without writing a supersedes link.
   if (includeAdvisories) {
     try {
       const registry = await loadSystemsRegistry(root);
@@ -1316,7 +981,7 @@ export async function checkFramework(
     }
   }
 
-  // Advisory check 7: placement. `check` has always validated that declared
+  // Advisory check 6: placement. `check` has always validated that declared
   // directories exist; these three report the opposite — content sitting where
   // the archetype never said it should. They are advisories on purpose:
   // writing straight into a directory instead of going through a command is
@@ -1326,7 +991,7 @@ export async function checkFramework(
     rows.push(...(await collectPlacementAdvisories(root, layout, manifestForLayout)));
   }
 
-  // Advisory check 8: the AGENTS.md managed block no longer matches the
+  // Advisory check 7: the AGENTS.md managed block no longer matches the
   // archetype. The block is generated, so an archetype whose directories or
   // description changed leaves stale layout guidance in the one channel that
   // reaches an agent before it does anything.
@@ -1549,16 +1214,9 @@ async function collectUndeclaredDirectoryRows(
     return [];
   }
 
-  const capabilities = effectiveCapabilities(
-    archetype,
-    manifest.project.capabilities,
-    manifest.plugins,
-    await loadPluginsState(root),
-  );
   const declared = new Set<string>(NON_ZONE_WORK_ROOT_ENTRIES);
   for (const directory of [
     ...dirsForArchetype(archetype, manifest.project.mode),
-    ...capabilityDirs(capabilities),
     ...NATIVE_LAZY_DIRECTORIES.map((directory) => directory.path),
   ]) {
     const name = workRootEntryName(layout, workspaceTemplateRelativePath(layout, directory));
@@ -1951,9 +1609,8 @@ async function resolveStatusZones(
   layout: WorkspaceLayout,
   archetype: Archetype | null,
   mode: ProjectMode,
-  capabilities: readonly CapabilityModule[],
 ): Promise<FrameworkZoneCount[]> {
-  const declared = archetype ? archetypeZones(archetype, mode, capabilities) : [];
+  const declared = archetype ? archetypeZones(archetype, mode) : [];
   const resolved = new Map<string, string>();
   for (const zone of declared) {
     const zonePath = workspaceTemplateRelativePath(layout, zone.path);
@@ -2027,10 +1684,6 @@ export async function getFrameworkStatus(
     await preflightNativeProjectBoundary(root, layoutForManifest(manifest));
   }
   const layout = layoutForManifest(manifest);
-  // Zones come from the installed archetype plus the modules the workspace has
-  // actually enabled, so a solve workspace stops being told about study's
-  // directories and an intent-less workspace gains no permanently empty rows.
-  const capabilities = await enabledCapabilities(root, manifest);
   const { archetype: archetypeDefinition, degradation: archetypeNotice } =
     await readArchetypeForStatus(root, manifest);
   const zones = await resolveStatusZones(
@@ -2038,7 +1691,6 @@ export async function getFrameworkStatus(
     layout,
     archetypeDefinition,
     manifest?.project.mode ?? archetypeDefinition?.mode ?? "learning",
-    capabilities,
   );
 
   // Systems section from registry

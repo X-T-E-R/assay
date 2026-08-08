@@ -5,7 +5,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  SUPPORTED_CAPABILITY_MODULES,
   archetypeDirectories,
   archetypeZones,
   desiredTemplates,
@@ -44,7 +43,6 @@ async function writeCustomArchetype(
   file: string,
   options: {
     readonly mode?: string;
-    readonly modules?: readonly string[];
     readonly dirs: readonly string[];
   },
 ): Promise<void> {
@@ -54,11 +52,6 @@ async function writeCustomArchetype(
     [
       "extends: base",
       `mode: ${options.mode ?? "learning"}`,
-      "modules:",
-      ...((options.modules ?? []).length === 0
-        ? []
-        : (options.modules ?? []).map((module) => `  - ${module}`)),
-      "",
       "dirs:",
       ...options.dirs.map((directory) => `  - ${directory}`),
       "",
@@ -136,10 +129,6 @@ describe("archetype loader", () => {
     );
   });
 
-  it("exposes only current optional capability modules", () => {
-    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["intent"]);
-  });
-
   it("loads project-local archetypes before user-global and built-in archetypes", async () => {
     const root = path.join(await tempDir(), "workspace");
     const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
@@ -150,7 +139,6 @@ describe("archetype loader", () => {
     await writeCustomArchetype(path.join(root, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
       mode: "absorption",
-      modules: ["intent"],
     });
 
     const archetype = await loadArchetype("foo", { root, userArchetypesDir });
@@ -158,22 +146,27 @@ describe("archetype loader", () => {
 
     expect(archetype.name).toBe("foo");
     expect(archetype.mode).toBe("absorption");
-    expect(archetype.modules).toEqual(["intent"]);
     expect(dirs).toEqual(expect.arrayContaining(["systems", "knowledge", "project-zone"]));
     expect(dirs).not.toContain("user-zone");
   });
 
-  it("fails closed when a custom archetype declares the retired module", async () => {
-    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
-    await writeCustomArchetype(path.join(userArchetypesDir, "retired.yaml"), {
-      dirs: ["work"],
-      modules: [["itera", "tion"].join("")],
-    });
+  it.each(["modules", "Modules", "MODULES"])(
+    "fails closed with RETIRED_ARCHETYPE_FIELD for a custom %s key",
+    async (field) => {
+      const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+      await mkdir(userArchetypesDir, { recursive: true });
+      await writeFile(
+        path.join(userArchetypesDir, "retired.yaml"),
+        `extends: base\nmode: learning\n${field}: []\ndirs:\n  - work\ntemplates: []\n`,
+        "utf8",
+      );
 
-    await expect(loadArchetype("retired", { userArchetypesDir })).rejects.toThrow(
-      /unsupported capability module 'iteration'.*supported modules: intent/,
-    );
-  });
+      await expect(loadArchetype("retired", { userArchetypesDir })).rejects.toMatchObject({
+        code: "RETIRED_ARCHETYPE_FIELD",
+        details: expect.objectContaining({ field: "modules", declared_field: field }),
+      });
+    },
+  );
 
   it.each(["dirs", "dirs_learning", "dirs_absorption", "templates"] as const)(
     "rejects normalized retired workspace paths declared through %s",
@@ -205,7 +198,6 @@ describe("archetype loader", () => {
           [
             "extends: base",
             "mode: learning",
-            "modules: []",
             "dirs:",
             `  - ${field === "dirs" ? declaredPath : "work"}`,
             ...(field === "dirs_learning"
@@ -456,7 +448,7 @@ describe("archetype directory purposes", () => {
     for (const archetypeName of USER_FACING_BUILT_INS) {
       const archetype = await loadArchetype(archetypeName);
       expect(archetype.description).not.toBe("");
-      for (const zone of archetypeZones(archetype, archetype.mode, archetype.modules)) {
+      for (const zone of archetypeZones(archetype, archetype.mode)) {
         expect(zone.purpose, `${archetypeName}:${zone.path}`).not.toBe("");
       }
     }
@@ -464,7 +456,7 @@ describe("archetype directory purposes", () => {
 
   it("leaves runtime state and template folders out of the zone list", async () => {
     const solve = await loadArchetype("solve");
-    const zones = archetypeZones(solve, solve.mode, solve.modules).map((zone) => zone.path);
+    const zones = archetypeZones(solve, solve.mode).map((zone) => zone.path);
 
     expect(zones).toEqual([
       "problem",
@@ -486,7 +478,6 @@ describe("archetype data shapes", () => {
     const study = await loadArchetype("study");
     const dirs = dirsForArchetype(study, study.mode);
 
-    expect(study.modules).toEqual([]);
     expect(dirs).toEqual(
       expect.arrayContaining([
         "systems",
@@ -504,19 +495,18 @@ describe("archetype data shapes", () => {
     expect(hasPath(dirs, "references/intake")).toBe(false);
   });
 
-  it("solve owns bounded input and attempt directories without optional modules", async () => {
+  it("solve owns bounded input and attempt directories", async () => {
     const solve = await loadArchetype("solve");
     const dirs = dirsForArchetype(solve, solve.mode);
 
     expect(solve.mode).toBe("absorption");
-    expect(solve.modules).toEqual([]);
     expect(dirs).toEqual(
       expect.arrayContaining(["problem", "intake", "attempts", "benchmarks", "tools"]),
     );
     expect(dirs.some((dir) => dir.startsWith("systems/") && dir !== "systems")).toBe(false);
   });
 
-  it("explore owns approach trials without optional modules", async () => {
+  it("explore owns approach trials", async () => {
     const explore = await loadArchetype("explore");
     const dirs = dirsForArchetype(explore, explore.mode);
     const paths = (await desiredTemplates("Demo", explore.mode, "explore")).map(
@@ -524,7 +514,6 @@ describe("archetype data shapes", () => {
     );
 
     expect(explore.mode).toBe("absorption");
-    expect(explore.modules).toEqual([]);
     expect(dirs).toEqual(expect.arrayContaining(["systems", "knowledge", "approaches", "trials"]));
     expect(paths).toEqual(
       expect.arrayContaining(["approaches/README.md", "trials/README.md", "comparison.md"]),

@@ -24,13 +24,15 @@ afterEach(async () => {
 });
 
 async function workspace(name: string): Promise<string> {
-  return createInitializedCliWorkspace({
+  const root = await createInitializedCliWorkspace({
     tempDirs,
     runner: cliRunner,
     directoryName: name,
     bare: true,
-    extraArgs: ["--plugin", "assay.trellis"],
   });
+  const added = await cliRunner.runCli(["plugin", "add", "assay.trellis", "--root", root]);
+  if (added.exitCode !== 0) throw new Error(added.stderr);
+  return root;
 }
 
 async function runCliWithInput(
@@ -491,7 +493,7 @@ describe("assay trellis CLI", () => {
     expect((JSON.parse(completed.stdout) as { worker: { status: string } }).worker.status).toBe(
       "completed",
     );
-  });
+  }, 30_000);
 
   it("requires explicit confirmation before lifecycle purge and preserves data on disable", async () => {
     const root = await workspace("trellis-lifecycle-cli");

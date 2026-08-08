@@ -1,6 +1,6 @@
 ---
 name: assay-builder
-description: "Build, adopt, update, and analyze current Assay workspaces, including native Project, Task, Roadmap, Spec, Source, Analysis, Knowledge, Intent requirements, Plugin, and Trellis workflows."
+description: "Use when building, adopting, updating, or analyzing a current Assay workspace through native Project, Task, Roadmap, Spec, Source, Analysis, Knowledge, System, Plugin, or Trellis workflows."
 ---
 
 # Assay Builder
@@ -12,7 +12,7 @@ Build and maintain an Assay evidence workbench — a versioned project layer tha
 - Node.js >= 18, `pnpm`
 - This skill lives inside the `assay` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running the repo-root installer from the cloned repository; it builds the workspace and links this skill into the selected skills directory so it resolves back to the repo.
 - Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs the built TypeScript CLI at `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
-- When maintaining this repository itself, use the release scripts (`scripts/check.sh` on POSIX, `scripts/check.ps1` on Windows). They run the built CLI checks and the committed public-example gate.
+- When maintaining this repository itself, use the repo-root release scripts (`../../scripts/check.sh` on POSIX, `../../scripts/check.ps1` on Windows). They run the built CLI checks and the committed public-example gate.
 - Read `references/cli-setup.md` for install, build, and invocation details. Use `references/cli-setup.zh.md` when Chinese setup instructions are needed.
 
 ## Evidence loop
@@ -33,7 +33,7 @@ node <skill-root>/scripts/assay.mjs <command>
 
 ```bash
 # Workspace lifecycle
-assay init [target-dir] --name <project-name> [--archetype <name>] [--plugin assay.intent|assay.trellis]  # built-ins: study|solve|explore
+assay init [target-dir] --name <project-name> [--archetype <name>]  # built-ins: study|solve|explore
 assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # structure + persisted-record integrity
@@ -58,13 +58,8 @@ assay task validate [id] [--json]
 
 # Every Task leaf also accepts --root <dir> and --json.
 
-# Capability modules (optional features the archetype may not have enabled)
-assay capability add intent                   # idempotent, safe to re-run
-assay capability list [--json]               # which modules are enabled, and whether by archetype or added later
-
-# Workspace plugins (intent is current; Trellis is a legacy surface)
-assay plugin add assay.intent
-assay plugin add assay.trellis                       # legacy operational surface
+# Workspace plugins (installed explicitly after workspace creation)
+assay plugin add assay.trellis
 assay trellis task create --title <title> --json
 assay trellis task current --json
 assay trellis protocol --json
@@ -79,11 +74,6 @@ assay plugin uninstall assay.trellis --purge --yes # backup, then purge
 assay plugin list [--json]
 assay plugin check [--json]
 assay reconcile [--plugin <id>...] [--dry-run | --apply] [--json]  # dry-run by default
-
-# Product intent (what was asked for, kept apart from what was built)
-assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force]
-assay intent promote <capture-id> --to requirement [--title <title>]
-assay intent list [--system <name>] [--include-lineage] [--json]
 
 # Living sources / reference analysis / knowledge
 assay source add <repo-or-dir> [alias] [--branch <branch>] [--capture checkout|archive]
@@ -116,8 +106,8 @@ assay knowledge add <type> "Title" [--from-analysis <path>]
 
 
 # System registry
-assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>] [--intent-authority inline|external|none] [--intent-pointer <pointer>]
-assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>] [--intent-authority inline|external|none | --no-intent-authority] [--intent-pointer <pointer>]
+assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
+assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status primary|active|superseded|archived] [--json]
@@ -205,39 +195,15 @@ approval or Project acceptance. Keep agent DAGs, dispatch, ownership, and
 permissions in the host. Relay owns fork and promotion semantics. Keep product
 learning and durable findings in analyses and knowledge.
 
-## Capability modules
+## Workspace plugins
 
+- `assay plugin add assay.trellis` explicitly declares and installs the retained built-in workspace runtime. Fresh `init`, `attach`, `study`, `solve`, and `explore` workspaces do not install a plugin implicitly.
+- `reconcile` only operates on a workspace that already has a current `.assay/manifest.json`. It is a write-free preview unless `--apply` is present, and a converged apply does not update timestamps or append an event.
+- `plugin register` validates and locks an independently packaged external descriptor under `.assay/external-plugins.json`. It never imports, installs, activates, or executes the payload. A descriptor may list several hosts and omit unknown target versions, records SPDX/license-source metadata, and distinguishes safe Assay-relative state from opaque host locators. `plugin observe` requires a concrete host version and rejects identity, integrity, undeclared-host, declared exact-version, grant, surface, or ownership mismatches. Assay never resolves or deletes host locators. Missing evidence remains unobserved or unverifiable. Disable, enable, and remove change only Assay control-plane records and grant no native responsibility, Task, or workspace authority.
+- External descriptor `requests.capabilities` remains opaque host-request metadata. Status exposes it as `requestedCapabilities`; it does not enable a native Assay feature or grant host permission.
+- Trellis `runtimeCapabilities` describe only the retained Phase 6 workspace runtime. They are not project capability modules.
 
-- `capability add` scaffolds the module's directories, templates, and state files through the workspace layout, records it in the manifest, and writes a `capability.added` event. Existing files are never overwritten, and re-running on an enabled module is a no-op.
-- Capability-scaffolded files are managed files: `update` reconciles them and `check` treats their directories as required structure.
-- `plugin add assay.intent` declares desired plugin state, scaffolds only missing files, and records installation in `.assay/plugins.json`. `assay capability add intent` stays compatible for existing automation.
-- `reconcile` only operates on a workspace that already has `.assay/manifest.json`. It is a write-free preview unless `--apply` is present. A complete legacy intent scaffold is adopted without rewriting it; an incomplete one gets only its missing files. A converged apply does not update timestamps or append an event.
-- `plugin register` validates and locks an independently packaged external descriptor under `.assay/external-plugins.json`. It never imports, installs, activates, or executes the payload. A descriptor may list several hosts and omit unknown target versions, records SPDX/license-source metadata, and distinguishes safe Assay-relative state from opaque host locators. `plugin observe` requires a concrete host version and rejects identity, integrity, undeclared-host, declared exact-version, grant, surface, or ownership mismatches. Assay never resolves or deletes host locators. Missing evidence remains unobserved/unverifiable. Disable/enable/remove change only Assay control-plane records and grant no native capability, responsibility, Task, or workspace authority.
-
-## Product intent
-
-Intent is what was asked for, kept apart from what was built. Capture it when the wording itself is the evidence: a feature request, a scope correction, a constraint someone stated out loud. Do not paraphrase into a requirement first — that is what `promote` is for.
-
-- `intent capture` writes `intent/original/<YYYYMMDD>-<sha256:12>.md` with the text verbatim plus the resolved system, the body's SHA-256, and the capture time. `--file` is workspace-relative and refuses to leave the workspace; use `--text` for material from elsewhere.
-- Records are append-only. Re-capturing identical text is a no-op, and `--source` or `--supersedes` given to that repeat call are reported as ignored rather than applied. Re-capturing the same text against a different system, or with a different shadow marking, fails instead of resolving to the first record. `--supersedes` takes recorded capture ids and refuses anything else. Re-capturing text whose record was edited afterwards fails with both digests. Never edit a file under `intent/original/`; capture the corrected wording with `--supersedes <capture-id>`.
-- `intent list` marks a record that no longer matches what was recorded (`[modified after recording]`, or `[unreadable record]` when it no longer parses) and keeps listing the rest, so one damaged file does not blind the whole workspace. Restore it from version control; do not rewrite it to make the marker go away.
-- Every capture is scoped to one registered system, resolved at capture time. Register the system first. After `system promote` moves the primary pointer, old captures keep naming the system they were about; use `intent list --system <name> --include-lineage` to follow the registry `supersedes` chain across replacements.
-- If the system records `intent_authority: external` or `none`, capture refuses and prints the pointer. That is an authority boundary, not a policy check — Assay does not verify the pointer is reachable. `--force` records a `shadow: true` copy for local convenience; `intent list` flags it. Prefer recording in the authoritative place.
-- **Assay stores captured text as given.** It does not scan or redact. Remove credentials and personal data before capturing, and ask the user before capturing a conversation they have not reviewed. See the repo's `docs/agent-instructions.md`.
-- In a private overlay (`attach --privacy private`), `.assay/` has no version history. `check --advisories` recommends `private-git` when intent is enabled there; act on it before the workspace accumulates captures.
-
-### Recovering intent when adopting an existing project
-
-An adopted project usually has its intent scattered across issues, chat logs, and old docs rather than in the repo. Recover it in one pass instead of leaving it in `.old/`:
-
-```bash
-assay adopt --apply --name <project> --analyze   # existing content lands in .old/<timestamp>/
-assay system register systems/<primary> --primary
-assay plugin add assay.intent
-# then, for each distinct statement of intent found in the archive:
-assay intent capture --file .old/<timestamp>/docs/original-brief.md --source ".old/<timestamp>/docs/original-brief.md"
-assay intent capture --text "<quoted request from an issue or chat>" --source "issue #142"
-```
+Assay 0.9 has no native product-Intent object or capability-module commands. A manually created `intent/` or `.assay/intent/` directory is generic unowned content: Assay does not parse, promote, rewrite, migrate, or delete it. Keep product requirements in native Specifications or reader-owned Project prose, and preserve verbatim external evidence in its authoritative source or an Analysis when appropriate.
 
 
 ## Systems and version control
@@ -248,7 +214,6 @@ Each system under `systems/` may be an independently version-controlled reposito
 - `vcs: embedded` — system files live in the root repo directly.
 - Exactly one system has `status: primary` at any time. Use `system promote` to switch; the previous primary becomes `superseded` automatically.
 - Use `system update <selector>` to correct metadata for an existing record, for example `assay system update skill-creator --vcs independent-git --vcs-ref main` after a system was registered as `embedded` by mistake. Do not re-run `system register`; duplicate registration is intentionally rejected.
-- `--intent-authority inline|external|none` (with `--intent-pointer` for `external`) declares where a system's product intent is authoritative. Absent means `inline`. Set `external` when another tool owns the intent record, so `intent capture` fail-closes here instead of creating a second source of truth. The registry is the authority every command reads; a `system.yaml` contract carries the field only when `register` generated it, so read `system show <name>` rather than the contract file.
 - Archive non-primary systems with `system archive --apply` (copy-first move into `systems/archive/`).
 
 Never hand-edit `.assay/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration notes for legacy layouts, read `references/systems-registry.md`.
@@ -298,9 +263,6 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 - Do not create a new Task for another attempt at the same bounded outcome, and do not write `handoff.md` after every update. Checkpoint only at a real continuation boundary.
 - Do not treat Task creation, binding, relationships, or `finish` as permission, assignment, project acceptance, Git closeout, roadmap state, or Relay promotion.
 - Do not put external project source under `systems/`; in learning mode add it as a living source under `references/<alias>/` with `source add`, or use frozen references only for explicit full-capture/legacy evidence. In absorption mode land project-owned material under `problem/` via `absorb`.
-- Do not edit, rename, or delete files under `intent/original/`. Record a corrected capture with `--supersedes` instead.
-- Do not paraphrase intent while capturing it, and do not capture a whole transcript when one paragraph carries the request. Paraphrase in `promote`, not in `capture`.
-- Do not use `intent capture --force` to work around a system whose intent authority is external; record it where the authority says, unless the user explicitly wants a local shadow copy.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
 - Do not silently rename or delete legacy folders.

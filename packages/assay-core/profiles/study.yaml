@@ -5,7 +5,6 @@
 
 extends: base
 mode: learning
-modules: []
 
 description: Absorb external systems as the main product, converting what survives analysis into reusable knowledge.
 

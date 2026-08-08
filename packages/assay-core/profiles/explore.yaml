@@ -4,7 +4,6 @@
 
 extends: base
 mode: absorption
-modules: []
 
 description: Incubate several local approaches in parallel and converge on one using trial evidence.
 

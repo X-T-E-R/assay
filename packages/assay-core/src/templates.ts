@@ -5,8 +5,6 @@ import {
   type Archetype,
   type ArchetypeLookupOptions,
   type ArchetypeTemplateEntry,
-  type CapabilityModule,
-  MODULE_SCAFFOLDS,
   loadArchetype,
 } from "./profile.js";
 import type { WorkspaceLayout } from "./schemas/index.js";
@@ -72,43 +70,6 @@ export function archetypeTemplates(
   layout?: WorkspaceLayout,
 ): TemplateFile[] {
   return renderTemplateEntries(archetype.templates, project, mode, archetype, layout);
-}
-
-/**
- * Template files the given capability modules contribute. `init` and
- * `assay capability add` both render through here, so a module scaffolds the
- * same files whenever it is enabled.
- */
-export function capabilityTemplates(
-  project: string,
-  mode: "learning" | "absorption",
-  archetype: Archetype,
-  capabilities: readonly CapabilityModule[],
-  layout?: WorkspaceLayout,
-): TemplateFile[] {
-  return renderTemplateEntries(
-    capabilities.flatMap((capability) => MODULE_SCAFFOLDS[capability].templates),
-    project,
-    mode,
-    archetype,
-    layout,
-  );
-}
-
-/**
- * Merge template lists by resolved path. Earlier lists win, so an archetype
- * that declares a capability module's file keeps ownership of its content.
- */
-export function mergeTemplateFiles(...lists: readonly (readonly TemplateFile[])[]): TemplateFile[] {
-  const merged = new Map<string, TemplateFile>();
-  for (const list of lists) {
-    for (const template of list) {
-      if (!merged.has(template.path)) {
-        merged.set(template.path, template);
-      }
-    }
-  }
-  return [...merged.values()];
 }
 
 function renderTemplateEntries(
@@ -195,12 +156,6 @@ function templateContentById(
       return systemsReadme();
     case "knowledge.readme":
       return knowledgeReadme();
-    case "intent.readme":
-      return intentReadme();
-    case "intent.original.readme":
-      return intentOriginalReadme();
-    case "intent.requirements.readme":
-      return intentRequirementsReadme();
     case "knowledge.guides.readme":
       return "# guides/\n\nReusable operational guides.\n";
     case "knowledge.patterns.readme":
@@ -408,52 +363,6 @@ export function systemsReadme(): string {
 
 export function knowledgeReadme(): string {
   return "# knowledge/\n\nStore accepted reusable knowledge only. Work-in-progress analysis belongs in the archetype-specific working directories.\n";
-}
-
-export function intentReadme(): string {
-  return dedent(`
-    # intent/
-
-    Product intent as it was actually stated, kept separate from what was later
-    built. Every record is scoped to one registered system.
-
-    | Subdir | Purpose |
-    | --- | --- |
-    | \`original/\` | Verbatim captures, append-only and content-addressed |
-    | \`requirements/\` | Requirements derived from a capture |
-
-    Use \`assay intent capture\`, \`assay intent promote\`, and
-    \`assay intent list\`. Do not rename or edit files under \`original/\`: each
-    one carries the SHA-256 of its own body, and a later capture of the same
-    text is refused when the recorded body no longer matches.
-
-    Captured text is stored as given. Redact credentials and personal data
-    before capturing; Assay does not scan or filter what it is handed.
-    `);
-}
-
-export function intentOriginalReadme(): string {
-  return dedent(`
-    # intent/original/
-
-    Verbatim intent captures, one file per record, named
-    \`<YYYYMMDD>-<sha256:12>.md\`.
-
-    Records are append-only. To correct a capture, capture the new text with
-    \`--supersedes <capture-id>\` instead of editing the existing file.
-    `);
-}
-
-export function intentRequirementsReadme(): string {
-  return dedent(`
-    # intent/requirements/
-
-    Requirements derived from an intent capture. Each file records
-    \`derives_from\` so the requirement stays traceable to the words it came
-    from.
-
-    Write these with \`assay intent promote <capture-id> --to requirement\`.
-    `);
 }
 
 export function changelog(today: string): string {

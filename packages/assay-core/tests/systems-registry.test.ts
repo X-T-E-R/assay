@@ -1,4 +1,15 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +20,7 @@ import {
   FrameworkNotFoundError,
   archiveSystem,
   checkFramework,
+  defaultManifest,
   defaultSystemsRegistry,
   findSystem,
   initFramework,
@@ -17,6 +29,7 @@ import {
   promoteSystem,
   registerSystem,
   saveSystemsRegistry,
+  setSystemsRegistrySaveProbeForTests,
   systemsRegistryPath,
   updateSystem,
 } from "../src/index.js";
@@ -42,13 +55,14 @@ async function exists(target: string): Promise<boolean> {
 }
 
 afterEach(async () => {
+  setSystemsRegistrySaveProbeForTests(undefined);
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("defaultSystemsRegistry", () => {
-  it("starts empty with schema 1 and null primary", () => {
+  it("starts empty with schema 2 and null primary", () => {
     const registry = defaultSystemsRegistry();
-    expect(registry.__schema).toBe(1);
+    expect(registry.__schema).toBe(2);
     expect(registry.primary).toBeNull();
     expect(registry.systems).toEqual({});
   });
@@ -80,6 +94,201 @@ describe("saveSystemsRegistry / loadSystemsRegistry", () => {
     expect(loaded).not.toBeNull();
     expect(loaded?.primary).toBe("alpha");
     expect(loaded?.systems.alpha?.vcs).toBe("independent-git");
+
+    const updated = await saveSystemsRegistry(root, { ...registry, primary: null });
+    expect(updated.primary).toBeNull();
+    expect((await loadSystemsRegistry(root))?.primary).toBeNull();
+  });
+
+  it("validates existing registry bytes and preserves old, malformed, or retired state", async () => {
+    const root = path.join(await tempDir(), "workspace");
+    await initFramework({ target: root, name: "Registry writer" });
+    const file = systemsRegistryPath(root);
+    const currentWithRetiredField = {
+      __schema: 2,
+      primary: "app",
+      systems: {
+        app: {
+          name: "app",
+          path: "systems/app",
+          status: "primary",
+          vcs: "embedded",
+          vcs_ref: "",
+          version: "0.1.0",
+          contract_file: null,
+          supersedes: [],
+          absorbed_on: null,
+          archived_on: null,
+          archive_path: null,
+          intent_authority: { mode: "inline" },
+        },
+      },
+      updated_at: "2026-08-08T00:00:00.000Z",
+    };
+    const old = { ...currentWithRetiredField, __schema: 1 };
+
+    for (const raw of [
+      `${JSON.stringify(old)}\n`,
+      "{malformed\n",
+      `${JSON.stringify(currentWithRetiredField)}\n`,
+    ]) {
+      await writeFile(file, raw, "utf8");
+      await expect(saveSystemsRegistry(root, defaultSystemsRegistry())).rejects.toThrow(
+        /registry.*(?:valid|validation)/,
+      );
+      expect(await readFile(file, "utf8")).toBe(raw);
+    }
+  });
+
+  it("rejects a redirected existing registry without changing target bytes", async () => {
+    const root = await tempDir();
+    const authority = path.join(root, "redirected-authority");
+    await mkdir(authority, { recursive: true });
+    await writeFile(
+      path.join(authority, "manifest.json"),
+      `${JSON.stringify(defaultManifest("Redirected registry"))}\n`,
+      "utf8",
+    );
+    const file = path.join(authority, "systems-registry.json");
+    const raw = `${JSON.stringify(defaultSystemsRegistry())}\n`;
+    await writeFile(file, raw, "utf8");
+    await symlink(authority, path.join(root, ".assay"), "junction");
+
+    await expect(saveSystemsRegistry(root, defaultSystemsRegistry())).rejects.toThrow(/redirect/);
+    expect(await readFile(file, "utf8")).toBe(raw);
+  });
+
+  it("rejects an empty redirected .assay parent on first registry create", async () => {
+    const root = await tempDir();
+    const authority = path.join(root, "empty-registry-authority");
+    await mkdir(authority, { recursive: true });
+    const sentinel = path.join(authority, "sentinel.txt");
+    await writeFile(sentinel, "outside\n", "utf8");
+    await symlink(authority, path.join(root, ".assay"), "junction");
+
+    await expect(saveSystemsRegistry(root, defaultSystemsRegistry())).rejects.toThrow(/redirect/);
+    expect(await readFile(sentinel, "utf8")).toBe("outside\n");
+    expect((await readdir(authority)).sort()).toEqual(["sentinel.txt"]);
+  });
+
+  it("detects a validated registry identity swap and preserves both versions", async () => {
+    const root = await tempDir();
+    const current = await saveSystemsRegistry(root, defaultSystemsRegistry());
+    const file = systemsRegistryPath(root);
+    const originalRaw = await readFile(file, "utf8");
+    const displaced = path.join(root, ".assay", "systems-registry.displaced.json");
+    const competitor = { ...defaultSystemsRegistry(), updated_at: "2026-08-08T00:00:00.000Z" };
+    const competitorRaw = `${JSON.stringify(competitor)}\n`;
+    let swapped = false;
+    setSystemsRegistrySaveProbeForTests(async (phase) => {
+      if (phase !== "after-validation" || swapped) return;
+      swapped = true;
+      await rename(file, displaced);
+      await writeFile(file, competitorRaw, "utf8");
+    });
+
+    await expect(saveSystemsRegistry(root, current)).rejects.toThrow(/changed after validation/);
+    expect(await readFile(displaced, "utf8")).toBe(originalRaw);
+    expect(await readFile(file, "utf8")).toBe(competitorRaw);
+    expect((await readdir(path.dirname(file))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("preserves an absent-target winner and cleans the registry stage", async () => {
+    const root = await tempDir();
+    const file = systemsRegistryPath(root);
+    const competitorRaw = `${JSON.stringify(defaultSystemsRegistry())}\n`;
+    let raced = false;
+    setSystemsRegistrySaveProbeForTests(async (phase) => {
+      if (phase !== "after-stage" || raced) return;
+      raced = true;
+      await writeFile(file, competitorRaw, "utf8");
+    });
+
+    await expect(saveSystemsRegistry(root, defaultSystemsRegistry())).rejects.toThrow(
+      /concurrently created/,
+    );
+    expect(await readFile(file, "utf8")).toBe(competitorRaw);
+    await expect(loadSystemsRegistry(root)).resolves.toMatchObject({ __schema: 2 });
+    expect((await readdir(path.dirname(file))).sort()).toEqual(["systems-registry.json"]);
+  });
+
+  it.each(["after-txn-durable", "after-stage"] as const)(
+    "rejects a registry transaction-directory junction swap at %s",
+    async (faultPhase) => {
+      const root = await tempDir();
+      const current = await saveSystemsRegistry(root, defaultSystemsRegistry());
+      const file = systemsRegistryPath(root);
+      const canonicalRaw = await readFile(file, "utf8");
+      const preserved = path.join(root, `.registry-txn-preserved-${faultPhase}`);
+      const outside = path.join(root, `.registry-txn-outside-${faultPhase}`);
+      let transaction = "";
+      let outsideStage = "";
+      setSystemsRegistrySaveProbeForTests(async (phase, context) => {
+        if (phase !== faultPhase) return;
+        transaction = context.transaction ?? "missing-transaction";
+        await rename(transaction, preserved);
+        await mkdir(outside, { recursive: true });
+        outsideStage = path.join(outside, path.basename(context.stage ?? "missing-stage"));
+        await writeFile(path.join(outside, "owner.json"), "outside registry owner\n", "utf8");
+        await writeFile(outsideStage, "outside registry stage\n", "utf8");
+        await symlink(outside, transaction, "junction");
+      });
+
+      await expect(saveSystemsRegistry(root, current)).rejects.toMatchObject({
+        code: "AUTHORITY_REPAIR_REQUIRED",
+      });
+      expect(await readFile(file, "utf8")).toBe(canonicalRaw);
+      expect(await readFile(path.join(outside, "owner.json"), "utf8")).toBe(
+        "outside registry owner\n",
+      );
+      expect(await readFile(outsideStage, "utf8")).toBe("outside registry stage\n");
+
+      setSystemsRegistrySaveProbeForTests(undefined);
+      await unlink(transaction);
+      await rename(preserved, transaction);
+      await expect(loadSystemsRegistry(root)).resolves.toMatchObject({ __schema: 2 });
+      expect((await readdir(path.dirname(file))).sort()).toEqual(["systems-registry.json"]);
+    },
+  );
+
+  it("rejects a recovery-time registry transaction swap without outside writes", async () => {
+    const root = await tempDir();
+    const current = await saveSystemsRegistry(root, defaultSystemsRegistry());
+    setSystemsRegistrySaveProbeForTests((phase) => {
+      if (phase === "after-stage") throw new Error("leave registry txn for recovery");
+    });
+    await expect(saveSystemsRegistry(root, current)).rejects.toThrow(/leave registry txn/);
+
+    const file = systemsRegistryPath(root);
+    const canonicalRaw = await readFile(file, "utf8");
+    const transaction = path.join(root, ".assay", ".authority-systems-registry.json.txn");
+    const preserved = path.join(root, ".registry-recovery-preserved");
+    const outside = path.join(root, ".registry-recovery-outside");
+    let outsideStage = "";
+    setSystemsRegistrySaveProbeForTests(async (phase, context) => {
+      if (phase !== "recovery-after-owner") return;
+      await rename(transaction, preserved);
+      await mkdir(outside, { recursive: true });
+      outsideStage = path.join(outside, path.basename(context.stage ?? "missing-stage"));
+      await writeFile(path.join(outside, "owner.json"), "outside registry recovery owner\n");
+      await writeFile(outsideStage, "outside registry recovery stage\n");
+      await symlink(outside, transaction, "junction");
+    });
+
+    await expect(loadSystemsRegistry(root)).rejects.toMatchObject({
+      code: "AUTHORITY_REPAIR_REQUIRED",
+    });
+    expect(await readFile(file, "utf8")).toBe(canonicalRaw);
+    expect(await readFile(path.join(outside, "owner.json"), "utf8")).toBe(
+      "outside registry recovery owner\n",
+    );
+    expect(await readFile(outsideStage, "utf8")).toBe("outside registry recovery stage\n");
+
+    setSystemsRegistrySaveProbeForTests(undefined);
+    await unlink(transaction);
+    await rename(preserved, transaction);
+    await expect(loadSystemsRegistry(root)).resolves.toMatchObject({ __schema: 2 });
+    expect((await readdir(path.dirname(file))).sort()).toEqual(["systems-registry.json"]);
   });
 
   it("returns null when no registry file exists", async () => {

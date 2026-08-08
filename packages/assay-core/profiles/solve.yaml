@@ -4,7 +4,6 @@
 
 extends: base
 mode: absorption
-modules: []
 
 description: Attack one goal that has a measurable success criterion, using bounded attempts until the score moves.
 

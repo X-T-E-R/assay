@@ -92,7 +92,6 @@ async function writeLocalArchetype(
     [
       "extends: base",
       "mode: learning",
-      "modules: []",
       "dirs:",
       `  - ${options.dirPath ?? "work"}`,
       "dirs_learning: []",
@@ -307,7 +306,7 @@ describe("checkFramework and getFrameworkStatus", () => {
       project: "Demo",
       archetype: "study",
       mode: "learning",
-      manifestFormat: "schema 2; archetype study; mode learning",
+      manifestFormat: "schema 3; archetype study; mode learning",
       managedFiles: (await desiredRuntimeTemplates("Demo", "study", "learning")).length,
     });
     expect(status.zones.find((zone) => zone.path === "knowledge")?.files).toBeGreaterThan(0);

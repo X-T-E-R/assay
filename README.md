@@ -63,15 +63,7 @@ Task. Assay never chooses by active count, creation time, or title. See [Task
 records](docs/task.md) for the file contract, lifecycle, relationships, and
 authority boundaries.
 
-## Turn capabilities on when you need them
-
-Capability modules are optional features. An archetype enables some at init; the rest can be added to a live workspace at any time, so the choice you made on day one never locks you out.
-
-| Module | Turns on | Enable it with |
-| --- | --- | --- |
-| `intent` | Verbatim product intent and promoted requirements | `assay capability add intent` |
-
-`assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run. `assay capability add intent` remains a compatible legacy entrance; `assay reconcile --apply` adopts its existing files into the plugin receipt without moving or rewriting intent records.
+## Keep Project, Roadmap, and Spec authority explicit
 
 Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Project ids use `project-<slug>`. `README.md` explains authority boundaries. Roadmap items live under `roadmap/<roadmap-id>/`, with closed machine state in `item.yaml` and reader-owned outcome prose in `outcome.md`; the root `roadmap/README.md` is explanatory, not a dynamic index. Native Specs are lazy under `specs/<spec-id>/{spec.yaml,specification.md}` and explicitly promote current constraints from Analysis or Task without changing their source. Project-selected `relay/` and `extensions/` remain lazy. References, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority. See [Roadmap items](docs/roadmap.md) and [Native specifications](docs/spec.md).
 
@@ -79,20 +71,15 @@ Every workspace has exactly one native Project: `project/` in standalone workspa
 ## Add workspace plugins without another setup lifecycle
 
 Plugins extend an existing Assay workspace; they do not replace `init`,
-`attach`, or the evidence workbench itself. `assay.intent` contributes the
-additive `intent` capability. `assay.trellis` is the legacy in-package
+`attach`, or the evidence workbench itself. `assay.trellis` is the legacy in-package
 operational surface. Its dynamic state lives under `.assay/trellis/`; native
-Project, Task, Roadmap, Spec, intent, and knowledge authorities remain
+Project, Task, Roadmap, Spec, and knowledge authorities remain
 separate. Installing the runtime does not rewrite or automatically migrate
 legacy Trellis state.
 
 ```bash
-# Create or attach, then install intent in the same command.
-assay init ../product-assay --name Product --plugin assay.intent
-assay attach --name Product --plugin assay.intent
-
-# Or add it later.
-assay plugin add assay.intent
+# Create or attach first. Plugin state is added only by a later explicit operation.
+assay init ../product-assay --name Product
 assay plugin add assay.trellis
 # Register metadata from an independently packaged descriptor; Assay executes nothing.
 assay plugin register ./assay-plugin.json
@@ -105,8 +92,8 @@ The manifest records desired plugins. `.assay/plugins.json` records what this
 workspace has actually installed. `assay reconcile` compares those two layers
 with the existing files and prints a plan; it is a dry-run unless `--apply` is
 given. Reconcile only converges plugins in a workspace that already has an
-Assay manifest. It never creates or attaches a workspace, overwrites existing
-intent files, or removes an orphaned plugin receipt.
+Assay manifest. It never creates or attaches a workspace or removes an
+orphaned plugin receipt.
 
 External descriptors take a separate generic control-plane path. Assay locks
 their exact artifact metadata in `.assay/external-plugins.json`, accepts only a

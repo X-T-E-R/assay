@@ -1,40 +1,44 @@
-# Assay 0.8.0
+# Assay 0.9.0
 
-Assay 0.8.0 is a breaking workspace cutover release. It writes manifest schema
-2 and layout 6 only.
+Assay 0.9.0 is a breaking workspace cutover release. It accepts and writes
+only manifest schema 3 with layout 6. The systems registry is schema 2.
 
 ## Workspace cutover
 
-- Core accepts only the exact `0.8.0+s2+l6` workspace envelope.
-- `0.7.0+s2+l5`, every other `.assay` tuple, and `.framework` workspaces fail
-  closed with `WORKSPACE_CUTOVER_REQUIRED` before semantic records are read or
-  changed.
-- The error includes an observed tuple, the required tuple, and a
-  non-executable `assay-cutover:<observed>->0.8.0+s2+l6` locator. Assay does not
-  bundle or invoke a cutover implementation.
+- Core accepts only the exact `0.9.0+s3+l6` workspace envelope.
+- `0.8.0+s2+l6`, every other `.assay` tuple, and `.framework` workspaces fail
+  closed with `WORKSPACE_CUTOVER_REQUIRED` before archetype, plugin, System, or
+  other workspace semantics are read or changed.
+- The error includes the observed tuple, required tuple, and non-executable
+  `assay-cutover:<observed>->0.9.0+s3+l6` locator. Assay does not bundle or
+  invoke a cutover implementation.
+- A schema 1 systems registry, or a current registry carrying the removed
+  `intent_authority` field, fails validation instead of being ignored.
 
-## Retired Iteration authority
+## Removed core surfaces
 
-- Layout 6 removes `paths.iterations`; fresh standalone and overlay workspaces
-  do not scaffold an `iterations/` directory.
-- Iteration commands, core APIs and types, templates, profile modules, status
-  counts, check advisories, Knowledge back-references, convert ownership, and
-  root-discovery markers are removed.
-- A manually present `iterations/` directory in a current workspace is generic
-  undeclared content. Assay does not parse or relocate it.
-- Built-in `solve` and `explore` profiles keep their domain-specific attempts,
-  trials, comparisons, and tools without an Iteration module.
+- The core capability abstraction is removed: no capability commands, manifest
+  field, archetype modules, scaffolds, gates, projections, events, or plugin
+  contribution bridge remain.
+- Native Intent capture, listing, promotion, integrity, System authority,
+  templates, zones, and conversion behavior are removed.
+- The built-in `assay.intent` plugin and its alias are removed.
+- Fresh `init`, `attach`, and `update` do not create plugin declarations or
+  receipts. Add a retained plugin later through an explicit plugin command.
+- Custom archetypes carrying any `modules` key fail before the first workspace
+  write. Other custom directories and templates continue to work.
 
-Native Task owns future bounded work. This release does not generate Tasks from
-retired records, infer Task or Roadmap fields, map statuses, promote old plans,
-or apply any real workspace cutover. Task and Roadmap authority remain
-independent.
+Manually present `intent/` or `.assay/intent/` directories are generic,
+undeclared content. Assay does not parse, copy, move, rewrite, or delete them.
 
 ## Preserved surface
 
-Capability commands, fields, and scaffolding remain supported with the
-`intent` module. Native Project, Task, Roadmap, Spec, System, Source, Analysis,
-Knowledge, Intent requirements, generic plugin descriptors and bindings,
-Ponytail metadata, donor decisions, and the Trellis runtime remain supported.
+External descriptor `requests.capabilities` and status
+`requestedCapabilities` remain opaque host requests. They grant no native
+Assay authority. Trellis `runtimeCapabilities` also remains unchanged.
+
+Native Project, Roadmap, Spec, Task, System, Source, Analysis, Knowledge, Donor,
+generic plugin state and reconcile, external Plugin/Ponytail metadata, and the
+built-in Trellis runtime remain supported.
 
 No package has been published or tagged from this draft.

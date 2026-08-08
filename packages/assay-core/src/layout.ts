@@ -118,26 +118,6 @@ export function workspaceWorkRelativePath(layout: WorkspaceLayout, relativePath:
   return [layout.work_root, normalized].filter((segment) => segment.length > 0).join("/");
 }
 
-/**
- * Root of the intent module's work folder: `intent/` in standalone,
- * `.assay/intent/` in overlay.
- *
- * Intent is resolved through the work root instead of `layout.paths` because
- * that map is strict and all-required: adding a key would invalidate every
- * manifest written by an earlier build, and omitting it would invalidate
- * manifests written by this one. `.assay/donors/` stays out of the map for the
- * same reason, on the state side.
- */
-export function intentRootPath(layout: WorkspaceLayout): string {
-  return workspaceWorkRelativePath(layout, "intent");
-}
-
-export function intentSubpath(layout: WorkspaceLayout, ...segments: readonly string[]): string {
-  return [intentRootPath(layout), ...segments.map((segment) => toRelativePosix(segment))]
-    .filter((segment) => segment.length > 0)
-    .join("/");
-}
-
 /** Work-folder areas addressable by their first path segment. */
 const WORK_AREA_BY_SEGMENT: Readonly<Record<string, WorkspaceArea>> = {
   references: "references",

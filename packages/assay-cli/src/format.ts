@@ -1,11 +1,9 @@
 import type {
-  AddCapabilityResult,
   AddPluginResult,
   AdoptExistingProjectResult,
   ApplyUpdateResult,
   AssayProjectRecord,
   AttachResult,
-  CaptureIntentResult,
   CheckFrameworkResult,
   CheckPluginsResult,
   ConvertOverlayResult,
@@ -17,11 +15,8 @@ import type {
   DonorStatusResult,
   FrameworkStatusResult,
   InitFrameworkResult,
-  ListCapabilitiesResult,
-  ListIntentResult,
   ListPluginsResult,
   OperationReport,
-  PromoteIntentResult,
   ReconcilePluginsResult,
   SourceDiffResult,
   SourceLogResult,
@@ -35,7 +30,6 @@ import type {
   UpdatePlan,
   VerifyDonorInspectionResult,
 } from "assay-core";
-import { describeIntentAuthority } from "assay-core";
 
 function section(title: string, lines: readonly string[]): string[] {
   if (lines.length === 0) {
@@ -129,38 +123,6 @@ export function formatConvertResult(result: ConvertOverlayResult): string {
   ].join("\n");
 }
 
-export function formatCapabilityAdd(result: AddCapabilityResult): string {
-  const enabled = `Enabled capabilities: ${result.capabilities.join(", ") || "(none)"}`;
-  if (result.alreadyEnabled) {
-    const origin =
-      result.source === "archetype"
-        ? "provided by archetype"
-        : result.source === "plugin"
-          ? "provided by plugin"
-          : "already added to this workspace";
-    return [`Capability already enabled: ${result.module} (${origin})`, enabled].join("\n");
-  }
-  return [
-    `Added capability: ${result.module}`,
-    enabled,
-    formatReport(result.report),
-    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
-  ].join("\n");
-}
-
-export function formatCapabilityList(result: ListCapabilitiesResult): string {
-  const lines = result.capabilities.map((entry) => {
-    if (!entry.supported) {
-      return `${entry.module}: recorded in the manifest, not supported by this build`;
-    }
-    return `${entry.module}: ${entry.enabled ? `enabled (${entry.source})` : "not enabled"}`;
-  });
-  return [
-    `Capability modules for ${result.project} (archetype ${result.archetype}):`,
-    ...lines.map((line) => `  - ${line}`),
-  ].join("\n");
-}
-
 function formatPluginActions(result: ReconcilePluginsResult): string[] {
   if (result.plugins.length === 0) {
     return ["  - (no desired plugins)"];
@@ -209,10 +171,6 @@ export function formatPluginList(result: ListPluginsResult): string {
       const installed = plugin.installed ? "installed" : "not installed";
       const versions = `${plugin.protocolVersion === null ? "" : `; protocol v${plugin.protocolVersion}`}; state v${plugin.stateVersion ?? "unknown"}`;
       const support = plugin.supported ? "" : "; unsupported";
-      const contributions =
-        plugin.contributedCapabilities.length > 0
-          ? `; contributes ${plugin.contributedCapabilities.join(", ")}`
-          : "";
       const runtime =
         plugin.runtimeCapabilities.length > 0
           ? `; runtime ${plugin.runtimeCapabilities.join(", ")}`
@@ -229,7 +187,7 @@ export function formatPluginList(result: ListPluginsResult): string {
         plugin.activeResponsibilities.length > 0
           ? `; active for ${plugin.activeResponsibilities.join(", ")}`
           : "";
-      return `  - ${plugin.id} (${plugin.kind}): ${desired}; ${installed}${versions}; ${plugin.action}; health ${plugin.health}${contributions}${runtime}${operations}${responsibilities}${active}${support}`;
+      return `  - ${plugin.id} (${plugin.kind}): ${desired}; ${installed}${versions}; ${plugin.action}; health ${plugin.health}${runtime}${operations}${responsibilities}${active}${support}`;
     }),
     "Responsibilities:",
     ...result.responsibilities.map(
@@ -286,71 +244,6 @@ export function formatPluginReconcile(result: ReconcilePluginsResult): string {
     ...formatPluginActions(result),
     formatReport(result.report),
     ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
-  ].join("\n");
-}
-
-export function formatIntentCapture(result: CaptureIntentResult): string {
-  const { capture } = result;
-  return [
-    result.created
-      ? `Captured intent: ${capture.id}`
-      : `Intent already captured: ${capture.id} (identical text; nothing written)`,
-    `Path: ${capture.path}`,
-    `System: ${capture.system}`,
-    `SHA-256: ${capture.sha256}`,
-    ...(capture.supersedes.length > 0 ? [`Supersedes: ${capture.supersedes.join(", ")}`] : []),
-    ...(capture.shadow
-      ? ["Shadow: yes (the authoritative record for this system lives elsewhere)"]
-      : []),
-    // Captures are append-only, so metadata passed to a repeat capture cannot
-    // be applied. Say so instead of exiting 0 as if it had been.
-    ...(result.ignoredOptions.length > 0
-      ? [
-          `Ignored: ${result.ignoredOptions.join(", ")} (the recorded capture keeps the metadata it was written with; record a correction with --supersedes ${capture.id})`,
-        ]
-      : []),
-    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
-  ].join("\n");
-}
-
-export function formatIntentPromotion(result: PromoteIntentResult): string {
-  return [
-    `Promoted intent ${result.capture.id} to ${result.to}`,
-    `Title: ${result.title}`,
-    `Path: ${result.path}`,
-    `System: ${result.capture.system}`,
-    `Event: ${result.eventFile}`,
-  ].join("\n");
-}
-
-export function formatIntentList(result: ListIntentResult): string {
-  const scope =
-    result.system === null
-      ? "all systems"
-      : result.systems.length > 1
-        ? `system ${result.system} (lineage: ${result.systems.join(", ")})`
-        : `system ${result.system}`;
-  if (result.captures.length === 0) {
-    return [`Intent captures for ${scope}`, "(none)"].join("\n");
-  }
-  return [
-    `Intent captures for ${scope}`,
-    ...result.captures.map((capture) => {
-      const markers = [
-        ...(capture.integrity === "modified" ? ["modified after recording"] : []),
-        ...(capture.integrity === "unreadable" ? ["unreadable record"] : []),
-        ...(capture.shadow ? ["shadow"] : []),
-        ...(capture.supersedes.length > 0 ? [`supersedes ${capture.supersedes.join(",")}`] : []),
-        ...(capture.requirements.length > 0
-          ? [`${capture.requirements.length} requirement(s)`]
-          : []),
-      ];
-      const suffix = markers.length > 0 ? ` [${markers.join("; ")}]` : "";
-      // A record damaged past parsing has no frontmatter left to report.
-      const system = capture.system || "(unknown)";
-      const capturedAt = capture.capturedAt || "(unknown)";
-      return `  - ${capture.id}  ${system.padEnd(20)} ${capturedAt}${suffix}`;
-    }),
   ].join("\n");
 }
 
@@ -843,7 +736,6 @@ export function formatSystemRecord(system: SystemRecord): string {
     `  version:        ${system.version}`,
     `  contract:       ${system.contract_file ?? "-"}`,
     `  supersedes:     ${supersedesLine(system)}`,
-    `  intent:         ${describeIntentAuthority(system.intent_authority) ?? "inline (default)"}`,
     `  absorbed on:    ${system.absorbed_on ?? "-"}`,
     `  archived on:    ${system.archived_on ?? "-"}`,
     `  archive path:   ${system.archive_path ?? "-"}`,

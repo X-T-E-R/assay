@@ -63,6 +63,8 @@ describe("assay system CLI", () => {
     ]) {
       expect(result.stdout).toContain(flag);
     }
+    expect(result.stdout).not.toContain("intent-authority");
+    expect(result.stdout).not.toContain("intent-pointer");
     expect(result.stderr).toBe("");
   });
 

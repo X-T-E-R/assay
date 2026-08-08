@@ -1,12 +1,12 @@
 # Commands
 
-Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`. Pass `--root <dir>` to operate on another workspace. Pre-0.7 workspaces fail closed with a cutover locator and require a separate external tool.
+Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`. Pass `--root <dir>` to operate on another workspace. Any workspace outside the exact `0.9.0+s3+l6` envelope fails closed with a cutover locator and requires a separate external tool.
 
 ## Workspace lifecycle
 
 ```bash
-assay init [target-dir] --name <project> --archetype <name> [--plugin <id...>] [--git] [--force] [--create-new] [--no-track] [--no-agents]
-assay attach [--root <dir>] --name <project> --archetype <name> [--plugin <id...>] [--privacy private|private-git|tracked] [--no-track] [--no-agents]
+assay init [target-dir] --name <project> --archetype <name> [--git] [--force] [--create-new] [--no-track] [--no-agents]
+assay attach [--root <dir>] --name <project> --archetype <name> [--privacy private|private-git|tracked] [--no-track] [--no-agents]
 assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overlay]
 assay check [--advisories] [--root <dir>]
 assay status [--root <dir>] [--json] [--fetch]
@@ -17,10 +17,8 @@ assay archetype list [--root <dir>] [--json]
 
 `init` creates a standalone workspace: Assay state in `.assay/`, work folders at the root. `attach` creates an overlay inside an existing product repository: everything Assay-owned lives under `.assay/`, product files stay where they are, and product Git ignores `.assay/` by default. `convert --to standalone` detaches an overlay into a sibling standalone workbench without moving the product repo.
 
-`--plugin assay.intent` installs the intent module after a successful `init` or
-`attach`. The legacy `--plugin assay.trellis` option installs its workspace
-runtime under `.assay/trellis/`; it has no external sidecar preflight. Both
-remain options on the existing lifecycle verbs, not a third setup operation.
+Fresh `init` and `attach` never create plugin declarations or receipts. Add a
+plugin later with an explicit `assay plugin ...` command.
 
 `init`, successful `update`, and successful `adopt --apply` write a user-local project registry under `~/.assay/projects` by default. Use `--no-track` on those commands, or set `ASSAY_NO_TRACK=1`, to skip registry writes. The `assay projects` commands manage registry metadata only; they never delete workspace files.
 
@@ -98,8 +96,8 @@ assay task validate [id] [--root <dir>] [--json]
 ```
 
 `assay task` keeps one bounded outcome identifiable across sessions, agents,
-context compaction, and repeated attempts. It is native and needs no plugin or
-capability module. Standalone workspaces store each record in
+context compaction, and repeated attempts. It is native and needs no plugin.
+Standalone workspaces store each record in
 `tasks/<stable-id>/`; overlays use `.assay/tasks/<stable-id>/`.
 
 `create` takes scalar options rather than a JSON payload and assigns the next
@@ -233,11 +231,6 @@ assay plugin check [--root <dir>] [--json]
 assay reconcile [--root <dir>] [--plugin <id...>] [--dry-run | --apply] [--json]
 ```
 
-`assay.intent` (alias: `intent`) contributes the additive `intent` capability.
-`plugin add` declares it in `.assay/manifest.json`, creates only missing intent
-scaffold files, and writes an installation receipt to `.assay/plugins.json`.
-Existing files are never overwritten.
-
 `plugin register` is the separate, declaration-only path for an independently
 packaged external descriptor. Assay validates and locks the descriptor and its
 exact payload reference in `.assay/external-plugins.json`; it does not import,
@@ -339,23 +332,17 @@ full backup first, and records recoverable lifecycle phases outside the runtime
 before deletion.
 
 `reconcile` is state convergence for an existing Assay workspace. It compares
-the desired plugin declarations, legacy archetype/capability declarations,
-installation receipts, and filesystem or provider state. Its actions are
+the desired plugin declarations, installation receipts, and runtime or
+provider state. Its actions are
 `install`, `adopt`, `repair`, `refresh`, `noop`, and `blocked`. `refresh`
 updates only Assay's recorded provider observations. It is a dry-run by
 default; `--apply`
 is required to write. `--plugin` filters plugins the workspace already desires
 and does not install a new one.
 
-A complete workspace created with the legacy `assay capability add intent`
-path is adopted by writing a receipt only. An incomplete scaffold is repaired
-by creating missing files only. Reconcile never creates a workspace, changes
-its standalone/overlay mode, rewrites intent captures, removes declarations,
-or purges orphaned receipts. Re-running `--apply` after convergence is an exact
+Reconcile never creates a workspace, changes its standalone/overlay mode,
+removes declarations, or purges orphaned receipts. Re-running `--apply` after convergence is an exact
 no-op: it does not refresh timestamps or append another event.
-
-Responsibility bindings remain distinct from capability contributions. The
-legacy `federated-provider` declaration/receipt and removes its obsolete
 
 ## Attach an existing repository
 
@@ -469,8 +456,8 @@ and integrity behavior.
 
 
 ```bash
-assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>] [--intent-authority inline|external|none] [--intent-pointer <pointer>]
-assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>] [--intent-authority inline|external|none | --no-intent-authority] [--intent-pointer <pointer>]
+assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>]
+assay system update <selector> [--root <dir>] [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
 assay system promote <selector> [--root <dir>]
 assay system archive <selector> [--root <dir>] [--dry-run | --apply]
 assay system list [--root <dir>] [--status primary|active|superseded|archived] [--json]
@@ -489,16 +476,6 @@ A Spec may use `system:<exact-registered-name>` as its scope, but the registry
 remains the System authority. System update, promote, and archive never change
 Spec state or bytes; Phase 1 adds no `spec_refs` to System records.
 
-`--intent-authority` records where a system's product intent is authoritative:
-`inline` (the default when the field is absent) means this workspace owns it,
-`external` names another home through `--intent-pointer`, and `none` means the
-system deliberately keeps no intent record. `assay intent capture` refuses to
-write for `external` and `none`. The registry is the machine-readable home; the
-sidecar contract mirrors the field only when `register` generates the contract,
-so a later `system update` leaves an existing contract untouched, and the root
-contract written by `assay attach` does not carry the field at all.
-`system update --no-intent-authority` clears the field back to the default.
-
 The built-in archetypes are `study`, `solve`, and `explore`. Use `assay archetype list` to see built-ins plus custom YAML archetypes from the current project and `~/.assay/archetypes`.
 
 `research` is the old name of `study` and still loads: a manifest that records
@@ -512,53 +489,6 @@ workspace whose manifest still records one keeps working: `check` and `status`
 report the base structure and say in one line why the archetype's own
 directories are missing from the report. To keep a removed shape, copy its
 directories into your own archetype YAML under `.assay/archetypes/`.
-
-## Product intent
-
-Intent records what was actually asked for, kept separate from what was later built. It is an optional capability module; enable it with `assay plugin add assay.intent`. The older `assay capability add intent` path remains compatible.
-
-```bash
-assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force] [--root <dir>]
-assay intent promote <capture> --to requirement [--title <title>] [--root <dir>]
-assay intent list [--system <name>] [--include-lineage] [--json] [--root <dir>]
-```
-
-`capture` writes `intent/original/<YYYYMMDD>-<sha256:12>.md` holding the text verbatim, plus the resolved system name, the full SHA-256 of the body, and the capture time. `--file` is resolved relative to the workspace root and refuses to leave it; pass text from elsewhere with `--text`.
-
-Captures are append-only:
-
-- Capturing identical text again is a no-op and writes no second record. `--source` and `--supersedes` passed to that repeat call cannot be applied to the record that already exists, so the command names them as ignored instead of reporting a change it did not make.
-- Capturing identical text against a different system, or with a different shadow marking, fails. A capture is scoped to one system, and letting the second call succeed would leave the text scoped to the first one.
-- `--supersedes` takes recorded capture ids. An id that is not one is refused and named, so a correction chain never points at a capture the workspace does not have.
-- Capturing text whose record was edited after it was written fails, naming the recorded and current digests. Restore the file, or record the corrected wording as a new capture with `--supersedes <capture-id>`.
-- `intent list` reports a record that no longer matches what was recorded as `[modified after recording]`, or `[unreadable record]` when it no longer parses at all, and keeps listing every other capture. The marker is in `--json` output as an `integrity` field.
-
-Every capture is scoped to one registered system. `--system` accepts a name or unique prefix and defaults to the current primary; the resolved name is written into the record, so a capture keeps naming the system it was about after `system promote` moves the primary pointer. `intent list --system <name> --include-lineage` follows the registry `supersedes` chain so captures made against a replaced system stay visible.
-
-If the named system records `intent_authority: external` or `none`, `capture` refuses and prints the pointer. `--force` records the text anyway, marked `shadow: true` in the record and flagged in `intent list`, so a convenience copy is never mistaken for the authoritative one.
-
-
-```bash
-assay plugin add assay.intent
-assay intent capture --text "Exports must match what the table shows." --source "kickoff call"
-assay intent promote 20260726-0a1b2c3d4e5f --to requirement --title "Full-fidelity export"
-assay intent list --system billing --include-lineage
-```
-
-Assay stores captured text as given. Redact credentials and personal data before capturing; see [Agent Instructions](agent-instructions.md).
-
-## Capability modules
-
-```bash
-assay capability add <module> [--root <dir>]
-assay capability list [--root <dir>] [--json]
-```
-
-`capability list` shows every module with how the workspace obtained it: `archetype` for modules the archetype provides, `added` for modules enabled afterwards.
-
-The current supported module is `intent`. Unknown module names fail closed.
-
-Templates a capability scaffolds are managed files like any other, so `assay update` reconciles them and `assay check` reports the module's directories as required structure.
 
 ## Custom archetypes
 

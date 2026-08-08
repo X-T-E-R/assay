@@ -67,8 +67,8 @@ Each living source stores its observation ledger flat under `references/<alias>/
 
 ## Native Task records
 
-Every workspace can use `assay task` without enabling a capability or
-installing a plugin. Task follows the work root: standalone records live under
+Every workspace can use `assay task` without installing a plugin. Task follows
+the work root: standalone records live under
 `tasks/<stable-id>/`, while overlay records live under
 `.assay/tasks/<stable-id>/`. Each directory requires `task.json` and `prd.md`;
 `handoff.md`, `design.md`, and `research/` are optional. Explicitly archived
@@ -79,21 +79,16 @@ attempts. `.assay/task-contexts.json` stores exact host-context bindings, but
 Task never guesses current from active count, age, or title. It does not replace
 dispatch state. See [Task records](task.md) for its lifecycle and command guide.
 
-## Capability and plugin structure
+## Plugin structure
 
-Capability modules own a small, fixed part of the layout. An archetype that declares a module scaffolds it at init; `assay capability add <module>` scaffolds the same structure in a workspace that did not start with it and records the module under `project.capabilities` in the manifest.
-
-`assay.intent` provides the intent module through the plugin substrate. The
-manifest's top-level `plugins` map is desired state; `.assay/plugins.json` is
-the operational install receipt. Capability access requires both a matching
-declaration and compatible receipt. This separation lets `assay reconcile`
-detect an absent, legacy, partial, or already-converged scaffold without
-rewriting intent content. Legacy `project.capabilities: ["intent"]` remains a
-valid desired-state source and can be adopted in place.
+The manifest's top-level `plugins` map is desired state;
+`.assay/plugins.json` is the operational install receipt. Fresh `init`,
+`attach`, and `update` do not create either layer. A later explicit plugin
+operation establishes plugin state.
 
 The manifest's `bindings` map remains available for genuinely exclusive,
 generic providers. `assay.trellis` does not use it: its operational plugin
-stores v1 runtime state under `.assay/trellis/` and declares additive runtime
+stores v1 runtime state under `.assay/trellis/` and reports its runtime
 capabilities on reconcile.
 
 Independently packaged external descriptors use a separate control-plane file,
@@ -107,7 +102,7 @@ target version rather than fabricate one; observations always name a concrete
 host version, and exact comparison occurs only when the target declared one.
 State ownership entries are either safe Assay-relative paths or opaque
 host-owned symbolic locators. Assay never resolves or deletes a host locator.
-External records contribute no native module, responsibility binding, runtime
+External records contribute no native authority, responsibility binding, runtime
 hook, or workspace writer.
 Removing a record never deletes the referenced package or host-owned state.
 
@@ -131,12 +126,6 @@ No second global project registry is created. Codex sessions stay in the host
 store and are read only. Plugin removal preserves this tree unless separately
 confirmed with `--purge --yes` after backup.
 
-| Module | Adds |
-| --- | --- |
-| `intent` | `intent/`, `intent/original/`, and `intent/requirements/`, each with a `README.md`. |
-
-
-
 ```yaml
 __schema: 1
 id: project-example-project
@@ -152,28 +141,6 @@ root, so overlay-to-standalone conversion preserves both identity and meaning.
 The `project.name`, `project.archetype`, and `project.mode` fields in
 `.assay/manifest.json` remain workspace presentation/settings compatibility
 data; the manifest is not a second Project charter or identity record.
-
-## Intent records
-
-The intent module keeps two kinds of file, both plain Markdown with YAML frontmatter:
-
-```text
-intent/original/<YYYYMMDD>-<sha256:12>.md    verbatim capture; frontmatter carries
-                                             system, sha256, captured_at, and
-                                             optionally source, supersedes, shadow
-intent/requirements/<date>-<slug>.md         requirement carrying derives_from
-```
-
-The capture filename is derived from the SHA-256 of its own body, and the full digest is recorded in the frontmatter. That is what makes captures append-only: a re-capture of the same text lands on the same path and changes nothing, while a record whose body no longer matches its digest is reported instead of silently replaced. Corrections are new captures with `supersedes: [<capture-id>]`, never edits.
-
-The legacy Trellis task/context runtime does not replace or dual-write that
-decision authority.
-
-`assay status` counts both intent directories as zones once the module is enabled.
-
-### Intent in a private overlay
-
-`assay attach --privacy private` keeps `.assay/` out of product commits and gives it no history of its own. Intent captures are the least reproducible records Assay holds — nothing else can reconstruct what was originally asked for — so storing them in a directory with no version history risks losing them to a single mistake. When intent is enabled in a private overlay, `assay check --advisories` recommends `--privacy private-git`, which initializes a separate Git repository inside `.assay/`. The advisory never fails the check.
 
 ## Donor state
 
@@ -222,4 +189,4 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/intent` to `intent`, `.assay/tasks` to `tasks`, and `.assay/project` to `project`, carrying `.assay/task-contexts.json` and `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Task and native Project directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`, and `.assay/project` to `project`, carrying `.assay/task-contexts.json` and `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Unknown directories under `.assay/` are not interpreted, copied, rewritten, or deleted; their presence keeps the source state directory in place after a move. Task and native Project directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
