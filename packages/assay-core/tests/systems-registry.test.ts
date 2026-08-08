@@ -402,17 +402,25 @@ describe("system.yaml inertness", () => {
     const baselineShow = await findSystemEntry(baselineList.registry, "alpha");
     const baselineStatus = await getFrameworkStatus({ root });
     const baselineCheck = await checkFramework({ root });
-    const corpus = Object.fromEntries(
-      Array.from({ length: 873 }, (_, index) => [`field_${index}`, index]),
-    );
-    await writeFile(sidecar, `${JSON.stringify(corpus)}\n`, "utf8");
-    for (let index = 0; index < 45; index += 1) {
-      await writeFile(sidecar, `name: drift-${index}\npath: ../../escape-${index}\n`, "utf8");
+    const expectAuthoritySurfacesUnchanged = async () => {
       expect(await listSystems(root)).toEqual(baselineList);
       expect(await findSystemEntry(baselineList.registry, "alpha")).toEqual(baselineShow);
       expect((await getFrameworkStatus({ root })).systems).toEqual(baselineStatus.systems);
       expect((await checkFramework({ root })).systems).toEqual(baselineCheck.systems);
-    }
+    };
+
+    const corpus = Object.fromEntries(
+      Array.from({ length: 873 }, (_, index) => [`field_${index}`, index]),
+    );
+    const largeLegacyBytes = `${JSON.stringify(corpus)}\n`;
+    await writeFile(sidecar, largeLegacyBytes, "utf8");
+    await expectAuthoritySurfacesUnchanged();
+    expect(await readFile(sidecar, "utf8")).toBe(largeLegacyBytes);
+
+    const driftBytes = "name: drift\npath: ../../escape\n";
+    await writeFile(sidecar, driftBytes, "utf8");
+    await expectAuthoritySurfacesUnchanged();
+    expect(await readFile(sidecar, "utf8")).toBe(driftBytes);
 
     await rm(sidecar);
     const outside = path.join(await tempDir(), "malicious.yaml");
@@ -424,7 +432,7 @@ describe("system.yaml inertness", () => {
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EPERM")) throw error;
     }
-  }, 45_000);
+  });
 });
 
 describe("System lifecycle operations", () => {
