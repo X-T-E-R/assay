@@ -1,21 +1,12 @@
 # assay-core
 
-Reusable TypeScript operations for Assay framework workspaces.
+Core library for Assay 0.12 workspaces.
 
-This package owns framework behavior that can be shared by CLI and future GUI adapters:
+- exact manifest schema 4 / layout 8 loading and fail-closed authority writes;
+- one-shot Template parsing and expansion;
+- native Project schema 1 identity;
+- separate managed-files schema 1 three-way no-clobber receipt;
+- explicit workspace index commands;
+- unchanged Source, Analysis, Knowledge, Task, Roadmap, Spec, System schema 2, and external Plugin schema 1 behavior.
 
-- workspace initialization, checks, status, living and frozen Sources, analyses, native Tasks, and event capture;
-- manifest schemas and managed-file records;
-- deterministic template registry;
-- update planning/apply behavior, backups, user-deleted handling, and layout migration planning;
-- typed errors and structured operation results.
-
-The core package must stay free of process concerns: no argv parsing, terminal output, or process exits. GUI code should import this package directly instead of shelling out to the CLI.
-
-## Development
-
-```powershell
-pnpm --filter assay-core build
-pnpm --filter assay-core typecheck
-pnpm --filter assay-core test
-```
+Mutation modules append structured audit events internally. Event append/capture APIs are not part of the public package surface.

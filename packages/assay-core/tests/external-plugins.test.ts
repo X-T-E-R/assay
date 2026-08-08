@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { BARE_ARCHETYPE, createTempDirectoryFixture, writeBareArchetype } from "assay-test-support";
+import { createTempDirectoryFixture, writeBareTemplate } from "assay-test-support";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -18,9 +18,7 @@ import {
 
 const tempDirs = createTempDirectoryFixture("assay-core-external-plugins");
 
-beforeAll(() => {
-  process.env.ASSAY_NO_TRACK = "1";
-});
+beforeAll(() => {});
 
 afterEach(async () => {
   await tempDirs.cleanup();
@@ -28,8 +26,8 @@ afterEach(async () => {
 
 async function workspace(name: string): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
-  await writeBareArchetype(root);
-  await initFramework({ target: root, name, archetype: BARE_ARCHETYPE });
+  const template = await writeBareTemplate(root);
+  await initFramework({ target: root, name, template });
   return root;
 }
 
@@ -38,7 +36,7 @@ function fixtureDescriptor(id = "example.readonly-command") {
     __schema: 1,
     id,
     adapter_version: "1.0.0",
-    assay: { spi_version: 1, version: "0.11.0" },
+    assay: { spi_version: 1, version: "0.12.0" },
     provenance: {
       source: "npm:@example/assay-plugin-fixture",
       ref: "v1.0.0",
@@ -504,7 +502,6 @@ describe("external plugin descriptor control plane", () => {
     const manifestFile = path.join(root, ".assay", "manifest.json");
     const manifest = JSON.parse(await readFile(manifestFile, "utf8")) as Record<string, unknown>;
     manifest.framework_version = "0.10.0";
-    manifest.minimum_assay_version = "0.10.0";
     await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     const stateFile = path.join(root, EXTERNAL_PLUGINS_STATE_FILE);
     const before = await readFile(stateFile);
@@ -539,8 +536,8 @@ describe("external plugin descriptor control plane", () => {
     ]) {
       await expect(operation()).rejects.toMatchObject({
         code: "WORKSPACE_CUTOVER_REQUIRED",
-        observed: "0.10.0+s3+l7",
-        required: "0.11.0+s3+l7",
+        observed: "0.10.0+s4+l8",
+        required: "0.12.0+s4+l8",
       });
       expect(await readFile(stateFile)).toEqual(before);
     }

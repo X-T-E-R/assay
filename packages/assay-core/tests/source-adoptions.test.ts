@@ -180,7 +180,7 @@ describe("Source adoption lifecycle", () => {
       const result = await execa("git", args, { cwd: root, reject: false });
       expect(result.exitCode, result.stderr).toBe(0);
     }
-    await attachExistingRepo({ root, name: "Root", privacy: "private", noTrack: true });
+    await attachExistingRepo({ root, name: "Root", privacy: "private" });
     const docsRoot = path.join(root, "docs-system");
     await mkdir(docsRoot, { recursive: true });
     await writeFile(path.join(docsRoot, "alpha.md"), "target-docs-v1\n", "utf8");
@@ -331,7 +331,7 @@ describe("Source adoption lifecycle", () => {
       const result = await execa("git", args, { cwd: root, reject: false });
       expect(result.exitCode, result.stderr).toBe(0);
     }
-    await attachExistingRepo({ root, name: "Preflight Root", privacy: "private", noTrack: true });
+    await attachExistingRepo({ root, name: "Preflight Root", privacy: "private" });
     const sourceRoot = path.join(await tempDir(), "preflight-upstream");
     await mkdir(path.join(sourceRoot, "src"), { recursive: true });
     await writeFile(path.join(sourceRoot, "src", "alpha.txt"), "source-v1\n", "utf8");

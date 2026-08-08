@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { BARE_ARCHETYPE, writeBareArchetype } from "assay-test-support";
+import { writeBareTemplate } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
@@ -39,8 +39,8 @@ const roots: string[] = [];
 async function workspace(name: string): Promise<string> {
   const root = path.join(os.tmpdir(), `assay-spec-${randomUUID()}`);
   roots.push(root);
-  await writeBareArchetype(root);
-  await initFramework({ target: root, name, archetype: BARE_ARCHETYPE });
+  const template = await writeBareTemplate(root);
+  await initFramework({ target: root, name, template });
   return root;
 }
 
@@ -610,7 +610,7 @@ describe("native Spec", { timeout: 60_000 }, () => {
       const result = await execa("git", args, { cwd: root, reject: false });
       expect(result.exitCode, result.stderr || result.stdout).toBe(0);
     }
-    await attachExistingRepo({ root, name: "Overlay Spec", archetype: "explore", noTrack: true });
+    await attachExistingRepo({ root, name: "Overlay Spec", template: "explore" });
     const original = await createSpec({
       root,
       title: "Original",

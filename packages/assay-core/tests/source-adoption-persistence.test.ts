@@ -20,9 +20,7 @@ import {
 
 const tempDirs = createTempDirectoryFixture("assay-source-adoption-persistence");
 
-beforeAll(() => {
-  process.env.ASSAY_NO_TRACK = "1";
-});
+beforeAll(() => {});
 
 afterEach(async () => {
   await tempDirs.cleanup();

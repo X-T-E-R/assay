@@ -1,22 +1,15 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { stringify as stringifyYaml } from "yaml";
 
-import {
-  CURRENT_VERSION,
-  LAYOUT_VERSION,
-  MANAGED_DIR,
-  MANIFEST_FILE,
-  VERSION_FILE,
-} from "./constants.js";
+import { MANAGED_DIR, MANAGED_FILES_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError } from "./errors.js";
 import { appendEvent } from "./events.js";
-import { defaultOverlayLayout, workspacePath, workspaceTemplateRelativePath } from "./layout.js";
+import { defaultOverlayLayout, workspacePath } from "./layout.js";
+import { receiptForTemplates, saveManagedFiles } from "./managed-files.js";
 import { defaultManifest, loadManifest, saveManifest } from "./manifest.js";
 import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath, slugify } from "./paths.js";
-import { dirsForArchetype, loadArchetype } from "./profile.js";
-import { recordProjectLifecycleBestEffort } from "./project-registry.js";
 import { ensureNativeProject, preflightNativeProjectBoundary } from "./project.js";
 import type {
   SystemRecord,
@@ -25,15 +18,15 @@ import type {
   WorkspacePrivacy,
 } from "./schemas/index.js";
 import { defaultSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
+import { assertTemplateWriteBoundary, loadTemplate } from "./template.js";
+import { baseCoreTemplates, expandTemplate, manifestEntriesForScaffold } from "./templates.js";
 import { nowIso } from "./time.js";
 
 export interface AttachExistingRepoOptions {
   readonly root: string;
   readonly name?: string;
-  readonly archetype?: string;
+  readonly template?: string;
   readonly privacy?: WorkspacePrivacy;
-  /** Skip the user-global Assay project registry write for this attach. */
-  readonly noTrack?: boolean;
   readonly now?: Date;
 }
 
@@ -135,7 +128,7 @@ export async function attachExistingRepo(
   const installedManifest = await loadManifest(root);
 
   // `.assay` is the Project ancestor in overlay mode. Validate it before even
-  // probing the manifest or project-local archetype paths.
+  // probing the manifest or project-local manifest entries paths.
   await preflightNativeProjectBoundary(root, layout);
 
   if (installedManifest) {
@@ -153,32 +146,48 @@ export async function attachExistingRepo(
 
   const project = options.name ?? path.basename(root);
 
-  // Validate the archetype before writing any state. Without this an
-  // `--archetype bogus` attach produced a manifest that every later command
-  // (status, check, source, ...) failed to load its archetype for.
-  const archetypeName = options.archetype ?? "study";
-  const archetype = await loadArchetype(archetypeName, { root });
+  // Resolve and validate the one-shot Template before writing any state.
+  const selected = await loadTemplate(options.template ?? "study");
+  const expanded = expandTemplate(project, selected, layout);
+  const templatePaths = new Set(expanded.files.map((file) => file.path.toLowerCase()));
+  const coreFiles = baseCoreTemplates(project, layout).filter(
+    (file) => !templatePaths.has(file.path.toLowerCase()),
+  );
+  await assertTemplateWriteBoundary(root, [
+    ...expanded.directories.map((entry) => entry.path),
+    ...expanded.files.map((entry) => entry.path),
+    ...coreFiles.map((entry) => entry.path),
+    MANIFEST_FILE,
+    MANAGED_FILES_FILE,
+  ]);
 
   // Scaffold .assay/ state dirs.
   await mkdir(path.join(root, MANAGED_DIR), { recursive: true });
   for (const area of ["events", "backups"] as const) {
     await mkdir(workspacePath(root, layout, area), { recursive: true });
   }
-  for (const directory of dirsForArchetype(archetype, archetype.mode)) {
-    await mkdir(path.join(root, workspaceTemplateRelativePath(layout, directory)), {
-      recursive: true,
-    });
+  for (const directory of expanded.directories) {
+    await mkdir(path.join(root, directory.path), { recursive: true });
   }
-  await writeFile(path.join(root, VERSION_FILE), CURRENT_VERSION, "utf8");
+  const installedCore: typeof coreFiles = [];
+  for (const file of [...coreFiles, ...expanded.files]) {
+    const target = path.join(root, file.path);
+    await mkdir(path.dirname(target), { recursive: true });
+    try {
+      await writeFile(target, file.content, { encoding: "utf8", flag: "wx" });
+      if (file.executable) await chmod(target, (await stat(target)).mode | 0o755);
+      if (file.managed) installedCore.push(file);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    }
+  }
 
   // Manifest with overlay layout.
-  const manifest = defaultManifest(project, {
-    archetype: archetypeName,
-    mode: archetype.mode,
-  });
-  manifest.layout = layout;
-  manifest.layout_version = LAYOUT_VERSION;
+  const manifestEntries = manifestEntriesForScaffold(layout, expanded, coreFiles);
+  const manifest = defaultManifest(manifestEntries);
+  manifest.layout = { ...layout, entries: manifestEntries };
   await saveManifest(root, manifest);
+  await saveManagedFiles(root, receiptForTemplates(installedCore));
   await ensureNativeProject(root, layout, project);
 
   // Systems registry: register the repo root as the primary system.
@@ -238,12 +247,6 @@ export async function attachExistingRepo(
     },
     now,
   );
-
-  // Match `init`/`adopt`: record the workspace in the user-global project
-  // registry unless the caller opted out.
-  await recordProjectLifecycleBestEffort(root, "attach", {
-    noTrack: options.noTrack ?? false,
-  });
 
   return {
     root,

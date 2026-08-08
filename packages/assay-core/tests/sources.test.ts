@@ -379,56 +379,10 @@ describe("source observations", () => {
 
     await expect(addSource({ root, source, alias: "old" })).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
-      required: "0.11.0+s3+l7",
+      required: "0.12.0+s4+l8",
     });
     expect(await exists(path.join(root, ".assay", "coordination"))).toBe(false);
     expect(await exists(path.join(root, "sources", "old"))).toBe(false);
-  });
-
-  it("rejects a custom retired Source path before the first Source write", async () => {
-    const root = await initAssayWorkspace("RetiredSourcePath");
-    const source = path.join(await tempDir(), "custom-source");
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Custom\n", "utf8");
-    await mkdir(path.join(root, ".assay", "archetypes"), { recursive: true });
-    await writeFile(
-      path.join(root, ".assay", "archetypes", "retired.yaml"),
-      "extends: base\nmode: learning\ndirs:\n  - references\ntemplates: []\n",
-      "utf8",
-    );
-    const manifestFile = path.join(root, ".assay", "manifest.json");
-    const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
-    manifest.project.archetype = "retired";
-    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-
-    await expect(addSource({ root, source, alias: "custom" })).rejects.toMatchObject({
-      code: "RETIRED_ARCHETYPE_PATH",
-    });
-    expect(await exists(path.join(root, ".assay", "coordination"))).toBe(false);
-    expect(await exists(path.join(root, "sources", "custom"))).toBe(false);
-  });
-
-  it("rejects a custom retired path before diff reads Source ledger bytes", async () => {
-    const root = await initAssayWorkspace("RetiredSourceDiff");
-    const source = path.join(await tempDir(), "diff-source");
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Diff Source\n", "utf8");
-    await addSource({ root, source, alias: "diff-source" });
-    await mkdir(path.join(root, ".assay", "archetypes"), { recursive: true });
-    await writeFile(
-      path.join(root, ".assay", "archetypes", "retired-diff.yaml"),
-      "extends: base\nmode: learning\ndirs:\n  - references\ntemplates: []\n",
-      "utf8",
-    );
-    const manifestFile = path.join(root, ".assay", "manifest.json");
-    const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
-    manifest.project.archetype = "retired-diff";
-    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-    await writeFile(path.join(root, "sources", "diff-source", "source.yaml"), "not: [yaml", "utf8");
-
-    await expect(diffSource({ root, alias: "diff-source" })).rejects.toMatchObject({
-      code: "RETIRED_ARCHETYPE_PATH",
-    });
   });
 
   it("syncs a directory source without duplicating same observations and diffs changed files", async () => {

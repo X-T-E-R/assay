@@ -59,23 +59,22 @@ A global `assay` command (via `npm link` in `packages/assay-cli`) is optional an
 
 Use `cd <target-dir>` before running commands, or pass `--root <path>` / `[target-dir]` only when operating on a workspace from another directory.
 
-## Project registry
+## Workspace index
 
-The CLI tracks initialized workspaces in `~/.assay/projects`. Registry commands:
+Workspace indexing is explicit under `~/.assay/workspaces` and never happens during lifecycle/read commands:
 
 ```bash
-assay projects list              # list known workspaces
-assay projects show <selector>   # inspect one workspace (selector required)
-assay projects scan <roots...>   # discover workspaces by manifest
-assay projects prune --dry-run   # preview stale record cleanup
-assay projects forget <selector> # remove a registry record (never deletes project files)
+assay workspace track [root]          # track one workspace explicitly
+assay workspace discover <roots...>   # discover and track workspaces by manifest
+assay workspace list                  # report record state without rewriting it
+assay workspace forget <selector>     # remove an index record (never deletes project files)
 ```
 
 These commands operate on registry metadata only and never modify project files.
 
 ## Systems registry (per-workspace)
 
-Distinct from the project registry, each current workspace has a per-workspace systems registry at `.assay/systems-registry.json`. Manage it with the `system` command group rather than editing the JSON directly:
+Distinct from the optional global workspace index, each current workspace has a per-workspace systems registry at `.assay/systems-registry.json`. Manage it with the `system` command group rather than editing the JSON directly:
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]

@@ -1,14 +1,8 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import {
-  defaultStandaloneLayout,
-  resolveWorkspaceLayout,
-  workspaceTemplateRelativePath,
-} from "./layout.js";
 import { loadManifest } from "./manifest.js";
-import { loadArchetype } from "./profile.js";
-import { type WorkspaceZone, archetypeZones, zoneTable } from "./zones.js";
+import { type WorkspaceZone, manifestZones, zoneTable } from "./zones.js";
 
 export const ASSAY_AGENTS_FILE = "AGENTS.md";
 export const ASSAY_AGENTS_START_MARKER = "<!-- ASSAY:START -->";
@@ -22,8 +16,6 @@ export const ASSAY_AGENTS_MALFORMED_REASON = "AGENTS.md has incomplete Assay man
  * would have to go looking for.
  */
 export interface AssayAgentsLayoutSection {
-  readonly archetype: string;
-  readonly description: string;
   readonly zones: readonly WorkspaceZone[];
 }
 
@@ -39,21 +31,12 @@ const ASSAY_AGENTS_RULES = [
 
 /**
  * Build the managed block. The layout section is appended only when the
- * workspace resolves an archetype with at least one zone, so a workspace whose
- * manifest or archetype cannot be read still gets the standing rules.
+ * workspace resolves an manifest entries with at least one zone, so a workspace whose
+ * manifest or manifest entries cannot be read still gets the standing rules.
  */
 export function assayAgentsBlock(layout?: AssayAgentsLayoutSection | null): string {
   const table = layout ? zoneTable(layout.zones) : [];
-  const layoutSection =
-    layout && table.length > 0
-      ? [
-          "",
-          `## Workspace layout (archetype: ${layout.archetype})`,
-          ...(layout.description === "" ? [] : ["", layout.description]),
-          "",
-          ...table,
-        ]
-      : [];
+  const layoutSection = layout && table.length > 0 ? ["", "## Workspace layout", "", ...table] : [];
   return [
     ASSAY_AGENTS_START_MARKER,
     "",
@@ -68,8 +51,8 @@ export function assayAgentsBlock(layout?: AssayAgentsLayoutSection | null): stri
 export const ASSAY_AGENTS_BLOCK = assayAgentsBlock(null);
 
 /**
- * Read the archetype-declared layout for a workspace root. Returns null when
- * the workspace has no readable manifest or archetype: the block then keeps its
+ * Read the manifest entries-declared layout for a workspace root. Returns null when
+ * the workspace has no readable manifest or manifest entries: the block then keeps its
  * rules instead of failing the command that writes it.
  */
 export async function readAssayAgentsLayoutSection(
@@ -80,13 +63,7 @@ export async function readAssayAgentsLayoutSection(
     if (!manifest) {
       return null;
     }
-    const archetype = await loadArchetype(manifest.project.archetype, { root });
-    const workspaceLayout = resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
-    const zones = archetypeZones(archetype, manifest.project.mode).map((zone) => ({
-      path: workspaceTemplateRelativePath(workspaceLayout, zone.path),
-      purpose: zone.purpose,
-    }));
-    return { archetype: archetype.name, description: archetype.description, zones };
+    return { zones: manifestZones(manifest.layout.entries, manifest.layout) };
   } catch {
     return null;
   }

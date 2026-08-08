@@ -21,7 +21,7 @@ Build and maintain an Assay evidence workbench — a versioned project layer tha
 evidence in -> structured checks -> decisions -> knowledge growth
 ```
 
-Archetypes instantiate that loop with different workspace structures. `study` uses Sources and analyses for external systems; `solve` uses objectives, inputs, attempts, and benchmarks; `explore` uses parallel approaches and trials. A workspace that needs a different shape declares its own archetype YAML. Open work can be closed explicitly where the CLI provides lifecycle commands, and durable findings can flow into `knowledge/`; Assay records those choices without mechanically judging the prose.
+One-shot Templates instantiate that loop with different workspace structures. `study` uses Sources and analyses for external systems; `solve` uses objectives, inputs, attempts, and benchmarks; `explore` uses parallel approaches and trials. A custom Template is passed as an explicit YAML path to init or attach, expanded once, and not persisted. Open work can be closed explicitly where the CLI provides lifecycle commands, and durable findings can flow into `knowledge/`; Assay records those choices without mechanically judging the prose.
 
 ## CLI quick reference
 
@@ -33,12 +33,13 @@ node <skill-root>/scripts/assay.mjs <command>
 
 ```bash
 # Workspace lifecycle
-assay init [target-dir] --name <project-name> [--archetype <name>]  # built-ins: study|solve|explore
+assay init [target-dir] --name <project-name> [--template <name-or-yaml-path>]  # built-ins: study|solve|explore
+assay template list | show <name-or-yaml-path>
 assay adopt --dry-run                        # always dry-run first
 assay adopt --apply --name <project-name> [--analyze]  # --analyze opens an adoption inventory analysis
 assay check                                  # structure + persisted-record integrity
 assay check --advisories                     # opt-in workflow/content reminders
-assay status [--json] [--fetch]              # archetype zones with purposes + systems + sources + upstream drift + counts
+assay status [--json] [--fetch]              # manifest-entry zones + systems + sources + upstream drift + counts
 assay update --dry-run                       # always dry-run first
 
 # Native Task (available without a plugin or capability)
@@ -101,8 +102,8 @@ assay system archive <selector> --dry-run | --apply
 assay system list [--status primary|active|superseded|archived] [--json]
 assay system show <selector>
 
-# Project registry
-assay projects list | scan | show <selector> | forget <selector> | prune
+# Explicit workspace index
+assay workspace track [root] | discover <roots...> | list | forget <selector>
 ```
 
 
@@ -114,7 +115,7 @@ For the full post-adoption workflow (inspect, analyze, register systems, confirm
 
 ## Framework structure
 
-Target projects use an archetype-specific layout over a shared base (`.assay/`, `project/`, `tasks/`, `systems/`, `knowledge/`; overlay resolves work folders under `.assay/`). Source and Analysis are native for every archetype but lazy outside `study`: their directories appear on the first Source or Analysis command. Built-ins add eager directories such as `sources/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), or `approaches/` + `trials/` (`explore`). For the full structure guide and `.assay/` managed files, read `references/framework-structure.md`.
+Target projects use a fixed core plus one-shot Template output. The manifest persists the expanded paths, never Template identity; overlay resolves work folders under `.assay/`. Source and Analysis remain native lazy areas, while built-ins eagerly add `sources/` + `analyses/` (`study`), `problem/` + `intake/` + `attempts/` (`solve`), or `approaches/` + `trials/` (`explore`). For the full structure guide and managed receipt, read `references/framework-structure.md`.
 
 ## Native Task
 
@@ -188,11 +189,11 @@ learning and durable findings in analyses and knowledge.
 - `plugin register` validates and locks an independently packaged descriptor under `.assay/external-plugins.json` schema 1. It never imports, installs, activates, or executes the payload.
 - `plugin observe` requires a concrete host version and rejects identity, integrity, host, exact-version, grant, surface, or ownership mismatches. Assay never resolves or deletes host locators.
 - Disable, enable, and remove change only Assay control-plane records. Requested capabilities remain opaque host metadata and grant no native responsibility, Task, workspace, or execution authority.
-- The manifest's optional generic `plugins` and `bindings` fields remain valid metadata, but core does not install or reconcile built-ins from them. Fresh workspaces create no built-in receipt state.
+- Manifest schema 4 carries no Plugin declarations or bindings. External Plugin state remains in its independent schema 1 metadata store, and core never installs or reconciles host payloads.
 - Native Task owns durable Assay task identity and lifecycle. The host runtime owns dispatch, agent DAGs, execution permissions, and activation; do not alias or import another task store.
 
 
-Assay 0.11 has no native product-Intent object or capability-module commands. A manually created `intent/` or `.assay/intent/` directory is generic unowned content: Assay does not parse, promote, rewrite, migrate, or delete it. Keep product requirements in native Specifications or reader-owned Project prose, and preserve verbatim external evidence in its authoritative source or an Analysis when appropriate.
+Assay 0.12 has no native product-Intent object or capability-module commands. A manually created `intent/` or `.assay/intent/` directory is generic unowned content: Assay does not parse, promote, rewrite, migrate, or delete it. Keep product requirements in native Specifications or reader-owned Project prose, and preserve verbatim external evidence in its authoritative source or an Analysis when appropriate.
 
 
 ## Systems and version control
@@ -218,7 +219,7 @@ Always run `update --dry-run` before applying. User-modified files are skipped b
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.
-2. Use `projects list` or `projects scan <parent-dir>` to locate existing workspaces.
+2. Use `workspace list` for the explicit index or `workspace discover <parent-dir>` to locate and track current workspaces.
 
 ### Source evidence pipeline
 
@@ -285,7 +286,7 @@ Run `assay check --advisories` separately when workflow reminders are useful.
 
 Workflow/content reminders are opt-in because they describe work state, not corruption. Structure, registry and persisted-record consistency, managed-record integrity, and Source adoption receipt remain in the default check.
 
-`status` opens with the archetype and its one-line description, then `Zones`: the directories that archetype declares, each with a file count and what belongs in it. Read the zones before placing a file — they are the workspace's own statement of where work goes, and they differ per archetype. After that it shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Sources` summary, an `Upstream` block naming each source that drifted and how many Source adoption mappings the change reaches (add `--fetch` to compare remotes as well), a compact `Source adoptions` summary when operational receipts exist, `Knowledge entries`, and `Run records (runs.jsonl)` where that file exists. Use `--json` for the same data machine-readably. Run `update --dry-run` before apply; dry-run commands must not create project files or project-registry records.
+`status` opens with the exact manifest/layout and native Project, then `Zones`: directory entries with file counts and purposes. Read the zones before placing a file. After that it shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Sources` summary, an `Upstream` block naming each source that drifted and how many Source adoption mappings the change reaches (add `--fetch` to compare remotes as well), a compact `Source adoptions` summary when operational receipts exist, `Knowledge entries`, and `Run records (runs.jsonl)` where that file exists. Use `--json` for the same data machine-readably. Run `update --dry-run` before apply; dry-run commands must not create project files or workspace-index records.
 
 ## Final response checklist
 
@@ -293,7 +294,7 @@ Report:
 
 - Target root and CLI command used.
 - Created/updated/skipped/conflicted files.
-- Current `.assay/VERSION` and layout version.
+- Current `.assay/managed-files.json` and layout version.
 - Whether migration was only planned or applied.
 - Which Source, Analysis, Task, or Knowledge artifacts were produced.
 - Registered systems and the current `primary`.

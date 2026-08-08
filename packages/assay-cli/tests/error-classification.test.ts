@@ -20,12 +20,11 @@ afterEach(async () => {
   await tempDirs.cleanup();
 });
 
-async function workspace(name: string, archetype?: string): Promise<string> {
+async function workspace(name: string): Promise<string> {
   return createInitializedCliWorkspace({
     tempDirs,
     runner: cliRunner,
     directoryName: name,
-    ...(archetype ? { archetype } : {}),
   });
 }
 
@@ -35,20 +34,20 @@ async function workspace(name: string, archetype?: string): Promise<string> {
  * distinction, so each case asserts the prefix, not just a non-zero exit.
  */
 describe("assay error messages distinguish user input from internal faults", () => {
-  it("prefixes an unknown archetype with Error", async () => {
-    const root = path.join(await tempDirs.createTempDir(), "PrefixArchetype");
+  it("prefixes an unknown template with Error", async () => {
+    const root = path.join(await tempDirs.createTempDir(), "PrefixTemplate");
 
     const result = await cliRunner.runCli([
       "init",
       root,
       "--name",
-      "PrefixArchetype",
-      "--archetype",
+      "PrefixTemplate",
+      "--template",
       "nonexistent",
     ]);
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Error: archetype not found: nonexistent");
+    expect(result.stderr).toContain("Error: unknown template 'nonexistent'");
     expect(result.stderr).not.toContain("Runtime error");
   });
 
@@ -60,7 +59,7 @@ describe("assay error messages distinguish user input from internal faults", () 
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: Workspace cutover required");
-    expect(result.stderr).toContain("0.11.0+s3+l7");
+    expect(result.stderr).toContain("0.12.0+s4+l8");
     expect(result.stderr).toContain("assay-cutover:");
   });
 });

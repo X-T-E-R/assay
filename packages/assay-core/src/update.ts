@@ -1,4 +1,4 @@
-import { chmod, copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -7,22 +7,20 @@ import {
   type AssayAgentsBlockResult,
   applyAssayAgentsBlock,
   describeAssayAgentsBlockAction,
-  planAssayAgentsBlock,
 } from "./agents.js";
-import { BACKUPS_DIR, CURRENT_VERSION, MANIFEST_FILE, VERSION_FILE } from "./constants.js";
-import { FrameworkNotFoundError } from "./errors.js";
+import { BACKUPS_DIR, MANAGED_FILES_FILE, MANIFEST_FILE } from "./constants.js";
+import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
-import { defaultStandaloneLayout, resolveWorkspaceLayout } from "./layout.js";
-import { loadManifest, recordTemplate, saveManifest } from "./manifest.js";
+import { resolveWorkspaceLayout } from "./layout.js";
+import { loadManagedFiles, managedFileRecord, saveManagedFiles } from "./managed-files.js";
+import { loadManifest } from "./manifest.js";
 import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
-import { archetypeAliasTarget } from "./profile.js";
 import {
   ensureNativeProject,
+  loadNativeProject,
   preflightNativeProjectBoundary,
   preflightWorkspaceManifestBoundary,
-  projectFileRelativePath,
-  projectRootRelativePath,
 } from "./project.js";
 import {
   type OperationReport,
@@ -32,33 +30,27 @@ import {
   type UpdatePlan,
   createEmptyReport,
 } from "./results.js";
-import type { FrameworkManifest, SystemsRegistry, WorkspaceLayout } from "./schemas/index.js";
+import type { FrameworkManifest, ManagedFileRecord, WorkspaceLayout } from "./schemas/index.js";
 import { updateAnalysisSchema, updatePlanSchema } from "./schemas/index.js";
-import { loadSystemsRegistry } from "./systems-registry.js";
-import type { TemplateFile } from "./templates.js";
-import { nowIso } from "./time.js";
-import { desiredRuntimeTemplates } from "./workspace.js";
+import { assertTemplateWriteBoundary } from "./template.js";
+import { type TemplateFile, baseCoreTemplates } from "./templates.js";
 
 export interface AnalyzeUpdateOptions {
   readonly root: string;
 }
-
 export interface PlanUpdateOptions extends AnalyzeUpdateOptions {
   readonly dryRun?: boolean;
   readonly action?: UpdateConflictAction;
   readonly agents?: boolean;
 }
-
 export interface ApplyUpdateOptions extends PlanUpdateOptions {
   readonly now?: Date;
 }
-
 export interface BackupResult {
   readonly path: string;
   readonly relativePath: string;
   readonly copied: string[];
 }
-
 export interface ApplyUpdateResult {
   readonly root: string;
   readonly dryRun: boolean;
@@ -71,12 +63,8 @@ export interface ApplyUpdateResult {
 }
 
 function updateAgentsMode(value: boolean | undefined): AssayAgentsBlockMode {
-  if (value === true) {
-    return "install";
-  }
-  if (value === false) {
-    return "skip";
-  }
+  if (value === true) return "install";
+  if (value === false) return "skip";
   return "refresh-existing";
 }
 
@@ -85,19 +73,14 @@ function recordAssayAgentsResult(report: OperationReport, result: AssayAgentsBlo
     report.notes.push(describeAssayAgentsBlockAction(result));
     return;
   }
-
   if (!result.changed) {
-    if (result.reason === ASSAY_AGENTS_MALFORMED_REASON) {
+    if (result.reason === ASSAY_AGENTS_MALFORMED_REASON)
       report.notes.push(describeAssayAgentsBlockAction(result));
-    }
     return;
   }
-
-  if (result.action === "create") {
-    report.created_files.push(result.path);
-  } else if (result.action === "append" || result.action === "replace") {
+  if (result.action === "create") report.created_files.push(result.path);
+  else if (result.action === "append" || result.action === "replace")
     report.updated_files.push(result.path);
-  }
 }
 
 async function exists(target: string): Promise<boolean> {
@@ -105,64 +88,141 @@ async function exists(target: string): Promise<boolean> {
     await stat(target);
     return true;
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
     throw error;
   }
 }
 
-async function pathStats(target: string): Promise<Awaited<ReturnType<typeof stat>> | null> {
-  try {
-    return await stat(target);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
+function requireManifest(manifest: FrameworkManifest | null, root: string): FrameworkManifest {
+  if (!manifest)
+    throw new FrameworkNotFoundError(
+      `No framework manifest found at ${path.join(root, MANIFEST_FILE)}. Run init first.`,
+    );
+  return manifest;
 }
 
-function backupStamp(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hour = String(date.getHours()).padStart(2, "0");
-  const minute = String(date.getMinutes()).padStart(2, "0");
-  const second = String(date.getSeconds()).padStart(2, "0");
-  return `${date.getFullYear()}${month}${day}-${hour}${minute}${second}`;
+function requireLayout(manifest: FrameworkManifest): WorkspaceLayout {
+  const layout = resolveWorkspaceLayout(manifest);
+  if (!layout) throw new FrameworkError("workspace layout could not be resolved");
+  return layout;
 }
 
-function updateChange(
+async function desiredCore(root: string, manifest: FrameworkManifest): Promise<TemplateFile[]> {
+  const layout = requireLayout(manifest);
+  const project = await loadNativeProject(root, layout);
+  if (!project)
+    throw new FrameworkNotFoundError("native Project envelope is required before update");
+  return baseCoreTemplates(project.name, layout);
+}
+
+function change(
   template: TemplateFile,
   kind: UpdateChange["kind"],
-  hashes: {
-    readonly currentHash?: string;
-    readonly previousHash?: string;
-    readonly desiredHash?: string;
-    readonly reason?: string;
-  } = {},
+  values: Partial<
+    Pick<UpdateChange, "current_hash" | "previous_hash" | "desired_hash" | "reason">
+  > = {},
 ): UpdateChange {
-  const change: UpdateChange = {
+  return {
     path: template.path,
-    template_id: template.template_id,
+    generator: template.generator ?? template.asset,
     kind,
+    ...values,
   };
-  if (hashes.currentHash !== undefined) {
-    change.current_hash = hashes.currentHash;
-  }
-  if (hashes.previousHash !== undefined) {
-    change.previous_hash = hashes.previousHash;
-  }
-  if (hashes.desiredHash !== undefined) {
-    change.desired_hash = hashes.desiredHash;
-  }
-  if (hashes.reason !== undefined) {
-    change.reason = hashes.reason;
-  }
-  return change;
 }
 
-function changeSummary(changes: UpdateAnalysis["changes"]): UpdateChange[] {
+export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<UpdateAnalysis> {
+  const root = path.resolve(options.root);
+  await assertNoAncestorWorkspaceAuthority(root);
+  await preflightWorkspaceManifestBoundary(root);
+  const manifest = requireManifest(await loadManifest(root), root);
+  const layout = requireLayout(manifest);
+  await preflightNativeProjectBoundary(root, layout);
+  const receipt = await loadManagedFiles(root);
+  const byPath = new Map(receipt.files.map((record) => [record.path, record]));
+  const desired = await desiredCore(root, manifest);
+  await assertTemplateWriteBoundary(root, [
+    ...desired.map((template) => template.path),
+    MANAGED_FILES_FILE,
+  ]);
+  const desiredPaths = new Set(desired.map((template) => template.path));
+  for (const record of receipt.files) {
+    if (!desiredPaths.has(record.path)) {
+      throw new FrameworkError(
+        `managed receipt references an unsupported core asset: ${record.path}`,
+      );
+    }
+  }
+  const changes: UpdateAnalysis["changes"] = {
+    new: [],
+    auto_update: [],
+    modified_by_user: [],
+    user_deleted: [],
+    untracked_existing: [],
+    unchanged: [],
+  };
+  for (const template of desired) {
+    const target = path.join(root, template.path);
+    const record = byPath.get(template.path);
+    const desiredHash = computeHash(template.content);
+    if (!(await exists(target))) {
+      if (record)
+        changes.user_deleted.push(
+          change(template, "user-deleted", {
+            previous_hash: record.baseline_hash,
+            desired_hash: desiredHash,
+            reason: "managed file is recorded but missing on disk",
+          }),
+        );
+      else changes.new.push(change(template, "new", { desired_hash: desiredHash }));
+      continue;
+    }
+    const currentHash = await fileHash(target);
+    if (!record) {
+      if (currentHash === desiredHash)
+        changes.unchanged.push(
+          change(template, "unchanged", { current_hash: currentHash, desired_hash: desiredHash }),
+        );
+      else
+        changes.untracked_existing.push(
+          change(template, "untracked-existing", {
+            current_hash: currentHash,
+            desired_hash: desiredHash,
+            reason: "file exists but is not in the managed receipt",
+          }),
+        );
+      continue;
+    }
+    if (currentHash === desiredHash)
+      changes.unchanged.push(
+        change(template, "unchanged", {
+          current_hash: currentHash,
+          previous_hash: record.baseline_hash,
+          desired_hash: desiredHash,
+        }),
+      );
+    else if (currentHash === record.baseline_hash)
+      changes.auto_update.push(
+        change(template, "auto-update", {
+          current_hash: currentHash,
+          previous_hash: record.baseline_hash,
+          desired_hash: desiredHash,
+          reason: "managed file is unchanged by the user and differs from the current generator",
+        }),
+      );
+    else
+      changes.modified_by_user.push(
+        change(template, "modified-by-user", {
+          current_hash: currentHash,
+          previous_hash: record.baseline_hash,
+          desired_hash: desiredHash,
+          reason: "managed file differs from both its baseline and current generator",
+        }),
+      );
+  }
+  return updateAnalysisSchema.parse({ root, dry_run: false, changes });
+}
+
+function allChanges(changes: UpdateAnalysis["changes"]): UpdateChange[] {
   return [
     ...changes.new,
     ...changes.auto_update,
@@ -173,169 +233,32 @@ function changeSummary(changes: UpdateAnalysis["changes"]): UpdateChange[] {
   ];
 }
 
-function changeAction(change: UpdateChange, conflictAction: UpdateConflictAction): UpdateChange {
-  const next: UpdateChange = { ...change };
-  if (change.kind === "new") {
-    next.action = "create";
-  } else if (change.kind === "auto-update") {
-    next.action = "update";
-  } else if (change.kind === "modified-by-user" || change.kind === "untracked-existing") {
-    next.action = conflictAction;
-  } else {
-    next.action = "skip";
-  }
-  return next;
-}
-
-function requireManifest(manifest: FrameworkManifest | null, root: string): FrameworkManifest {
-  if (!manifest) {
-    throw new FrameworkNotFoundError(
-      `No framework manifest found at ${path.join(root, MANIFEST_FILE)}. Run init first.`,
-    );
-  }
-  return manifest;
-}
-
-function layoutForManifest(manifest: FrameworkManifest | null): WorkspaceLayout {
-  return resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
-}
-
-function projectNameFromManifest(
-  manifest: FrameworkManifest | null | undefined,
-  fallbackRoot: string,
-): string {
-  return manifest?.project.name || path.basename(path.resolve(fallbackRoot));
-}
-
-function rewriteRenamedArchetype(manifest: FrameworkManifest, report: OperationReport): void {
-  const current = archetypeAliasTarget(manifest.project.archetype);
-  if (!current) {
-    return;
-  }
-  const previous = manifest.project.archetype;
-  manifest.project.archetype = current;
-  report.notes.push(`archetype: renamed ${previous} to ${current} in the manifest`);
-}
-
-async function writeTemplate(root: string, template: TemplateFile): Promise<void> {
-  const target = path.join(root, template.path);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, template.content, "utf8");
-  if (template.executable) {
-    const mode = (await stat(target)).mode;
-    await chmod(target, mode | 0o755);
-  }
-}
-
-async function writeNewCopy(root: string, template: TemplateFile): Promise<string> {
-  const target = `${path.join(root, template.path)}.new`;
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, template.content, "utf8");
-  return relativeDisplayPath(target, root);
-}
-
-export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<UpdateAnalysis> {
-  const root = path.resolve(options.root);
-  await assertNoAncestorWorkspaceAuthority(root);
-  const manifest = requireManifest(await loadManifest(root), root);
-  const project = projectNameFromManifest(manifest, root);
-  const changes: UpdateAnalysis["changes"] = {
-    new: [],
-    auto_update: [],
-    modified_by_user: [],
-    user_deleted: [],
-    untracked_existing: [],
-    unchanged: [],
-  };
-
-  for (const template of await desiredRuntimeTemplates(
-    project,
-    manifest.project.archetype,
-    manifest.project.mode,
-    { root, layout: layoutForManifest(manifest) },
-  )) {
-    const target = path.join(root, template.path);
-    const record = manifest.managed_files[template.path];
-    const desiredHash = computeHash(template.content);
-    if (!(await exists(target))) {
-      if (record) {
-        changes.user_deleted.push(
-          updateChange(template, "user-deleted", {
-            previousHash: record.hash,
-            desiredHash,
-            reason: "managed file is recorded but missing on disk",
-          }),
-        );
-      } else {
-        changes.new.push(updateChange(template, "new", { desiredHash }));
-      }
-      continue;
-    }
-
-    const currentHash = await fileHash(target);
-    if (!record) {
-      if (currentHash === desiredHash) {
-        changes.unchanged.push(updateChange(template, "unchanged", { currentHash, desiredHash }));
-      } else {
-        changes.untracked_existing.push(
-          updateChange(template, "untracked-existing", {
-            currentHash,
-            desiredHash,
-            reason: "file exists but is not tracked in the manifest",
-          }),
-        );
-      }
-      continue;
-    }
-
-    if (currentHash === desiredHash) {
-      changes.unchanged.push(
-        updateChange(template, "unchanged", {
-          currentHash,
-          previousHash: record.hash,
-          desiredHash,
-        }),
-      );
-    } else if (currentHash === record.hash) {
-      changes.auto_update.push(
-        updateChange(template, "auto-update", {
-          currentHash,
-          previousHash: record.hash,
-          desiredHash,
-          reason: "managed file is unchanged by the user and differs from the current template",
-        }),
-      );
-    } else {
-      changes.modified_by_user.push(
-        updateChange(template, "modified-by-user", {
-          currentHash,
-          previousHash: record.hash,
-          desiredHash,
-          reason: "managed file differs from both manifest record and current template",
-        }),
-      );
-    }
-  }
-
-  return updateAnalysisSchema.parse({
-    root,
-    dry_run: false,
-    changes,
-  });
-}
-
 export async function planUpdate(options: PlanUpdateOptions): Promise<UpdatePlan> {
   const action = options.action ?? "skip";
   const analysis = await analyzeUpdate(options);
-  const changes = changeSummary(analysis.changes).map((change) => changeAction(change, action));
-  const notes = options.dryRun ? ["dry-run: no changes applied"] : [];
+  const receipt = await loadManagedFiles(analysis.root);
+  const records = new Map(receipt.files.map((record) => [record.path, record]));
+  const changes = allChanges(analysis.changes).map((item): UpdateChange => {
+    let nextAction: UpdateChange["action"] = "skip";
+    if (item.kind === "new") nextAction = "create";
+    else if (item.kind === "auto-update") nextAction = "update";
+    else if (item.kind === "modified-by-user" || item.kind === "untracked-existing") {
+      nextAction = records.get(item.path)?.protected && action === "force" ? "skip" : action;
+    }
+    return { ...item, action: nextAction };
+  });
   return updatePlanSchema.parse({
     root: analysis.root,
     dry_run: options.dryRun ?? false,
     action,
     changes,
-    notes,
+    notes: options.dryRun ? ["dry-run: no changes applied"] : [],
   });
+}
+
+function backupStamp(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 export async function createBackup(
@@ -346,198 +269,116 @@ export async function createBackup(
   const root = path.resolve(rootInput);
   await assertNoAncestorWorkspaceAuthority(root);
   const backup = path.join(root, BACKUPS_DIR, backupStamp(now));
+  await assertTemplateWriteBoundary(root, [relativeDisplayPath(backup, root)]);
   await mkdir(backup, { recursive: true });
-
   const copied: string[] = [];
-  const candidates = [...new Set([MANIFEST_FILE, VERSION_FILE, ...relativePaths])];
-  for (const relativePath of candidates) {
-    const source = path.join(root, relativePath);
-    const stats = await pathStats(source);
-    if (!stats) {
-      continue;
-    }
-
-    const destination = path.join(backup, relativePath);
-    await mkdir(path.dirname(destination), { recursive: true });
-    if (stats.isDirectory()) {
-      await cp(source, destination, {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-      });
-    } else if (stats.isFile()) {
-      await copyFile(source, destination);
-    } else {
-      continue;
-    }
-    copied.push(relativePath);
+  for (const relative of [...new Set([MANIFEST_FILE, MANAGED_FILES_FILE, ...relativePaths])]) {
+    const source = path.join(root, relative);
+    if (!(await exists(source))) continue;
+    const target = path.join(backup, relative);
+    await mkdir(path.dirname(target), { recursive: true });
+    const info = await stat(source);
+    if (info.isDirectory()) await cp(source, target, { recursive: true });
+    else await copyFile(source, target);
+    copied.push(relative);
   }
-
-  return {
-    path: backup,
-    relativePath: relativeDisplayPath(backup, root),
-    copied,
-  };
+  return { path: backup, relativePath: relativeDisplayPath(backup, root), copied };
 }
 
-async function createFileBackup(
-  rootInput: string,
-  relativePaths: readonly string[],
-  now = new Date(),
-): Promise<BackupResult | null> {
-  const root = path.resolve(rootInput);
-  const backup = path.join(root, BACKUPS_DIR, backupStamp(now));
-  const copied: string[] = [];
-  const candidates = [...new Set(relativePaths)];
-
-  for (const relativePath of candidates) {
-    const source = path.join(root, relativePath);
-    const stats = await pathStats(source);
-    if (!stats?.isFile()) {
-      continue;
-    }
-
-    if (copied.length === 0) {
-      await mkdir(backup, { recursive: true });
-    }
-
-    const destination = path.join(backup, relativePath);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await copyFile(source, destination);
-    copied.push(relativePath);
-  }
-
-  if (copied.length === 0) {
-    return null;
-  }
-
-  return {
-    path: backup,
-    relativePath: relativeDisplayPath(backup, root),
-    copied,
-  };
+async function writeTemplate(root: string, template: TemplateFile): Promise<void> {
+  const target = path.join(root, template.path);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, template.content, "utf8");
+  if (template.executable) await chmod(target, (await stat(target)).mode | 0o755);
 }
 
 export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpdateResult> {
   const root = path.resolve(options.root);
-  await assertNoAncestorWorkspaceAuthority(root);
-  const action = options.action ?? "skip";
   const dryRun = options.dryRun ?? false;
-  await preflightWorkspaceManifestBoundary(root);
-  const boundaryManifest = requireManifest(await loadManifest(root), root);
-  await preflightNativeProjectBoundary(root, layoutForManifest(boundaryManifest));
+  const action = options.action ?? "skip";
   const analysis = await analyzeUpdate({ root });
-  const plan = await planUpdate({ root, dryRun, action });
+  const plan = await planUpdate({
+    root,
+    dryRun,
+    action,
+    ...(options.agents === undefined ? {} : { agents: options.agents }),
+  });
   const report = createEmptyReport();
-  const agentsMode = updateAgentsMode(options.agents);
-  const agentsPlan = await planAssayAgentsBlock({ root, mode: agentsMode });
-
-  if (dryRun) {
-    report.notes.push("dry-run: no changes applied");
-    const manifest = requireManifest(await loadManifest(root), root);
-    const layout = layoutForManifest(manifest);
-    const projectRoot = projectRootRelativePath(layout);
-    for (const relative of [
-      projectRoot,
-      projectFileRelativePath(layout),
-      `${projectRoot}/README.md`,
-      `${projectRoot}/roadmap/README.md`,
-    ]) {
-      if (!(await exists(path.join(root, relative)))) {
-        report.notes.push(`would create native Project path: ${relative}`);
-      }
-    }
-    recordAssayAgentsResult(
-      report,
-      await applyAssayAgentsBlock({ root, mode: agentsMode, dryRun: true }),
-    );
-    return { root, dryRun, action, analysis, plan, report };
-  }
+  const agentsResult = await applyAssayAgentsBlock({
+    root,
+    mode: updateAgentsMode(options.agents),
+    dryRun,
+  });
+  recordAssayAgentsResult(report, agentsResult);
+  if (dryRun) return { root, dryRun, action, analysis, plan, report };
 
   const manifest = requireManifest(await loadManifest(root), root);
-  const project = projectNameFromManifest(manifest, root);
-  const templatesByPath = new Map(
-    (
-      await desiredRuntimeTemplates(project, manifest.project.archetype, manifest.project.mode, {
-        root,
-        layout: layoutForManifest(manifest),
-      })
-    ).map((template) => [template.path, template]),
+  const layout = requireLayout(manifest);
+  const project = await loadNativeProject(root, layout);
+  if (!project)
+    throw new FrameworkNotFoundError("native Project envelope is required before update");
+  await ensureNativeProject(root, layout, project.name);
+  const desired = new Map(
+    (await desiredCore(root, manifest)).map((template) => [template.path, template]),
   );
-  const backupPaths = [
-    ...analysis.changes.auto_update,
-    ...analysis.changes.modified_by_user,
-    ...analysis.changes.untracked_existing,
-  ]
-    .map((change) => change.path)
-    .filter((relativePath) => templatesByPath.has(relativePath));
-  const backupPathsWithAgents =
-    agentsPlan.changed && agentsPlan.action !== "create"
-      ? [...backupPaths, agentsPlan.path]
-      : backupPaths;
-  const backup = await createBackup(root, backupPathsWithAgents, options.now);
-  report.notes.push(`backup: ${backup.relativePath}`);
-
-  for (const change of plan.changes) {
-    const template = templatesByPath.get(change.path);
-    if (!template) {
-      continue;
-    }
-
-    if (change.action === "create") {
+  const receipt = await loadManagedFiles(root);
+  const receiptByPath = new Map(receipt.files.map((record) => [record.path, record]));
+  const mutating = plan.changes.filter((item) =>
+    ["create", "update", "force", "create-new"].includes(item.action ?? "skip"),
+  );
+  const backup =
+    mutating.length > 0
+      ? await createBackup(
+          root,
+          mutating.map((item) => item.path),
+          options.now,
+        )
+      : undefined;
+  let receiptChanged = false;
+  for (const item of plan.changes) {
+    const template = desired.get(item.path);
+    if (!template) continue;
+    if (item.action === "create" || item.action === "update" || item.action === "force") {
       await writeTemplate(root, template);
-      report.created_files.push(template.path);
-      recordTemplate(manifest, template);
-    } else if (change.action === "update" || change.action === "force") {
-      await writeTemplate(root, template);
-      report.updated_files.push(template.path);
-      recordTemplate(manifest, template);
-    } else if (change.action === "create-new") {
-      report.new_copies.push(await writeNewCopy(root, template));
-      if (change.kind === "modified-by-user" || change.kind === "untracked-existing") {
-        report.conflicted_files.push(template.path);
-      }
-    } else if (change.kind === "user-deleted") {
-      if (!manifest.user_deleted.includes(template.path)) {
-        manifest.user_deleted.push(template.path);
-      }
-      report.skipped_files.push(`${template.path} (user-deleted)`);
-    } else if (change.kind === "modified-by-user" || change.kind === "untracked-existing") {
-      report.skipped_files.push(template.path);
-      report.conflicted_files.push(template.path);
-    }
+      (item.action === "create" ? report.created_files : report.updated_files).push(item.path);
+      receiptByPath.set(item.path, managedFileRecord(template));
+      receiptChanged = true;
+    } else if (item.action === "create-new") {
+      const newPath = `${path.join(root, item.path)}.new`;
+      await mkdir(path.dirname(newPath), { recursive: true });
+      await writeFile(newPath, template.content, "utf8");
+      report.new_copies.push(relativeDisplayPath(newPath, root));
+    } else if (item.kind === "unchanged" && !receiptByPath.has(item.path)) {
+      receiptByPath.set(item.path, managedFileRecord(template));
+      receiptChanged = true;
+    } else if (item.kind !== "unchanged") report.skipped_files.push(item.path);
   }
-
-  recordAssayAgentsResult(report, await applyAssayAgentsBlock({ root, mode: agentsMode }));
-
-  const layout = layoutForManifest(manifest);
-  const nativeProject = await ensureNativeProject(root, layout, manifest.project.name);
-  report.created_dirs.push(...nativeProject.createdDirectories);
-  report.created_files.push(...nativeProject.createdFiles);
-
-  rewriteRenamedArchetype(manifest, report);
-  manifest.framework_version = CURRENT_VERSION;
-  await saveManifest(root, manifest);
-  const eventFile = await appendEvent(root, {
-    action,
-    event: "framework.updated",
-    summary: {
-      created: report.created_files.length,
-      new_copies: report.new_copies.length,
-      skipped: report.skipped_files.length,
-      updated: report.updated_files.length,
-    },
-    version: CURRENT_VERSION,
-  });
-
+  if (receiptChanged) {
+    await saveManagedFiles(root, {
+      __schema: 1,
+      files: [...receiptByPath.values()] as ManagedFileRecord[],
+    });
+    report.updated_files.push(MANAGED_FILES_FILE);
+  }
+  const mutated =
+    report.created_files.length + report.updated_files.length + report.new_copies.length > 0;
+  let eventFile: string | undefined;
+  if (mutated) {
+    const file = await appendEvent(
+      root,
+      { event: "framework.updated", action, changed: mutating.length },
+      options.now ?? new Date(),
+    );
+    eventFile = relativeDisplayPath(file, root);
+  }
   return {
     root,
     dryRun,
     action,
     analysis,
-    plan: updatePlanSchema.parse({ ...plan, backup_dir: backup.relativePath }),
+    plan,
     report,
-    backup,
-    eventFile: relativeDisplayPath(eventFile, root),
+    ...(backup ? { backup } : {}),
+    ...(eventFile ? { eventFile } : {}),
   };
 }

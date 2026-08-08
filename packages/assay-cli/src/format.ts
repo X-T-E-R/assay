@@ -1,7 +1,6 @@
 import type {
   AdoptExistingProjectResult,
   ApplyUpdateResult,
-  AssayProjectRecord,
   AttachResult,
   CheckExternalPluginsResult,
   CheckFrameworkResult,
@@ -37,22 +36,6 @@ function countLine(label: string, count: number): string {
   return `${label}: ${count}`;
 }
 
-type OptionalManifestSemantics = {
-  readonly archetype?: string;
-  readonly archetypeDescription?: string;
-  readonly mode?: string;
-};
-
-function manifestSemanticsLines(value: OptionalManifestSemantics): string[] {
-  const archetype = value.archetypeDescription
-    ? `${value.archetype} - ${value.archetypeDescription}`
-    : value.archetype;
-  return [
-    ...(value.archetype ? [`Archetype: ${archetype}`] : []),
-    ...(value.mode ? [`Mode: ${value.mode}`] : []),
-  ];
-}
-
 export function formatReport(report: OperationReport): string {
   const lines = [
     ...section("Created directories", report.created_dirs),
@@ -69,13 +52,10 @@ export function formatReport(report: OperationReport): string {
 }
 
 export function formatInitResult(result: InitFrameworkResult): string {
-  const semantics = manifestSemanticsLines(
-    result as InitFrameworkResult & OptionalManifestSemantics,
-  );
   return [
     `Initialized framework: ${result.root}`,
     `Project: ${result.project}`,
-    ...semantics,
+    `Template: ${result.template}`,
     formatReport(result.report),
   ].join("\n");
 }
@@ -160,9 +140,7 @@ export function formatCheckResult(result: CheckFrameworkResult): string {
         "Manifest:",
         `  - schema: ${result.manifest.schema}`,
         `  - framework version: ${result.manifest.frameworkVersion}`,
-        ...manifestSemanticsLines(
-          result.manifest as typeof result.manifest & OptionalManifestSemantics,
-        ).map((line) => `  - ${line.charAt(0).toLowerCase()}${line.slice(1)}`),
+        `  - format: ${result.manifest.format}`,
         `  - managed files: ${result.manifest.managedFiles}`,
       ]
     : [];
@@ -176,7 +154,7 @@ export function formatCheckResult(result: CheckFrameworkResult): string {
 }
 
 /**
- * Zone lines carry the archetype's purpose text next to the count. An agent
+ * Zone lines carry the manifest entries's purpose text next to the count. An agent
  * entering a workspace has no history, so what a directory is for is directed
  * information rather than noise, and it is the only placement signal that
  * reaches the command agents actually run.
@@ -226,9 +204,6 @@ function upstreamLines(upstream: FrameworkStatusResult["upstream"]): string[] {
 
 export function formatStatusResult(result: FrameworkStatusResult): string {
   const header = ["Framework status", `Root: ${result.root}`];
-  const semantics = manifestSemanticsLines(
-    result as FrameworkStatusResult & OptionalManifestSemantics,
-  );
   const manifest = result.hasManifest
     ? [
         `Installed version: ${result.installedVersion ?? "unknown"}`,
@@ -241,11 +216,9 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
               `Project authority: ${result.nativeProject.authority}`,
             ]
           : []),
-        ...semantics,
         `Managed files: ${result.managedFiles}`,
       ]
     : ["Manifest: missing", "Managed files: 0"];
-  const archetypeNotice = result.archetypeNotice ? [`Archetype: ${result.archetypeNotice}`] : [];
   const zones = zoneLines(result.zones);
 
   const systems =
@@ -294,7 +267,6 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
   return [
     ...header,
     ...manifest,
-    ...archetypeNotice,
     ...zones,
     ...systems,
     ...sources,
@@ -560,13 +532,10 @@ export function formatAdoptionResult(result: AdoptExistingProjectResult): string
   });
   const scaffold = result.scaffold
     ? (() => {
-        const semantics = manifestSemanticsLines(
-          result.scaffold as typeof result.scaffold & OptionalManifestSemantics,
-        ).map((line) => `  - ${line.charAt(0).toLowerCase()}${line.slice(1)}`);
         return [
           "Scaffold:",
           `  - project: ${result.scaffold.project}`,
-          ...semantics,
+          `  - template: ${result.scaffold.template}`,
           `  - created directories: ${result.scaffold.createdDirectories}`,
           `  - created files: ${result.scaffold.createdFiles}`,
           `  - skipped files: ${result.scaffold.skippedFiles}`,
@@ -586,47 +555,6 @@ export function formatAdoptionResult(result: AdoptExistingProjectResult): string
     ...(result.manifestPath ? [`Adoption manifest: ${result.manifestPath}`] : []),
     ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
   ].join("\n");
-}
-
-export function formatProjectList(title: string, records: readonly AssayProjectRecord[]): string {
-  if (records.length === 0) {
-    return `${title}\n(none)`;
-  }
-
-  return [
-    title,
-    ...records.map(
-      (record) =>
-        `${record.status.padEnd(11)} ${formatProjectDate(record.lastSeenAt)}  ${record.id}  ${projectLabel(record).padEnd(28)} ${record.path}`,
-    ),
-    "",
-    `${records.length} project(s)`,
-  ].join("\n");
-}
-
-export function formatProjectRecord(record: AssayProjectRecord): string {
-  return [
-    `${record.name} (${record.id})`,
-    `  status:            ${record.status}`,
-    `  path:              ${record.path}`,
-    `  realpath:          ${record.realpath}`,
-    `  project:           ${record.name}`,
-    `  created:           ${record.createdAt}`,
-    `  last seen:         ${record.lastSeenAt}`,
-    `  created by:        ${record.createdBy}`,
-    `  last command:      ${record.lastCommand}`,
-    `  framework version: ${record.frameworkVersion ?? "unknown"}`,
-    `  layout version:    ${record.layoutVersion ?? "unknown"}`,
-    `  managed files:     ${record.managedFiles}`,
-  ].join("\n");
-}
-
-function formatProjectDate(iso: string): string {
-  return iso.slice(0, 16).replace("T", " ");
-}
-
-function projectLabel(record: AssayProjectRecord): string {
-  return record.name;
 }
 
 function supersedesLine(system: SystemRecord): string {

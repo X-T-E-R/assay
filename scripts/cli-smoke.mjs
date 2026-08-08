@@ -54,7 +54,7 @@ function main() {
     mkdirSync(demo);
     const smokeEnv = {
       ...process.env,
-      ASSAY_PROJECT_REGISTRY_ROOT: path.join(tempRoot, "registry"),
+      ASSAY_WORKSPACES_ROOT: path.join(tempRoot, "workspaces"),
     };
     const smokeOptions = { env: smokeEnv, cwd: demo };
     run("CLI init", ["init", "--name", "Assay Smoke"], smokeOptions);
@@ -136,9 +136,18 @@ function main() {
     }
     run("CLI check with Source adoption state", ["check"], smokeOptions);
 
-    const projects = run("CLI projects list", ["projects", "list", "--json"], smokeOptions);
-    if (!projects.includes("Assay Smoke")) {
-      fail("CLI projects list did not include the initialized project.");
+    const beforeTrack = run(
+      "CLI workspace list before track",
+      ["workspace", "list", "--json"],
+      smokeOptions,
+    );
+    if (beforeTrack.trim() !== "[]") {
+      fail("Lifecycle commands wrote the explicit workspace index.");
+    }
+    run("CLI workspace track", ["workspace", "track", demo], smokeOptions);
+    const workspaces = run("CLI workspace list", ["workspace", "list", "--json"], smokeOptions);
+    if (!workspaces.includes("Assay Smoke") && !workspaces.includes("project-assay-smoke")) {
+      fail("CLI workspace list did not include the explicitly tracked workspace.");
     }
 
     const adopted = path.join(tempRoot, "adopted");

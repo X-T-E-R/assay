@@ -13,13 +13,7 @@ import {
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import {
-  CURRENT_VERSION,
-  LAYOUT_VERSION,
-  MANAGED_DIR,
-  MANIFEST_FILE,
-  VERSION_FILE,
-} from "./constants.js";
+import { MANAGED_DIR, MANAGED_FILES_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import {
@@ -29,9 +23,10 @@ import {
   workspacePath,
   workspaceWorkRelativePath,
 } from "./layout.js";
+import { loadManagedFiles, saveManagedFiles } from "./managed-files.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
-import { dirsForArchetype, loadArchetype } from "./profile.js";
+import { loadNativeProject } from "./project.js";
 import { withRoadmapGlobalCoordination } from "./roadmap.js";
 import type {
   FrameworkManifest,
@@ -45,7 +40,6 @@ import { resolveSourceObservation } from "./sources.js";
 import { withSpecGlobalCoordination } from "./spec.js";
 import { requireSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
 import { withWorkspaceConversionCoordination } from "./tasks/task-storage.js";
-import { nowIso } from "./time.js";
 
 export interface ConvertOverlayOptions {
   readonly root: string;
@@ -275,14 +269,10 @@ export async function convertOverlayToStandalone(
   const targetRoot = path.resolve(options.target);
   await assertNoAncestorWorkspaceAuthority(sourceRoot);
   await assertNoAncestorWorkspaceAuthority(targetRoot);
-  // Fail old/invalid envelopes without creating even a transient conversion
-  // boundary. Custom archetypes are parsed here too: a retired scaffold path
-  // must fail before conversion coordination can create locks or target state.
-  // Both are reloaded after the boundary for authority.
+  // Fail old/invalid envelopes and receipts before coordination can create a
+  // lock or target directory.
   const preflightManifest = await loadManifest(sourceRoot);
-  if (preflightManifest) {
-    await loadArchetype(preflightManifest.project.archetype, { root: sourceRoot });
-  }
+  if (preflightManifest) await loadManagedFiles(sourceRoot);
   const result = await withWorkspaceConversionCoordination(
     sourceRoot,
     async () => {
@@ -344,26 +334,34 @@ async function convertOverlayToStandaloneLocked(
     );
   }
   const targetLayout = defaultStandaloneLayout();
-  const archetype = await loadArchetype(sourceManifest.project.archetype, { root: sourceRoot });
+  const sourceReceipt = await loadManagedFiles(sourceRoot);
+  const sourceProject = await loadNativeProject(sourceRoot, sourceLayout);
+  if (!sourceProject) throw new FrameworkNotFoundError("native Project envelope is required");
   const additionalWorkDirectories = [
     ...new Set(
-      dirsForArchetype(archetype, archetype.mode).flatMap((directory) => {
-        const first = directory.split("/")[0];
-        return first ? [first] : [];
-      }),
+      sourceManifest.layout.entries
+        .filter((entry) => entry.kind === "directory")
+        .flatMap((entry) => {
+          const relative =
+            sourceLayout.work_root === ".assay" && entry.path.startsWith(".assay/")
+              ? entry.path.slice(".assay/".length)
+              : entry.path;
+          const first = relative.split("/")[0];
+          return first ? [first] : [];
+        }),
     ),
   ].filter(
     (directory) =>
       !directory.startsWith(".") &&
       !OVERLAY_WORK_AREAS.includes(directory as (typeof OVERLAY_WORK_AREAS)[number]) &&
       !OVERLAY_WORK_DIRECTORIES.includes(directory as (typeof OVERLAY_WORK_DIRECTORIES)[number]) &&
-      directory !== "systems",
+      !["systems", "backups", "events", "donors"].includes(directory),
   );
   if (move && !keepOverlay) {
     await assertNoUnknownOverlayState(sourceRoot, sourceLayout, additionalWorkDirectories);
   }
   await assertSourceAdoptionStoreTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
-  const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const systemName = sourceProject.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const sourceRegistry = await requireSystemsRegistry(sourceRoot);
   const targetRegistry = await preflightConversionSemantics({
     sourceRoot,
@@ -401,7 +399,7 @@ async function convertOverlayToStandaloneLocked(
   // Copy/move Assay state files. Conversion intentionally ignores retired
   // data surfaces and never reads or rewrites them.
   const stateAreas: readonly WorkspaceArea[] = ["events", "backups"];
-  const stateDirectories: readonly string[] = ["archetypes", "migrations"];
+  const stateDirectories: readonly string[] = [];
   await mkdir(path.join(targetRoot, MANAGED_DIR), { recursive: true });
   await copyOrMoveFile(
     path.join(sourceRoot, sourceLayout.paths.manifest),
@@ -413,8 +411,11 @@ async function convertOverlayToStandaloneLocked(
     path.join(targetRoot, targetLayout.paths.systems_registry),
     move,
   );
-  // Write VERSION into the target (overlay wrote it in source .assay/).
-  await writeFile(path.join(targetRoot, VERSION_FILE), CURRENT_VERSION, "utf8");
+  await copyOrMoveFile(
+    path.join(sourceRoot, MANAGED_FILES_FILE),
+    path.join(targetRoot, MANAGED_FILES_FILE),
+    move,
+  );
   for (const area of stateAreas) {
     const from = workspacePath(sourceRoot, sourceLayout, area);
     const to = workspacePath(targetRoot, targetLayout, area);
@@ -487,24 +488,22 @@ async function convertOverlayToStandaloneLocked(
   // location.
   const targetManifest: FrameworkManifest = {
     ...sourceManifest,
-    layout: targetLayout,
-    layout_version: LAYOUT_VERSION,
-    managed_files: rewriteManagedFilePaths(
-      sourceManifest.managed_files,
-      sourceLayout,
-      targetLayout,
-      additionalWorkDirectories,
-    ),
-    user_deleted: [
-      ...new Set(
-        sourceManifest.user_deleted.map((entry) =>
-          relayoutWorkPath(entry, sourceLayout, targetLayout, additionalWorkDirectories),
-        ),
-      ),
-    ],
-    updated_at: nowIso(now),
+    layout: {
+      ...targetLayout,
+      entries: sourceManifest.layout.entries.map((entry) => ({
+        ...entry,
+        path: relayoutWorkPath(entry.path, sourceLayout, targetLayout, additionalWorkDirectories),
+      })),
+    },
   };
   await saveManifest(targetRoot, targetManifest);
+  await saveManagedFiles(targetRoot, {
+    __schema: 1,
+    files: sourceReceipt.files.map((record) => ({
+      ...record,
+      path: relayoutWorkPath(record.path, sourceLayout, targetLayout, additionalWorkDirectories),
+    })),
+  });
 
   await saveSystemsRegistry(targetRoot, targetRegistry);
   const primaryName = targetRegistry.primary;
@@ -832,7 +831,7 @@ async function transferStateRootFiles(
   const from = path.join(sourceRoot, sourceLayout.state_root);
   if (!(await exists(from))) return;
   const handled = new Set(
-    [sourceLayout.paths.manifest, sourceLayout.paths.systems_registry, VERSION_FILE].map(
+    [sourceLayout.paths.manifest, sourceLayout.paths.systems_registry, MANAGED_FILES_FILE].map(
       (filePath) => path.basename(filePath),
     ),
   );
@@ -870,11 +869,9 @@ async function assertNoUnknownOverlayState(
   const currentNames = new Set([
     path.basename(sourceLayout.paths.manifest),
     path.basename(sourceLayout.paths.systems_registry),
-    path.basename(VERSION_FILE),
+    path.basename(MANAGED_FILES_FILE),
     "events",
     "backups",
-    "archetypes",
-    "migrations",
     "donors",
     "external-plugins.json",
     "README.md",
@@ -901,25 +898,6 @@ async function assertNoUnknownOverlayState(
   }
 }
 
-/**
- * Move every work-area path in the managed-file map from the source layout to
- * the target layout. State paths (`.assay/manifest.json`, `.assay/VERSION`, ...)
- * are identical in both layouts and pass through unchanged.
- */
-function rewriteManagedFilePaths(
-  managedFiles: FrameworkManifest["managed_files"],
-  sourceLayout: WorkspaceLayout,
-  targetLayout: WorkspaceLayout,
-  additionalWorkDirectories: readonly string[],
-): FrameworkManifest["managed_files"] {
-  const rewritten: FrameworkManifest["managed_files"] = {};
-  for (const [filePath, record] of Object.entries(managedFiles)) {
-    rewritten[relayoutWorkPath(filePath, sourceLayout, targetLayout, additionalWorkDirectories)] =
-      record;
-  }
-  return rewritten;
-}
-
 function relayoutWorkPath(
   filePath: string,
   sourceLayout: WorkspaceLayout,
@@ -927,13 +905,17 @@ function relayoutWorkPath(
   additionalWorkDirectories: readonly string[] = [],
 ): string {
   for (const key of RELOCATED_PATH_KEYS) {
-    const from = `${sourceLayout.paths[key]}/`;
+    const fromRoot = sourceLayout.paths[key];
+    const from = `${fromRoot}/`;
+    if (filePath === fromRoot) return targetLayout.paths[key];
     if (filePath.startsWith(from)) {
       return `${targetLayout.paths[key]}/${filePath.slice(from.length)}`;
     }
   }
   for (const directory of [...OVERLAY_WORK_DIRECTORIES, ...additionalWorkDirectories]) {
-    const from = `${workspaceWorkRelativePath(sourceLayout, directory)}/`;
+    const fromRoot = workspaceWorkRelativePath(sourceLayout, directory);
+    const from = `${fromRoot}/`;
+    if (filePath === fromRoot) return workspaceWorkRelativePath(targetLayout, directory);
     if (filePath.startsWith(from)) {
       const to = workspaceWorkRelativePath(targetLayout, directory);
       return `${to}/${filePath.slice(from.length)}`;
@@ -943,8 +925,8 @@ function relayoutWorkPath(
 }
 
 /**
- * Remove only the known VERSION marker and the state root when it is already
- * empty. Unknown entries are never traversed or deleted; an ENOTEMPTY result
+ * Remove the state root only when it is already empty. Unknown entries are
+ * never traversed or deleted; an ENOTEMPTY result
  * leaves the source boundary in place.
  */
 async function removeEmptiedOverlayState(
@@ -955,7 +937,6 @@ async function removeEmptiedOverlayState(
   if (!(await exists(stateRoot))) {
     return false;
   }
-  await rm(path.join(sourceRoot, VERSION_FILE), { force: true });
   for (const directory of ["task-locks", "roadmap-locks", "spec-locks", "spec-staging"]) {
     try {
       await rmdir(path.join(stateRoot, directory));

@@ -3,11 +3,11 @@
 
 Assay runtime metadata. Do not store external evidence or long-lived user knowledge here.
 
-- `VERSION`: installed template version.
-- `manifest.json`: managed file hashes and template IDs.
+- `managed-files.json`: fixed core asset baselines for no-clobber updates.
+- `manifest.json`: framework version, exact layout, and expanded path entries.
 - `systems-registry.json`: registered systems and the current primary system after `assay system register`.
 - `events/`: JSONL event ledger.
-- `migrations/`: migration notes and plans.
-- `backups/`: timestamped backups before update or migration.
 
-Current template release is 0.11.0; layout release is 7.
+- `backups/`: timestamped backups before managed updates.
+
+Current Assay release is 0.12.0; layout release is 8.

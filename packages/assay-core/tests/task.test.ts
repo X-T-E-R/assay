@@ -13,7 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { BARE_ARCHETYPE, writeBareArchetype } from "assay-test-support";
+import { writeBareTemplate } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -83,18 +83,17 @@ async function workspace(
 ): Promise<string> {
   const root = path.join(os.tmpdir(), `assay-task-${randomUUID()}`);
   roots.push(root);
-  await writeBareArchetype(root);
+  const template = await writeBareTemplate(root);
   if (mode === "standalone") {
-    await initFramework({ target: root, name, archetype: BARE_ARCHETYPE });
+    await initFramework({ target: root, name, template });
   } else {
     await mkdir(root, { recursive: true });
     await execa("git", ["init"], { cwd: root });
     await attachExistingRepo({
       root,
       name,
-      archetype: BARE_ARCHETYPE,
+      template,
       privacy: "private",
-      noTrack: true,
     });
   }
   return root;

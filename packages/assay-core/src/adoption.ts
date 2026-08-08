@@ -6,7 +6,6 @@ import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } f
 import { appendEvent } from "./events.js";
 import { loadManifest } from "./manifest.js";
 import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
-import { recordProjectLifecycleBestEffort } from "./project-registry.js";
 import { type InitFrameworkResult, createAnalysis, initFramework } from "./workspace.js";
 
 const ADOPTION_ROOT = ".old";
@@ -20,7 +19,6 @@ export interface AdoptExistingProjectOptions {
   readonly dryRun?: boolean;
   readonly apply?: boolean;
   readonly agents?: boolean;
-  readonly noTrack?: boolean;
   /** After a successful apply, generate an adoption inventory and open an adoption analysis so the archived content is tracked to completion. */
   readonly analyze?: boolean;
   readonly now?: Date;
@@ -45,8 +43,7 @@ export interface AdoptionFailure {
 
 export interface AdoptionScaffoldMetadata {
   readonly project: string;
-  readonly archetype: string;
-  readonly mode: string;
+  readonly template: string;
   readonly createdDirectories: number;
   readonly existingDirectories: number;
   readonly createdFiles: number;
@@ -215,8 +212,7 @@ async function buildAdoptionPlan(rootInput: string, now: Date): Promise<Adoption
 function scaffoldMetadata(init: InitFrameworkResult): AdoptionScaffoldMetadata {
   return {
     project: init.project,
-    archetype: init.archetype,
-    mode: init.mode,
+    template: init.template,
     createdDirectories: init.report.created_dirs.length,
     existingDirectories: init.report.existing_dirs.length,
     createdFiles: init.report.created_files.length,
@@ -382,17 +378,11 @@ export async function adoptExistingProject(
       });
       const eventPath = await appendEvent(plan.root, {
         archive: plan.archiveDir,
-        archetype: init.archetype,
         event: "framework.adopted",
-        mode: init.mode,
         moved: moves.length,
         project,
       });
       eventFile = relativeDisplayPath(eventPath, plan.root);
-      await recordProjectLifecycleBestEffort(plan.root, "adopt", {
-        noTrack: options.noTrack ?? false,
-      });
-
       // Optionally open an adoption analysis so the archived content is tracked
       // to completion instead of left in .old/ to be forgotten.
       if (options.analyze === true) {

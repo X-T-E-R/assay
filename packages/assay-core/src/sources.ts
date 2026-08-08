@@ -9,7 +9,6 @@ import { appendEvent } from "./events.js";
 import { resolveWorkspaceLayout, workspacePath, workspaceRelativePath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
-import { loadArchetype } from "./profile.js";
 import type { CheckRow } from "./results.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
@@ -304,20 +303,7 @@ function layoutForManifest(manifest: FrameworkManifest) {
 }
 
 async function preflightSourceWorkspace(root: string): Promise<FrameworkManifest> {
-  const manifest = requireManifestPresent(await loadManifest(root), root);
-  try {
-    await loadArchetype(manifest.project.archetype, { root });
-  } catch (error) {
-    // Workspaces whose historical archetype no longer resolves intentionally
-    // degrade to the layout's base structure. Still propagate parse failures,
-    // especially RETIRED_ARCHETYPE_PATH, before any Source semantic access.
-    const message = error instanceof Error ? error.message : "";
-    const unresolved =
-      message.startsWith("archetype not found:") ||
-      (message.startsWith("archetype '") && message.includes(" was removed in Assay "));
-    if (!unresolved) throw error;
-  }
-  return manifest;
+  return requireManifestPresent(await loadManifest(root), root);
 }
 
 function sourcesRootForManifest(root: string, manifest: FrameworkManifest): string {

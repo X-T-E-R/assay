@@ -10,7 +10,12 @@ import {
   describeAssayAgentsBlockAction,
   planAssayAgentsBlock,
 } from "./agents.js";
-import { MANAGED_DIR, MANIFEST_FILE, SYSTEMS_REGISTRY_FILE } from "./constants.js";
+import {
+  MANAGED_DIR,
+  MANAGED_FILES_FILE,
+  MANIFEST_FILE,
+  SYSTEMS_REGISTRY_FILE,
+} from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { fileHash } from "./hashing.js";
@@ -25,7 +30,8 @@ import {
   workspaceTemplateRelativePath,
   workspaceWorkRelativePath,
 } from "./layout.js";
-import { defaultManifest, loadManifest, recordTemplate, saveManifest } from "./manifest.js";
+import { loadManagedFiles, receiptForTemplates, saveManagedFiles } from "./managed-files.js";
+import { defaultManifest, loadManifest, saveManifest } from "./manifest.js";
 import {
   assertNoAncestorWorkspaceAuthority,
   relativeDisplayPath,
@@ -33,12 +39,6 @@ import {
   slugify,
 } from "./paths.js";
 import { externalPluginCheckRows } from "./plugins/external.js";
-import {
-  type Archetype,
-  dirsForArchetype,
-  loadArchetype,
-  readInstalledArchetype,
-} from "./profile.js";
 import {
   ensureNativeProject,
   loadNativeProject,
@@ -50,12 +50,7 @@ import {
 } from "./project.js";
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import { RoadmapError, validateRoadmaps } from "./roadmap.js";
-import type {
-  FrameworkManifest,
-  ProjectArchetype,
-  ProjectMode,
-  WorkspaceLayout,
-} from "./schemas/index.js";
+import type { FrameworkManifest, WorkspaceLayout } from "./schemas/index.js";
 import {
   collectSourceAdoptionIntegrityRows,
   getSourceAdoptionSummary,
@@ -64,34 +59,22 @@ import { collectSourceHealthRows, getSourceStatus, resolveSourceObservation } fr
 import { SpecError, validateSpecs } from "./spec.js";
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
 import { TaskError, validateTasks } from "./task.js";
-import { archetypeTemplates } from "./templates.js";
+import { assertTemplateWriteBoundary, loadTemplate } from "./template.js";
+import { baseCoreTemplates, expandTemplate, manifestEntriesForScaffold } from "./templates.js";
 import { nowIso } from "./time.js";
 import { type UpstreamStatus, collectUpstreamStatus } from "./upstream.js";
-import { NATIVE_LAZY_DIRECTORIES, archetypeZones } from "./zones.js";
+import { manifestZones } from "./zones.js";
 
 /**
  * Runtime template set for a workspace, resolved through its layout.
  *
  * Overlay workspaces keep every Assay-managed file under `.assay/`, so the
- * archetype's root-relative template paths are translated before `update` uses
+ * manifest entries's root-relative template paths are translated before `update` uses
  * them. Without the layout, `assay update` would create `README.md`,
  * `.gitignore`, `analyses/`, and `knowledge/` in an attached product
  * repository — the files `attach` deliberately leaves alone.
  *
  */
-export async function desiredRuntimeTemplates(
-  project: string,
-  archetype: ProjectArchetype,
-  mode: ProjectMode,
-  options: {
-    readonly root?: string;
-    readonly layout?: WorkspaceLayout;
-  } = {},
-) {
-  const archetypeDefinition = await loadArchetype(archetype, options);
-  return archetypeTemplates(project, mode, archetypeDefinition, options.layout);
-}
-
 export interface InitFrameworkOptions {
   readonly target: string;
   readonly name?: string;
@@ -99,15 +82,14 @@ export interface InitFrameworkOptions {
   readonly force?: boolean;
   readonly createNew?: boolean;
   readonly agents?: boolean;
-  /** Project archetype name. Built-ins and local/user YAML archetypes are resolved by the core loader. */
-  readonly archetype?: ProjectArchetype;
+  /** Built-in template name or an explicit custom YAML path. */
+  readonly template?: string;
 }
 
 export interface InitFrameworkResult {
   readonly root: string;
   readonly project: string;
-  readonly archetype: ProjectArchetype;
-  readonly mode: ProjectMode;
+  readonly template: string;
   readonly report: OperationReport;
 }
 
@@ -125,8 +107,6 @@ export interface CheckFrameworkResult {
     readonly schema: number;
     readonly frameworkVersion: string;
     readonly format: string;
-    readonly archetype: ProjectArchetype;
-    readonly mode: ProjectMode;
     readonly managedFiles: number;
   };
   readonly systems?: {
@@ -138,7 +118,7 @@ export interface CheckFrameworkResult {
 export interface FrameworkZoneCount {
   readonly path: string;
   readonly files: number;
-  /** What belongs in this zone; empty when the archetype does not declare it. */
+  /** What belongs in this zone. */
   readonly purpose: string;
 }
 
@@ -187,16 +167,6 @@ export interface FrameworkStatusResult {
     readonly path: string;
     readonly authority: string;
   };
-  readonly archetype?: ProjectArchetype;
-  /** The archetype's one-line description; omitted when it declares none. */
-  readonly archetypeDescription?: string;
-  /**
-   * Why the installed archetype could not be resolved, when it could not be.
-   * Zones fall back to the layout's work areas in that case, and this line is
-   * what says so instead of leaving the shorter list unexplained.
-   */
-  readonly archetypeNotice?: string;
-  readonly mode?: ProjectMode;
   readonly managedFiles: number;
   readonly zones: FrameworkZoneCount[];
   readonly systems?: readonly FrameworkStatusSystem[];
@@ -224,18 +194,6 @@ export interface CreateAnalysisResult {
   readonly root: string;
   readonly path: string;
   readonly absolutePath: string;
-  readonly eventFile: string;
-}
-
-export interface CaptureEventOptions {
-  readonly root: string;
-  readonly kind: string;
-  readonly text: string;
-  readonly now?: Date;
-}
-
-export interface CaptureEventResult {
-  readonly root: string;
   readonly eventFile: string;
 }
 
@@ -364,28 +322,17 @@ function layoutDirectoryPath(layout: WorkspaceLayout, directory: string): string
 }
 
 /**
- * Knowledge subdirectory names the workspace's archetype declares (both the
- * `dirs` and mode-specific lists), e.g. `knowledge/playbooks`. A custom
- * archetype owns these names, so `check` must not report them as drift.
+ * Knowledge subdirectory names declared by workspace manifest entries, for
+ * example `knowledge/playbooks`. Entries own these names, so `check` must not
+ * report them as drift.
  */
-async function archetypeKnowledgeDirs(root: string): Promise<string[]> {
-  try {
-    const installedArchetype = await readInstalledArchetype(root);
-    const archetypeDefinition = await loadArchetype(installedArchetype ?? "study", { root });
-    const mode = await readFrameworkMode(root);
-    const names: string[] = [];
-    for (const directory of dirsForArchetype(archetypeDefinition, mode)) {
-      const segments = directory.split("/");
-      if (segments[0] === "knowledge" && segments[1]) {
-        names.push(segments[1]);
-      }
-    }
-    return names;
-  } catch {
-    return [];
-  }
+async function manifestKnowledgeDirs(manifest: FrameworkManifest): Promise<string[]> {
+  return manifest.layout.entries
+    .filter((entry) => entry.kind === "directory")
+    .map((entry) => entry.path.split("/"))
+    .filter((segments) => segments[0] === "knowledge" && Boolean(segments[1]))
+    .map((segments) => segments[1] as string);
 }
-
 async function countKnowledgeEntries(root: string, layout: WorkspaceLayout): Promise<number> {
   const knowledgeRoot = path.join(root, workspaceRelativePath(layout, "knowledge"));
   if (!(await exists(knowledgeRoot))) return 0;
@@ -453,76 +400,74 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
   const root = path.resolve(options.target);
   await assertNoAncestorWorkspaceAuthority(root);
   const installedManifest = await loadManifest(root);
+  if (installedManifest) {
+    throw new FrameworkAlreadyExistsError(
+      `Assay manifest already exists at ${path.join(root, MANIFEST_FILE)}.`,
+    );
+  }
   const project = options.name ?? path.basename(root);
   const report = createEmptyReport();
-
-  const archetype = options.archetype ?? "study";
-  const archetypeDefinition = await loadArchetype(archetype, { root });
-  const mode = archetypeDefinition.mode;
-
-  await preflightNativeProjectBoundary(root, defaultStandaloneLayout());
-
+  const layout = defaultStandaloneLayout();
+  const selected = await loadTemplate(options.template ?? "study");
+  const expanded = expandTemplate(project, selected, layout);
+  const templatePaths = new Set(expanded.files.map((file) => file.path.toLowerCase()));
+  const coreFiles = baseCoreTemplates(project, layout).filter(
+    (file) => !templatePaths.has(file.path.toLowerCase()),
+  );
+  const nativePaths = [
+    `${projectRootRelativePath(layout)}/project.yaml`,
+    `${projectRootRelativePath(layout)}/README.md`,
+    `${projectRootRelativePath(layout)}/roadmap`,
+    `${projectRootRelativePath(layout)}/roadmap/README.md`,
+  ];
+  await assertTemplateWriteBoundary(root, [
+    ...expanded.directories.map((entry) => entry.path),
+    ...expanded.files.map((file) => file.path),
+    ...coreFiles.map((file) => file.path),
+    ...nativePaths,
+    MANIFEST_FILE,
+    MANAGED_FILES_FILE,
+  ]);
+  await preflightNativeProjectBoundary(root, layout);
   await ensureDir(root, root, report);
-
-  let manifest = installedManifest ?? defaultManifest(project, { archetype, mode });
-  manifest.project.archetype = archetype;
-  manifest.project.mode = mode;
-
-  const directories = new Set(dirsForArchetype(archetypeDefinition, mode));
-  for (const directory of directories) {
+  for (const directory of expanded.directories.map((entry) => entry.path)) {
     await ensureDir(path.join(root, directory), root, report);
   }
-
-  const nativeProject = await ensureNativeProject(
-    root,
-    defaultStandaloneLayout(),
-    manifest.project.name,
-  );
+  const nativeProject = await ensureNativeProject(root, layout, project);
   report.created_dirs.push(...nativeProject.createdDirectories);
   report.created_files.push(...nativeProject.createdFiles);
 
-  for (const template of archetypeTemplates(project, mode, archetypeDefinition)) {
+  const installedCore: typeof coreFiles = [];
+  for (const template of [...coreFiles, ...expanded.files]) {
     const result = await writeTemplateFile(root, template.path, template.content, report, {
       force: options.force ?? false,
       createNew: options.createNew ?? false,
       executable: template.executable,
     });
-    if (result === "written") {
-      recordTemplate(manifest, template);
-    }
+    if (result === "written" && template.managed) installedCore.push(template);
   }
-  const manifestExisted = await exists(path.join(root, MANIFEST_FILE));
-  manifest = await saveManifest(root, manifest);
-  (manifestExisted ? report.updated_files : report.created_files).push(MANIFEST_FILE);
+  const entries = manifestEntriesForScaffold(layout, expanded, coreFiles);
+  const manifest = await saveManifest(root, defaultManifest(entries));
+  report.created_files.push(MANIFEST_FILE);
+  await saveManagedFiles(root, receiptForTemplates(installedCore));
+  report.created_files.push(MANAGED_FILES_FILE);
 
   recordAssayAgentsResult(
     report,
-    await applyAssayAgentsBlock({
-      root,
-      mode: options.agents === false ? "skip" : "install",
-    }),
+    await applyAssayAgentsBlock({ root, mode: options.agents === false ? "skip" : "install" }),
   );
-
   await appendEvent(root, {
-    archetype,
     event: "framework.initialized",
-    mode,
     project,
     version: manifest.framework_version,
   });
-
   if (options.git && !(await exists(path.join(root, ".git")))) {
     const result = await execa("git", ["init"], { cwd: root, reject: false });
-    if (result.exitCode === 0) {
-      report.notes.push("initialized root git repository");
-    } else {
-      report.notes.push(`git init failed: ${(result.stderr || result.stdout).trim()}`);
-    }
+    if (result.exitCode === 0) report.notes.push("initialized root git repository");
+    else report.notes.push(`git init failed: ${(result.stderr || result.stdout).trim()}`);
   }
-
-  return { root, project, archetype, mode, report };
+  return { root, project, template: selected.name, report };
 }
-
 export async function checkFramework(
   options: CheckFrameworkOptions,
 ): Promise<CheckFrameworkResult> {
@@ -569,56 +514,23 @@ export async function checkFramework(
     }
   }
 
-  // Base structure check targets: always-required runtime files plus the
-  // archetype-declared primary directories. systems/ and knowledge/ resolve
-  // through the layout: standalone keeps them at root, overlay keeps them
-  // under .assay/.
   const checkTargets: Array<readonly [string, string]> = [
     [`${MANAGED_DIR} directory`, MANAGED_DIR],
-    [`${MANAGED_DIR}/VERSION`, `${MANAGED_DIR}/VERSION`],
     [`${MANAGED_DIR}/manifest.json`, `${MANAGED_DIR}/manifest.json`],
+    [`${MANAGED_DIR}/managed-files.json`, `${MANAGED_DIR}/managed-files.json`],
     ["systems directory", workspaceRelativePath(layout, "systemsContracts")],
     ["knowledge directory", workspaceRelativePath(layout, "knowledge")],
     ["native Project directory", workspaceWorkRelativePath(layout, "project")],
   ];
-
-  // If a workspace declares its archetype, augment checks with that archetype's
-  // top-level dirs (intake/, problem/, sources/, analyses/,
-  // benchmarks/, attempts/...). Default to a permissive check when the
-  // manifest/archetype cannot be read.
-  const archetypeDegradations: CheckRow[] = [];
-  try {
-    const installedArchetype = await readInstalledArchetype(root);
-    const archetypeDefinition = await loadArchetype(installedArchetype ?? "study", { root });
-    const mode = await readFrameworkMode(root);
-    const topLevels = new Set<string>();
-    for (const d of dirsForArchetype(archetypeDefinition, mode)) {
-      const top = d.split("/")[0];
-      if (
-        top &&
-        !top.startsWith(".") &&
-        top !== "project" &&
-        top !== "systems" &&
-        top !== "knowledge"
-      ) {
-        topLevels.add(top);
-      }
+  if (manifestForLayout) {
+    for (const entry of manifestForLayout.layout.entries.filter(
+      (entry) => entry.kind === "directory",
+    )) {
+      checkTargets.push([entry.purpose || "manifest directory", entry.path]);
     }
-    for (const dir of topLevels) {
-      checkTargets.push([`${dir} directory`, layoutDirectoryPath(layout, dir)]);
-    }
-  } catch (error) {
-    // The archetype is what tells check which directories this workspace is
-    // supposed to have. Falling back to the base set silently made a workspace
-    // whose archetype no longer resolves look fully checked, so say so.
-    archetypeDegradations.push({
-      path: MANIFEST_FILE,
-      status: "warning",
-      message: describeArchetypeDegradation(error),
-    });
   }
 
-  const rows: CheckRow[] = [...archetypeDegradations];
+  const rows: CheckRow[] = [];
 
   for (const [label, target] of checkTargets) {
     rows.push({
@@ -634,7 +546,7 @@ export async function checkFramework(
     rows.push({
       path: MANIFEST_FILE,
       status: "ok",
-      message: `manifest schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
+      message: `manifest schema ${manifest.__schema}; layout ${manifest.layout.version} ${manifest.layout.mode}`,
     });
 
     try {
@@ -662,33 +574,50 @@ export async function checkFramework(
       });
     }
 
-    // Semantic check 1: managed file existence + hash consistency
-    for (const [filePath, record] of Object.entries(manifest.managed_files)) {
-      const absolutePath = path.join(root, filePath);
-      if (!(await exists(absolutePath))) {
+    for (const entry of manifest.layout.entries.filter((entry) => entry.kind === "file")) {
+      if (!(await exists(path.join(root, entry.path)))) {
         rows.push({
-          path: filePath,
-          status: "error",
-          message: `managed file missing (template: ${record.template_id})`,
+          path: entry.path,
+          status: "missing",
+          message: "manifest file entry is missing",
         });
-        continue;
       }
-      try {
-        const currentHash = await fileHash(absolutePath);
-        if (currentHash !== record.hash) {
+    }
+    try {
+      const receipt = await loadManagedFiles(root);
+      for (const record of receipt.files) {
+        const absolutePath = path.join(root, record.path);
+        if (!(await exists(absolutePath))) {
           rows.push({
-            path: filePath,
+            path: record.path,
+            status: "error",
+            message: "managed file missing",
+          });
+          continue;
+        }
+        try {
+          const currentHash = await fileHash(absolutePath);
+          if (currentHash !== record.baseline_hash) {
+            rows.push({
+              path: record.path,
+              status: "warning",
+              message: "modified by user (hash differs from managed receipt)",
+            });
+          }
+        } catch {
+          rows.push({
+            path: record.path,
             status: "warning",
-            message: "modified by user (hash differs from manifest)",
+            message: "could not read file for hash check",
           });
         }
-      } catch {
-        rows.push({
-          path: filePath,
-          status: "warning",
-          message: "could not read file for hash check",
-        });
       }
+    } catch (error) {
+      rows.push({
+        path: MANAGED_FILES_FILE,
+        status: "error",
+        message: error instanceof Error ? error.message : "managed receipt failed validation",
+      });
     }
   } else if (!rows.some((row) => row.path === MANIFEST_FILE && row.status === "error")) {
     rows.push({ path: MANIFEST_FILE, status: "missing", message: "readable manifest" });
@@ -789,7 +718,7 @@ export async function checkFramework(
   // knowledge type, producing a parallel "knowledge/troubleshootings/"
   // directory that split troubleshooting entries from their README. Flag any
   // knowledge subdirectory that is neither a base name nor declared by the
-  // workspace's archetype, so real drift is visible while a custom archetype's
+  // workspace's manifest entries, so real drift is visible while a custom manifest entries's
   // own knowledge folders stay clean.
   try {
     const knowledgeRoot = workspacePath(root, layout, "knowledge");
@@ -800,7 +729,7 @@ export async function checkFramework(
         "troubleshooting",
         "templates",
         "evaluations",
-        ...(await archetypeKnowledgeDirs(root)),
+        ...(manifest ? await manifestKnowledgeDirs(manifest) : []),
       ]);
       const entries = await readdir(knowledgeRoot, { withFileTypes: true });
       for (const entry of entries) {
@@ -905,7 +834,7 @@ export async function checkFramework(
 
   // Advisory check 6: placement. `check` has always validated that declared
   // directories exist; these three report the opposite — content sitting where
-  // the archetype never said it should. They are advisories on purpose:
+  // the manifest entries never said it should. They are advisories on purpose:
   // writing straight into a directory instead of going through a command is
   // normal usage, and the goal is to make misplacement visible and fixable
   // rather than to fail the workspace over it.
@@ -914,7 +843,7 @@ export async function checkFramework(
   }
 
   // Advisory check 7: the AGENTS.md managed block no longer matches the
-  // archetype. The block is generated, so an archetype whose directories or
+  // manifest entries. The block is generated, so an manifest entries whose directories or
   // description changed leaves stale layout guidance in the one channel that
   // reaches an agent before it does anything.
   if (includeAdvisories) {
@@ -925,7 +854,7 @@ export async function checkFramework(
           path: ASSAY_AGENTS_FILE,
           status: "warning",
           message:
-            "Assay managed block in AGENTS.md does not match the current archetype. Run `assay update --agents` to refresh the workspace layout table.",
+            "Assay managed block in AGENTS.md does not match the current manifest entries. Run `assay update --agents` to refresh the workspace layout table.",
         });
       }
     } catch {
@@ -1064,10 +993,8 @@ export async function checkFramework(
           manifest: {
             schema: manifest.__schema,
             frameworkVersion: manifest.framework_version,
-            format: `schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
-            archetype: manifest.project.archetype,
-            mode: manifest.project.mode,
-            managedFiles: Object.keys(manifest.managed_files).length,
+            format: `schema ${manifest.__schema}; layout ${manifest.layout.version} ${manifest.layout.mode}`,
+            managedFiles: (await loadManagedFiles(root)).files.length,
           },
         }
       : {}),
@@ -1079,11 +1006,11 @@ export async function checkFramework(
 
 /**
  * Directories under a work root that belong to Assay's own machinery rather
- * than to an archetype. In an overlay workspace the work root and the state
+ * than to an manifest entries. In an overlay workspace the work root and the state
  * root are the same directory, so these sit next to the work folders and must
  * not be reported as stray placement.
  */
-const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["donors", "archetypes", "node_modules", "tasks"]);
+const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["donors", "node_modules", "tasks"]);
 
 /**
  * Name of the work-root entry a workspace-root-relative path sits under, or
@@ -1102,7 +1029,7 @@ function workRootEntryName(layout: WorkspaceLayout, rootRelativePath: string): s
 }
 
 /**
- * Placement advisories: content that exists where the archetype never declared
+ * Placement advisories: content that exists where the manifest entries never declared
  * a home for it. Every row is a warning, never an error.
  */
 async function collectPlacementAdvisories(
@@ -1118,7 +1045,7 @@ async function collectPlacementAdvisories(
 
 /**
  * Top-level directories in the workspace's work root that neither the
- * archetype nor the layout accounts for. This is the Loreal case: material
+ * manifest entries nor the layout accounts for. This is the Loreal case: material
  * piling up somewhere the workspace has no semantics for.
  */
 async function collectUndeclaredDirectoryRows(
@@ -1129,19 +1056,12 @@ async function collectUndeclaredDirectoryRows(
   if (!manifest) {
     return [];
   }
-  let archetype: Archetype;
-  try {
-    archetype = await loadArchetype(manifest.project.archetype, { root });
-  } catch {
-    return [];
-  }
 
   const declared = new Set<string>(NON_ZONE_WORK_ROOT_ENTRIES);
-  for (const directory of [
-    ...dirsForArchetype(archetype, manifest.project.mode),
-    ...NATIVE_LAZY_DIRECTORIES.map((directory) => directory.path),
-  ]) {
-    const name = workRootEntryName(layout, workspaceTemplateRelativePath(layout, directory));
+  for (const entry of manifest.layout.entries.filter(
+    (candidate) => candidate.kind === "directory",
+  )) {
+    const name = workRootEntryName(layout, entry.path);
     if (name) {
       declared.add(name);
     }
@@ -1170,7 +1090,7 @@ async function collectUndeclaredDirectoryRows(
     rows.push({
       path: workspaceWorkRelativePath(layout, name),
       status: "warning",
-      message: `directory '${name}/' is not declared by archetype ${archetype.name}. Move its contents into a declared directory (\`assay status\` lists them) or add it to the archetype.`,
+      message: `directory '${name}/' is not declared by the workspace manifest. Move its contents into a declared directory (\`assay status\` lists them).`,
     });
   }
   return rows;
@@ -1428,8 +1348,8 @@ function countPendingQueueEntries(parsed: unknown): number {
 
 /**
  * Work areas every layout defines, with the purpose to show when one of them
- * holds content the archetype never declared. Status must not hide content in
- * a current layout-owned work area merely because the archetype omits it.
+ * holds content the manifest entries never declared. Status must not hide content in
+ * a current layout-owned work area merely because the manifest entries omits it.
  */
 const WORK_AREA_ZONE_PURPOSES: ReadonlyArray<readonly [WorkspaceArea, string]> = [
   ["sources", "External systems captured as evidence"],
@@ -1438,80 +1358,19 @@ const WORK_AREA_ZONE_PURPOSES: ReadonlyArray<readonly [WorkspaceArea, string]> =
   ["systemsContracts", "Registered systems and local implementations"],
 ];
 
-async function readArchetypeForStatus(
-  root: string,
-  manifest: FrameworkManifest | null,
-): Promise<{ readonly archetype: Archetype | null; readonly degradation?: string }> {
-  if (!manifest) {
-    return { archetype: null };
-  }
-  try {
-    return { archetype: await loadArchetype(manifest.project.archetype, { root }) };
-  } catch (error) {
-    // An unresolvable archetype degrades to work-area zones rather than
-    // failing, but the degradation is stated: the zone list is otherwise
-    // indistinguishable from a workspace that simply has little in it.
-    return { archetype: null, degradation: describeArchetypeDegradation(error) };
-  }
-}
-
-/**
- * One line explaining that the archetype could not be resolved and what the
- * command did instead. Shared by `status` and `check` so both name the same
- * cause, which for a removed or renamed archetype is the actionable part.
- */
-function describeArchetypeDegradation(error: unknown): string {
-  const reason = error instanceof Error ? error.message : "archetype could not be loaded";
-  return `${reason} — reporting base structure only`;
-}
-
-/**
- * Zones for `assay status`: every zone the archetype declares, plus any layout
- * work area that exists on disk and no declared zone already covers. Paths are
- * resolved through the layout, so an overlay workspace reports the `.assay/`
- * locations it actually uses.
- */
 async function resolveStatusZones(
   root: string,
-  layout: WorkspaceLayout,
-  archetype: Archetype | null,
-  mode: ProjectMode,
+  manifest: FrameworkManifest | null,
 ): Promise<FrameworkZoneCount[]> {
-  const declared = archetype ? archetypeZones(archetype, mode) : [];
-  const resolved = new Map<string, string>();
-  for (const zone of declared) {
-    const zonePath = workspaceTemplateRelativePath(layout, zone.path);
-    if (!resolved.has(zonePath)) {
-      resolved.set(zonePath, zone.purpose);
-    }
-  }
-
-  for (const [area, purpose] of WORK_AREA_ZONE_PURPOSES) {
-    const areaPath = workspaceRelativePath(layout, area);
-    const covered = [...resolved.keys()].some(
-      (zonePath) => zonePath === areaPath || zonePath.startsWith(`${areaPath}/`),
-    );
-    if (covered || !(await exists(path.join(root, areaPath)))) {
-      continue;
-    }
-    resolved.set(areaPath, purpose);
-  }
-
+  if (!manifest) return [];
   return Promise.all(
-    [...resolved].map(async ([zonePath, purpose]) => ({
-      path: zonePath,
-      files: await countFiles(path.join(root, zonePath)),
-      purpose,
+    manifestZones(manifest.layout.entries, manifest.layout).map(async (zone) => ({
+      path: zone.path,
+      files: await countFiles(path.join(root, zone.path)),
+      purpose: zone.purpose,
     })),
   );
 }
-
-/**
- * Count records in a workspace-root `runs.jsonl`. Assay does not create the
- * file and no command writes to it; external harnesses append one JSON object
- * per line. Counting it keeps those records visible without asking anyone to
- * run a command they would have to remember.
- */
 async function countRunRecords(root: string, layout: WorkspaceLayout): Promise<number | undefined> {
   const runsPath = path.join(root, workspaceWorkRelativePath(layout, "runs.jsonl"));
   let size: number;
@@ -1551,14 +1410,7 @@ export async function getFrameworkStatus(
     await preflightNativeProjectBoundary(root, layoutForManifest(manifest));
   }
   const layout = layoutForManifest(manifest);
-  const { archetype: archetypeDefinition, degradation: archetypeNotice } =
-    await readArchetypeForStatus(root, manifest);
-  const zones = await resolveStatusZones(
-    root,
-    layout,
-    archetypeDefinition,
-    manifest?.project.mode ?? archetypeDefinition?.mode ?? "learning",
-  );
+  const zones = await resolveStatusZones(root, manifest);
 
   // Systems section from registry
   let systems: readonly FrameworkStatusSystem[] | undefined;
@@ -1658,17 +1510,11 @@ export async function getFrameworkStatus(
     root,
     hasManifest: true,
     installedVersion: manifest.framework_version,
-    layoutVersion: manifest.layout_version,
-    manifestFormat: `schema ${manifest.__schema}; archetype ${manifest.project.archetype}; mode ${manifest.project.mode}`,
-    project: manifest.project.name,
+    layoutVersion: manifest.layout.version,
+    manifestFormat: `schema ${manifest.__schema}; layout ${manifest.layout.version} ${manifest.layout.mode}`,
+    ...(nativeProject ? { project: nativeProject.name } : {}),
     ...(nativeProject ? { nativeProject } : {}),
-    archetype: manifest.project.archetype,
-    ...(archetypeDefinition && archetypeDefinition.description !== ""
-      ? { archetypeDescription: archetypeDefinition.description }
-      : {}),
-    ...(archetypeNotice ? { archetypeNotice } : {}),
-    mode: manifest.project.mode,
-    managedFiles: Object.keys(manifest.managed_files).length,
+    managedFiles: (await loadManagedFiles(root)).files.length,
     zones,
     ...(systems ? { systems } : {}),
     ...(sourceSummary ? { sources: sourceSummary } : {}),
@@ -1679,16 +1525,11 @@ export async function getFrameworkStatus(
   };
 }
 
-export async function readFrameworkMode(root: string): Promise<"learning" | "absorption"> {
-  const manifest = await loadManifest(root);
-  return manifest?.project.mode ?? "learning";
-}
 export async function createAnalysis(
   options: CreateAnalysisOptions,
 ): Promise<CreateAnalysisResult> {
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
-  await loadArchetype(manifest.project.archetype, { root });
   const layout = layoutForManifest(manifest);
   const now = options.now ?? new Date();
   const date = dateStamp(now);
@@ -1749,22 +1590,9 @@ export async function createAnalysis(
   };
 }
 
-export async function captureEvent(options: CaptureEventOptions): Promise<CaptureEventResult> {
-  const root = path.resolve(options.root);
-  requireManifest(await loadManifest(root), root);
-  const eventFile = await appendEvent(
-    root,
-    { event: "capture.created", kind: options.kind, text: options.text },
-    options.now ?? new Date(),
-  );
-
-  return { root, eventFile: relativeDisplayPath(eventFile, root) };
-}
-
 export async function closeAnalysis(options: CloseAnalysisOptions): Promise<CloseAnalysisResult> {
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
-  await loadArchetype(manifest.project.archetype, { root });
   const now = options.now ?? new Date();
   const date = dateStamp(now);
 

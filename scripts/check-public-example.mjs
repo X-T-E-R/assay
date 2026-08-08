@@ -105,7 +105,6 @@ function main() {
     "--root",
     exampleRoot,
     "--dry-run",
-    "--no-track",
   ]);
   assertDryRunUnchanged(updateOutput);
   console.log("Committed public example checks passed.");

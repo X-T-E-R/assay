@@ -1,25 +1,11 @@
+# Source analysis
 
-# Source Analysis Card
+## Source
 
-- Source alias:
-- Source observation:
-- Source materials:
-- Date:
+## Key observations
 
-## Problem it solves
+## Adopt
 
-## Architecture / structure
+## Reject
 
-## CLI and workflow mechanisms
-
-## Version/update mechanisms
-
-## What we should adopt
-
-## What we should reject
-
-## Decision exit
-
-- [ ] adopt
-- [ ] reject
-- [ ] experiment
+## Next step

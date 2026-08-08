@@ -8,19 +8,17 @@ This workspace is managed by Assay.
 - Do not assume the repository root is the system being built. The root is the Assay workspace/control surface. Systems live under `systems/` and registered systems are managed with `assay system ...`.
 - Use Assay commands for `.assay/` state. Edits outside this block are preserved.
 
-## Workspace layout (archetype: study)
-
-Study external systems as the main product, converting what survives analysis into reusable knowledge.
+## Workspace layout
 
 | Directory | What goes here |
 | --- | --- |
-| `sources/` | Living and frozen external evidence |
+| `sources/` | Living sources and frozen external evidence (created on first use) |
 | `analyses/references/` | Analysis cards for external systems |
 | `analyses/gaps/` | Gaps between an external system and this workspace |
 | `analyses/patterns/` | Candidate reusable patterns awaiting validation |
-| `project/` | Native Project charter, roadmap, specifications, selected Relay records, and extensions |
+| `project/` | Native Project authority |
 | `systems/` | Registered systems and local implementations |
-| `knowledge/` | Accepted, reusable knowledge |
+| `knowledge/` | Accepted reusable knowledge |
 | `analyses/` | Analysis records (created on first use) |
 
 <!-- ASSAY:END -->

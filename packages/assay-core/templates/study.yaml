@@ -1,0 +1,30 @@
+__schema: 1
+description: Study external systems as the main product, converting what survives analysis into reusable knowledge.
+directories:
+  - path: sources
+    purpose: Living and frozen external evidence
+  - path: analyses/references
+    purpose: Analysis cards for external systems
+  - path: analyses/gaps
+    purpose: Gaps between an external system and this workspace
+  - path: analyses/patterns
+    purpose: Candidate reusable patterns awaiting validation
+  - path: analyses/templates
+    purpose: Blank analysis forms
+files:
+  - path: sources/README.md
+    content: "# sources/\n\nExternal systems captured as evidence.\n"
+  - path: analyses/README.md
+    content: "# analyses/\n\nConvert source evidence into decisions and reusable knowledge.\n"
+  - path: analyses/references/.gitkeep
+    content: ""
+  - path: analyses/gaps/.gitkeep
+    content: ""
+  - path: analyses/patterns/.gitkeep
+    content: ""
+  - path: analyses/templates/source-analysis-card.md
+    content: "# Source analysis\n\n## Source\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next step\n"
+  - path: analyses/templates/gap-analysis.md
+    content: "# Gap analysis\n\n## Current state\n\n## Target state\n\n## Gap\n\n## Decision\n"
+  - path: analyses/templates/pattern-card.md
+    content: "# Pattern\n\n## Context\n\n## Pattern\n\n## Evidence\n\n## Limits\n"

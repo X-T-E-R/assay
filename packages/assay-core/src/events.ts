@@ -3,7 +3,6 @@ import path from "node:path";
 
 import { EVENTS_DIR } from "./constants.js";
 import { InvalidEventError } from "./errors.js";
-import { type PersistedEventEntry, eventEntrySchema } from "./schemas/index.js";
 import { stringifySortedJson } from "./serialization.js";
 import { nowIso } from "./time.js";
 
@@ -20,18 +19,10 @@ export async function appendEvent(
   event: Record<string, unknown>,
   when = new Date(),
 ): Promise<string> {
-  const parsed = eventEntrySchema.safeParse(event);
-  if (!parsed.success) {
-    throw new InvalidEventError("Event entry failed validation.", {
-      details: parsed.error.flatten(),
-      cause: parsed.error,
-    });
+  if (event.ts !== undefined && (typeof event.ts !== "string" || event.ts.length === 0)) {
+    throw new InvalidEventError("Event timestamp must be a non-empty string.");
   }
-
-  const persisted: PersistedEventEntry = {
-    ...parsed.data,
-    ts: typeof parsed.data.ts === "string" ? parsed.data.ts : nowIso(when),
-  };
+  const persisted = { ...event, ts: typeof event.ts === "string" ? event.ts : nowIso(when) };
   const file = eventPath(root, when);
   await mkdir(path.dirname(file), { recursive: true });
   await appendFile(file, stringifySortedJson(persisted, 0), "utf8");

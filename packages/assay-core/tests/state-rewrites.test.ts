@@ -17,18 +17,13 @@ import {
 
 const tempDirs = createTempDirectoryFixture("assay-core-state-rewrites");
 
-beforeAll(() => {
-  // Never touch the user-global Assay project registry from tests.
-  process.env.ASSAY_NO_TRACK = "1";
-});
-
 afterEach(async () => {
   await tempDirs.cleanup();
 });
 
-async function workspace(name: string, archetype?: string): Promise<string> {
+async function workspace(name: string): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
-  await initFramework({ target: root, name, ...(archetype ? { archetype } : {}) });
+  await initFramework({ target: root, name });
   return root;
 }
 

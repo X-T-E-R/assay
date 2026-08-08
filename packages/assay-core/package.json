@@ -1,6 +1,6 @@
 {
   "name": "assay-core",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,7 +8,7 @@
     "./schemas": "./dist/schemas/index.js"
   },
   "types": "./dist/index.d.ts",
-  "files": ["dist", "profiles"],
+  "files": ["dist", "templates"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --config vitest.config.ts",

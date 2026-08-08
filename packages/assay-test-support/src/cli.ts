@@ -55,7 +55,7 @@ export function createBuiltCliRunner(options: BuiltCliRunnerOptions = {}): Built
   ): Promise<CliResult> {
     const env = {
       ...process.env,
-      ...(options.registryRoot ? { ASSAY_PROJECT_REGISTRY_ROOT: options.registryRoot } : {}),
+      ...(options.registryRoot ? { ASSAY_WORKSPACES_ROOT: options.registryRoot } : {}),
       ...options.env,
       ...runOptions.env,
     };

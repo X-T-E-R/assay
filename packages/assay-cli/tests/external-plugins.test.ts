@@ -29,7 +29,7 @@ async function tempDir(): Promise<string> {
 async function runCli(args: readonly string[]) {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      env: { ...process.env, ASSAY_PROJECT_REGISTRY_ROOT: registryRoot },
+      env: { ...process.env, ASSAY_WORKSPACES_ROOT: registryRoot },
     });
     return { exitCode: 0, stdout, stderr };
   } catch (error) {

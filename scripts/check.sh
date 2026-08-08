@@ -9,9 +9,9 @@ pnpm check
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 demo="$tmp/demo"
-registry="$tmp/registry"
+registry="$tmp/workspaces"
 cli="$repo_root/packages/assay-cli/dist/cli.js"
-export ASSAY_PROJECT_REGISTRY_ROOT="$registry"
+export ASSAY_WORKSPACES_ROOT="$registry"
 
 node "$cli" --help >/dev/null
 mkdir -p "$demo"
@@ -21,7 +21,9 @@ mkdir -p "$demo"
   node "$cli" check
   node "$cli" status >/dev/null
   node "$cli" update --dry-run >/dev/null
-  node "$cli" projects list --json >/dev/null
+  test "$(node "$cli" workspace list --json)" = "[]"
+  node "$cli" workspace track "$demo" >/dev/null
+  node "$cli" workspace list --json >/dev/null
 )
 
 adopted="$tmp/adopted"

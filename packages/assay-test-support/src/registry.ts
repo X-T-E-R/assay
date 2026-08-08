@@ -5,8 +5,8 @@ import path from "node:path";
 import type { TempDirectoryFixture } from "./filesystem.js";
 import { pathExists } from "./filesystem.js";
 
-/** Environment variable that redirects Assay's project registry. */
-export const REGISTRY_ROOT_ENV = "ASSAY_PROJECT_REGISTRY_ROOT";
+/** Environment variable that redirects Assay's explicit workspace index. */
+export const REGISTRY_ROOT_ENV = "ASSAY_WORKSPACES_ROOT";
 
 export async function createIsolatedRegistryRoot(
   tempDirs: TempDirectoryFixture,
@@ -20,12 +20,12 @@ export async function createIsolatedRegistryRoot(
  * repeated imports inside one worker agree on the same location.
  */
 export function isolatedRegistryRootForProcess(): string {
-  return path.join(os.tmpdir(), `assay-test-registry-${process.pid}`, "projects");
+  return path.join(os.tmpdir(), `assay-test-workspaces-${process.pid}`, "workspaces");
 }
 
 /** Where Assay writes project records when nothing redirects it. */
 export function userProjectRegistryRoot(): string {
-  return path.join(os.homedir(), ".assay", "projects");
+  return path.join(os.homedir(), ".assay", "workspaces");
 }
 
 /**

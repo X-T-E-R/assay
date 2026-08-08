@@ -11,25 +11,12 @@ import path from "node:path";
 import * as codec from "./donors/index.js";
 import { FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
-import { loadArchetype } from "./profile.js";
 import { withWorkspaceMutationCoordination } from "./tasks/task-storage.js";
 
 async function preflight(root: string): Promise<string> {
   const resolved = path.resolve(root);
   const manifest = await loadManifest(resolved);
   if (!manifest) throw new FrameworkNotFoundError(`No Assay manifest found: ${resolved}`);
-  try {
-    await loadArchetype(manifest.project.archetype, { root: resolved });
-  } catch (error) {
-    // A removed/unknown historical archetype degrades to the base layout.
-    // Invalid custom archetypes, including retired path declarations, still
-    // fail before any Source adoption receipt is read or written.
-    const message = error instanceof Error ? error.message : "";
-    const unresolved =
-      message.startsWith("archetype not found:") ||
-      (message.startsWith("archetype '") && message.includes(" was removed in Assay "));
-    if (!unresolved) throw error;
-  }
   return resolved;
 }
 

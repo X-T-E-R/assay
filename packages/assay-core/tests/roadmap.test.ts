@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "no
 import os from "node:os";
 import path from "node:path";
 
-import { BARE_ARCHETYPE, writeBareArchetype } from "assay-test-support";
+import { writeBareTemplate } from "assay-test-support";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 
@@ -32,8 +32,8 @@ const roots: string[] = [];
 async function workspace(name: string): Promise<string> {
   const root = path.join(os.tmpdir(), `assay-roadmap-${randomUUID()}`);
   roots.push(root);
-  await writeBareArchetype(root);
-  await initFramework({ target: root, name, archetype: BARE_ARCHETYPE });
+  const template = await writeBareTemplate(root);
+  await initFramework({ target: root, name, template });
   return root;
 }
 

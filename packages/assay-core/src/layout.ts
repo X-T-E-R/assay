@@ -44,12 +44,13 @@ export function resolveWorkspaceLayout(manifest: FrameworkManifest | null): Work
  */
 export function defaultStandaloneLayout(): WorkspaceLayout {
   return {
-    version: 7,
+    version: 8,
     mode: "standalone",
     state_root: ".assay",
     work_root: ".",
     privacy: "tracked",
     paths: standalonePaths(),
+    entries: [],
   };
 }
 
@@ -59,12 +60,13 @@ export function defaultStandaloneLayout(): WorkspaceLayout {
  */
 export function defaultOverlayLayout(privacy: WorkspacePrivacy): WorkspaceLayout {
   return {
-    version: 7,
+    version: 8,
     mode: "overlay",
     state_root: ".assay",
     work_root: ".assay",
     privacy,
     paths: overlayPaths(),
+    entries: [],
   };
 }
 
@@ -127,10 +129,10 @@ const WORK_AREA_BY_SEGMENT: Readonly<Record<string, WorkspaceArea>> = {
 };
 
 /**
- * Resolve an archetype-declared template path against a layout.
+ * Resolve an manifest entries-declared template path against a layout.
  *
- * Archetype YAML declares template paths as workspace-root-relative literals
- * (`README.md`, `analyses/README.md`, `.assay/VERSION`). Those literals are
+ * Manifest entries YAML declares template paths as workspace-root-relative literals
+ * (`README.md`, `analyses/README.md`, `.assay/managed-files.json`). Those literals are
  * written for a standalone layout, so an overlay workspace must translate them
  * before writing or the templates land in the product repository root instead
  * of `.assay/`.
@@ -167,7 +169,7 @@ function toRelativePosix(value: string): string {
 }
 
 /**
- * Relative path map for standalone layout v7. State under `.assay/`, work
+ * Relative path map for standalone layout v8. State under `.assay/`, work
  * folders at root.
  */
 export function standalonePaths() {
@@ -184,7 +186,7 @@ export function standalonePaths() {
 }
 
 /**
- * Relative path map for overlay layout v7. Everything Assay-owned lives
+ * Relative path map for overlay layout v8. Everything Assay-owned lives
  * under `.assay/`.
  */
 export function overlayPaths() {

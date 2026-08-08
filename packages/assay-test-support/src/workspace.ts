@@ -4,61 +4,17 @@ import path from "node:path";
 import type { BuiltCliRunner } from "./cli.js";
 import type { TempDirectoryFixture } from "./filesystem.js";
 
-/**
- * Name of the archetype `writeBareArchetype` installs: extends base, declares
- * no directories of its own.
- */
-export const BARE_ARCHETYPE = "bare";
-
-/**
- * Write a project-local archetype into a workspace root before it is
- * initialized, so `init` and `attach` can resolve a shape no built-in
- * provides.
- */
-export async function writeProjectArchetype(options: {
-  readonly root: string;
-  readonly name: string;
-  readonly mode?: "learning" | "absorption";
-  readonly description?: string;
-  readonly modules?: readonly string[];
-  readonly dirs?: readonly string[];
-}): Promise<string> {
-  const archetypeDir = path.join(options.root, ".assay", "archetypes");
-  await mkdir(archetypeDir, { recursive: true });
-  const archetypePath = path.join(archetypeDir, `${options.name}.yaml`);
-  const retiredModules = options.modules;
-  const dirs = options.dirs ?? [];
+export async function writeBareTemplate(root: string): Promise<string> {
+  const descriptor = `${root}.template.yaml`;
+  await mkdir(path.dirname(descriptor), { recursive: true });
   await writeFile(
-    archetypePath,
-    [
-      "extends: base",
-      `mode: ${options.mode ?? "learning"}`,
-      `description: ${options.description ?? `Test archetype ${options.name}.`}`,
-      ...(retiredModules === undefined
-        ? []
-        : [
-            retiredModules.length === 0 ? "modules: []" : "modules:",
-            ...retiredModules.map((module) => `  - ${module}`),
-          ]),
-      dirs.length === 0 ? "dirs: []" : "dirs:",
-      ...dirs.map((directory) => `  - ${directory}`),
-      "dirs_learning: []",
-      "dirs_absorption: []",
-      "templates: []",
-      "",
-    ].join("\n"),
+    descriptor,
+    ["__schema: 1", "description: Shared core only.", "directories: []", "files: []", ""].join(
+      "\n",
+    ),
     "utf8",
   );
-  return archetypePath;
-}
-
-/** Install {@link BARE_ARCHETYPE} into a workspace root that does not exist yet. */
-export async function writeBareArchetype(root: string): Promise<string> {
-  return writeProjectArchetype({
-    root,
-    name: BARE_ARCHETYPE,
-    description: "Shared core only.",
-  });
+  return descriptor;
 }
 
 export async function createWorkspaceRoot(
@@ -83,22 +39,15 @@ export async function createInitializedCliWorkspace(options: {
   readonly runner: BuiltCliRunner;
   readonly directoryName: string;
   readonly projectName?: string;
-  readonly archetype?: string;
-  /** Initialize with {@link BARE_ARCHETYPE}, installed into the root first. */
+  readonly template?: string;
   readonly bare?: boolean;
   readonly extraArgs?: readonly string[];
 }): Promise<string> {
   const root = await createWorkspaceRoot(options.tempDirs, options.directoryName);
-  const archetype = options.bare ? BARE_ARCHETYPE : options.archetype;
-  if (options.bare) {
-    await writeBareArchetype(root);
-  }
+  const template = options.bare ? await writeBareTemplate(root) : options.template;
   const args = ["init", root, "--name", options.projectName ?? options.directoryName];
-  if (archetype) {
-    args.push("--archetype", archetype);
-  }
+  if (template) args.push("--template", template);
   args.push(...(options.extraArgs ?? []));
-
   const result = await options.runner.runCli(args);
   if (result.exitCode !== 0) {
     throw new Error(
@@ -111,6 +60,5 @@ export async function createInitializedCliWorkspace(options: {
         .join("\n"),
     );
   }
-
   return root;
 }

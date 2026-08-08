@@ -4,18 +4,27 @@ import { isReadableId } from "../readable-id.js";
 
 export const managedFileRecordSchema = z
   .object({
-    template_id: z.string().min(1),
-    hash: z.string().regex(/^[a-f0-9]{64}$/),
-    installed_version: z.string().min(1),
+    path: z.string().min(1),
+    asset: z.string().min(1).optional(),
+    generator: z.string().min(1).optional(),
+    baseline_hash: z.string().regex(/^[a-f0-9]{64}$/),
     protected: z.boolean(),
     executable: z.boolean(),
-    updated_at: z.string().min(1),
+  })
+  .strict()
+  .refine(
+    (value) => Number(value.asset !== undefined) + Number(value.generator !== undefined) === 1,
+    {
+      message: "managed file record must declare exactly one of asset or generator",
+    },
+  );
+
+export const managedFilesReceiptSchema = z
+  .object({
+    __schema: z.literal(1),
+    files: z.array(managedFileRecordSchema).max(256),
   })
   .strict();
-
-export const projectArchetypeSchema = z.string().min(1);
-
-export const projectModeSchema = z.enum(["learning", "absorption"]);
 
 /** Strict, versionable machine envelope for the workspace's one native Project. */
 export const nativeProjectSchema = z
@@ -51,17 +60,6 @@ export const responsibilityBindingSchema = z
   })
   .strict();
 
-export const frameworkProjectSchema = z
-  .object({
-    // Compatibility/cache fields used for workspace presentation and
-    // archetype settings. The authoritative native Project identity and
-    // charter live in <work-root>/project/project.yaml and README.md.
-    name: z.string().min(1),
-    archetype: projectArchetypeSchema.default("study"),
-    mode: projectModeSchema.default("learning"),
-  })
-  .strict();
-
 // --- Systems registry (layout v3) -------------------------------------------
 
 export const systemVcsSchema = z.enum(["independent-git", "embedded", "none"]);
@@ -93,7 +91,7 @@ export const systemsRegistrySchema = z
   })
   .strict();
 
-// --- Workspace layout (layout v7) -------------------------------------------
+// --- Workspace layout (layout v8) -------------------------------------------
 
 export const workspaceLayoutModeSchema = z.enum(["standalone", "overlay"]);
 export const workspacePrivacySchema = z.enum(["tracked", "private", "private-git"]);
@@ -111,14 +109,23 @@ export const workspaceLayoutPathsSchema = z
   })
   .strict();
 
+export const manifestEntrySchema = z
+  .object({
+    path: z.string().min(1),
+    kind: z.enum(["directory", "file"]),
+    purpose: z.string(),
+  })
+  .strict();
+
 export const workspaceLayoutSchema = z
   .object({
-    version: z.literal(7),
+    version: z.literal(8),
     mode: workspaceLayoutModeSchema,
     state_root: z.literal(".assay"),
     work_root: z.enum([".", ".assay"]),
     privacy: workspacePrivacySchema,
     paths: workspaceLayoutPathsSchema,
+    entries: z.array(manifestEntrySchema).max(1024),
   })
   .strict()
   .superRefine((layout, context) => {
@@ -145,14 +152,14 @@ export const workspaceLayoutSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["work_root"],
-        message: `layout v7 ${layout.mode} work_root must be '${expectedWorkRoot}'`,
+        message: `layout v8 ${layout.mode} work_root must be '${expectedWorkRoot}'`,
       });
     }
     if (layout.mode === "standalone" && layout.privacy !== "tracked") {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["privacy"],
-        message: "layout v7 standalone privacy must be 'tracked'",
+        message: "layout v8 standalone privacy must be 'tracked'",
       });
     }
     for (const [key, value] of Object.entries(expected)) {
@@ -160,45 +167,48 @@ export const workspaceLayoutSchema = z
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["paths", key],
-          message: `layout v7 ${layout.mode} path '${key}' must be '${value}'`,
+          message: `layout v8 ${layout.mode} path '${key}' must be '${value}'`,
         });
       }
+    }
+    const seen = new Set<string>();
+    for (const [index, entry] of layout.entries.entries()) {
+      const normalized = entry.path.replaceAll("\\", "/");
+      if (
+        pathLikeAbsolute(normalized) ||
+        normalized === "." ||
+        normalized === ".." ||
+        normalized.split("/").some((part) => part === "" || part === "." || part === "..")
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["entries", index, "path"],
+          message: "layout entry path must be a normalized workspace-relative path",
+        });
+      }
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["entries", index, "path"],
+          message: "layout entry paths must be unique",
+        });
+      }
+      seen.add(key);
     }
   });
 
 export const frameworkManifestSchema = z
   .object({
-    __schema: z.literal(3),
-    framework_version: z.string().min(1),
-    minimum_assay_version: z.string().min(1),
-    layout_version: z.literal(7),
-    created_at: z.string().min(1),
-    updated_at: z.string().min(1),
-    project: frameworkProjectSchema,
-    managed_files: z.record(managedFileRecordSchema),
-    user_deleted: z.array(z.string()),
-    applied_migrations: z.array(z.string()),
-    // Generic desired-plugin metadata is retained for external hosts and
-    // future protocol consumers. Core does not install or execute it.
-    plugins: z.record(z.string().trim().min(1), pluginDeclarationSchema).optional(),
-    // Generic provider binding metadata is retained without activating or
-    // probing a provider in this core build.
-    bindings: z.record(z.string().trim().min(1), responsibilityBindingSchema).optional(),
+    __schema: z.literal(4),
+    framework_version: z.literal("0.12.0"),
     layout: workspaceLayoutSchema,
   })
   .strict();
 
-export const eventEntrySchema = z
-  .object({
-    ts: z.string().min(1).optional(),
-    kind: z.string().min(1).optional(),
-    text: z.string().optional(),
-  })
-  .catchall(z.unknown());
-
-export const persistedEventEntrySchema = eventEntrySchema.extend({
-  ts: z.string().min(1),
-});
+function pathLikeAbsolute(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:\//.test(value);
+}
 
 export const operationReportSchema = z
   .object({
@@ -237,7 +247,7 @@ export const updateConflictActionSchema = z.enum(["skip", "force", "create-new"]
 export const updateChangeSchema = z
   .object({
     path: z.string().min(1),
-    template_id: z.string().min(1).optional(),
+    generator: z.string().min(1).optional(),
     kind: updateChangeKindSchema,
     action: updateActionSchema.optional(),
     current_hash: z
@@ -288,11 +298,10 @@ export const updatePlanSchema = z
   .strict();
 
 export type ManagedFileRecord = z.infer<typeof managedFileRecordSchema>;
-export type ProjectArchetype = z.infer<typeof projectArchetypeSchema>;
-export type ProjectMode = z.infer<typeof projectModeSchema>;
+export type ManagedFilesReceipt = z.infer<typeof managedFilesReceiptSchema>;
 export type NativeProject = z.infer<typeof nativeProjectSchema>;
-export type FrameworkProject = z.infer<typeof frameworkProjectSchema>;
 export type FrameworkManifest = z.infer<typeof frameworkManifestSchema>;
+export type ManifestEntry = z.infer<typeof manifestEntrySchema>;
 export type PluginDeclaration = z.infer<typeof pluginDeclarationSchema>;
 export type ProviderTarget = z.infer<typeof providerTargetSchema>;
 export type ResponsibilityBinding = z.infer<typeof responsibilityBindingSchema>;
@@ -304,5 +313,3 @@ export type SystemVcs = z.infer<typeof systemVcsSchema>;
 export type SystemStatus = z.infer<typeof systemStatusSchema>;
 export type SystemRecord = z.infer<typeof systemRecordSchema>;
 export type SystemsRegistry = z.infer<typeof systemsRegistrySchema>;
-export type EventEntry = z.input<typeof eventEntrySchema>;
-export type PersistedEventEntry = z.infer<typeof persistedEventEntrySchema>;

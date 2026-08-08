@@ -61,14 +61,14 @@ node <repo-root>/packages/assay-cli/dist/cli.js <command>
 
 ## 项目注册表
 
-CLI 在 `~/.assay/projects` 跟踪已初始化的工作区。注册表命令:
+工作区索引是显式操作，位于 `~/.assay/workspaces`；普通生命周期与读取命令不会写入:
 
 ```bash
-assay projects list              # 列出已知工作区
-assay projects show <selector>   # 查看一个工作区(selector 必填)
-assay projects scan <roots...>   # 按 manifest 发现工作区
-assay projects prune --dry-run   # 预览清理失效记录
-assay projects forget <selector> # 移除一条注册记录(绝不删除项目文件)
+assay workspace list              # 列出已知工作区
+assay workspace track [root]   # 查看一个工作区(selector 必填)
+assay workspace discover <roots...>   # 按 manifest 发现工作区
+assay workspace list   # 预览清理失效记录
+assay workspace forget <selector> # 移除一条注册记录(绝不删除项目文件)
 ```
 
 这些命令只操作注册表元数据,绝不修改项目文件。

@@ -1,18 +1,9 @@
+# Pattern
 
-# Candidate Pattern
+## Context
 
-- Name:
-- Evidence:
-- Status: candidate
+## Pattern
 
-## Problem
+## Evidence
 
-## Mechanism
-
-## Applicability
-
-## Anti-applicability
-
-## Minimum local validation
-
-## Exit criteria
+## Limits

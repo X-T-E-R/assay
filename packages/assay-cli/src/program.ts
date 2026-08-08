@@ -2,7 +2,6 @@ import path from "node:path";
 import { Command, Option } from "@commander-js/extra-typings";
 import {
   type AnalysisExit,
-  type AssayProjectRegistryStatus,
   CURRENT_VERSION,
   type KnowledgeType,
   SOURCE_ADOPTION_TAKE_MODES,
@@ -22,7 +21,6 @@ import {
   applyUpdate,
   archiveSystem,
   attachExistingRepo,
-  captureEvent,
   checkExternalPlugins,
   checkFramework,
   closeAnalysis,
@@ -31,9 +29,9 @@ import {
   decideSourceAdoption,
   diffSource,
   discoverFrameworkRoot,
-  findProjectRecord,
+  discoverWorkspaces,
   findSystem,
-  forgetProject,
+  forgetWorkspace,
   getFrameworkStatus,
   getSourceAdoption,
   getSourceAdoptionHistory,
@@ -42,15 +40,14 @@ import {
   getSourceStatus,
   initFramework,
   inspectSourceAdoption,
-  listAvailableArchetypes,
+  listAvailableTemplates,
   listExternalPlugins,
-  listProjectRecords,
   listSourceAdoptions,
   listSystems,
-  loadManifest,
+  listWorkspaces,
+  loadTemplate,
   observeExternalPluginFromFile,
   promoteSystem,
-  pruneProjects,
   recordSourceAdoptionEvidenceFromFile,
   recordSourceAdoptionRollback,
   registerExternalPluginFromFile,
@@ -58,17 +55,16 @@ import {
   registerSystem,
   removeExternalPlugin,
   requireSystemsRegistry,
-  scanForProjects,
   setExternalPluginEnabled,
   switchSource,
   syncSource,
   takeSourceAdoptionMaterial,
+  trackWorkspace,
   updateSourceAdoptionFromFile,
   updateSystem,
   verifySourceAdoptionInspection,
 } from "assay-core";
 
-import { recordCommandProjectLifecycle } from "./command-lifecycle.js";
 import { mapCliError } from "./errors.js";
 import {
   formatAdoptionResult,
@@ -78,8 +74,6 @@ import {
   formatInitResult,
   formatPluginCheck,
   formatPluginList,
-  formatProjectList,
-  formatProjectRecord,
   formatSourceAdoption,
   formatSourceAdoptionDecision,
   formatSourceAdoptionHistory,
@@ -109,30 +103,6 @@ export interface CliOutput {
 export interface CreateProgramOptions {
   readonly output?: Partial<CliOutput>;
 }
-
-interface ProjectListOptions {
-  readonly all?: boolean;
-  readonly json?: boolean;
-  readonly status?: string;
-}
-
-interface ProjectJsonOptions {
-  readonly json?: boolean;
-}
-
-interface ProjectPruneOptions extends ProjectJsonOptions {
-  readonly dryRun?: boolean;
-}
-
-const PROJECT_STATUSES: readonly AssayProjectRegistryStatus[] = [
-  "active",
-  "missing",
-  "uninstalled",
-];
-
-const ABSORPTION_OUTLETS: readonly AbsorptionOutlet[] = ["problem", "intake"];
-
-type AbsorptionOutlet = "problem" | "intake";
 
 function defaultOutput(): CliOutput {
   return {
@@ -165,14 +135,6 @@ async function discoveredRoot(root: string): Promise<string> {
   return discoverFrameworkRoot(root);
 }
 
-async function archetypeListRoot(root: string): Promise<string> {
-  try {
-    return await discoverFrameworkRoot(root);
-  } catch {
-    return path.resolve(root);
-  }
-}
-
 function writeJson(output: { readonly stdout: CliOutput["stdout"] }, value: unknown): void {
   output.stdout(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -183,16 +145,6 @@ async function readStdinText(): Promise<string> {
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) chunks.push(String(chunk));
   return chunks.join("");
-}
-
-function parseStatusFilter(status?: string): AssayProjectRegistryStatus | undefined {
-  if (status === undefined) {
-    return undefined;
-  }
-  if (PROJECT_STATUSES.includes(status as AssayProjectRegistryStatus)) {
-    return status as AssayProjectRegistryStatus;
-  }
-  throw new Error(`--status must be one of: ${PROJECT_STATUSES.join(", ")}`);
 }
 
 /**
@@ -232,29 +184,6 @@ function splitList(value: string | undefined): string[] | undefined {
     .filter(Boolean);
 }
 
-async function writeArchetypeCommandResult(
-  output: Pick<CliOutput, "stdout" | "stderr">,
-  options: { readonly root: string; readonly json?: boolean },
-): Promise<void> {
-  const root = await discoveredRoot(options.root);
-  const manifest = await loadManifest(root);
-  if (!manifest) {
-    throw new Error("No framework manifest found");
-  }
-  const payload = {
-    project: manifest.project.name,
-    archetype: manifest.project.archetype,
-    mode: manifest.project.mode,
-  };
-  if (options.json) {
-    writeJson(output, payload);
-    return;
-  }
-  writeLine(output, "stdout", `Project: ${payload.project}`);
-  writeLine(output, "stdout", `Archetype: ${payload.archetype}`);
-  writeLine(output, "stdout", `Mode: ${payload.mode}`);
-}
-
 function systemRegisterNextLine(system: {
   readonly name: string;
   readonly status: string;
@@ -287,13 +216,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--git", "initialize a git repository in the workspace root")
     .option("--force", "overwrite existing files and track them as managed")
     .option("--create-new", "write .new copies when files already exist")
-    .option("--no-track", "do not update the Assay project registry")
     .option("--no-agents", "do not write the Assay managed block to root AGENTS.md")
     .addOption(
-      new Option("--archetype <archetype>", "project archetype name (run `assay archetype list`)"),
+      new Option("--template <template>", "built-in template name or explicit custom YAML path"),
     )
     .action(async (targetDir, commandOptions) => {
-      const archetype = commandOptions.archetype ?? "study";
       const initOptions = {
         target: targetDir,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
@@ -301,12 +228,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         force: commandOptions.force ?? false,
         createNew: commandOptions.createNew ?? false,
         agents: commandOptions.agents !== false,
-        archetype,
+        template: commandOptions.template ?? "study",
       };
       const result = await initFramework(initOptions);
-      await recordCommandProjectLifecycle(result.root, "init", {
-        noTrack: commandOptions.track === false,
-      });
       writeLine(output, "stdout", formatInitResult(result));
     });
 
@@ -321,7 +245,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "dryRun",
       ),
     )
-    .option("--no-track", "do not update the Assay project registry")
     .option("--no-agents", "do not write the Assay managed block to root AGENTS.md")
     .option("--analyze", "after apply, generate an adoption inventory and open an analysis for it")
     .action(async (commandOptions) => {
@@ -331,7 +254,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         dryRun: commandOptions.dryRun ?? false,
         apply: commandOptions.apply ?? false,
         agents: commandOptions.agents !== false,
-        noTrack: commandOptions.track === false,
         analyze: commandOptions.analyze ?? false,
       });
       writeLine(output, "stdout", formatAdoptionResult(result));
@@ -354,7 +276,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--root <target-dir>", "existing repository root to attach", process.cwd())
     .option("--name <project-name>", "project name (defaults to directory basename)")
     .addOption(
-      new Option("--archetype <archetype>", "project archetype name (run `assay archetype list`)"),
+      new Option("--template <template>", "built-in template name or explicit custom YAML path"),
     )
     .addOption(
       new Option(
@@ -364,17 +286,13 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         .choices(["private", "private-git", "tracked"])
         .default("private"),
     )
-    .option("--no-track", "do not update the Assay project registry")
     .option("--no-agents", "do not write the Assay managed block to root AGENTS.md")
     .action(async (commandOptions) => {
-      // attachExistingRepo records the project lifecycle itself (like
-      // adoptExistingProject), honoring its own noTrack option.
       const result = await attachExistingRepo({
         root: commandOptions.root,
         ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
-        ...(commandOptions.archetype === undefined ? {} : { archetype: commandOptions.archetype }),
+        ...(commandOptions.template === undefined ? {} : { template: commandOptions.template }),
         privacy: commandOptions.privacy as WorkspacePrivacy,
-        noTrack: commandOptions.track === false,
       });
       writeLine(output, "stdout", formatAttachResult(result));
     });
@@ -442,7 +360,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--dry-run", "plan update without applying writes")
     .option("--agents", "install or refresh the Assay managed block in root AGENTS.md")
-    .option("--no-track", "do not update the Assay project registry")
     .addOption(
       new Option("--force", "overwrite modified/conflicting files").conflicts([
         "skipAll",
@@ -471,150 +388,100 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         action,
         ...(commandOptions.agents === true ? { agents: true } : {}),
       });
-      await recordCommandProjectLifecycle(root, "update", {
-        dryRun: commandOptions.dryRun === true,
-        noTrack: commandOptions.track === false,
-      });
       writeLine(output, "stdout", formatUpdateResult(result));
     });
 
-  const projects = program
-    .command("projects")
-    .description("List and manage Assay scaffolded projects")
-    .action(async () => {
-      const records = (await listProjectRecords()).filter(
-        (record) => record.status !== "uninstalled",
-      );
-      writeLine(output, "stdout", formatProjectList("tracked Assay projects", records));
-    });
+  const workspaceCommand = program
+    .command("workspace")
+    .description("Track Assay workspace locations explicitly");
 
-  projects
-    .command("list")
-    .description("List tracked Assay projects")
+  workspaceCommand
+    .command("track")
+    .argument("[root]", "workspace root", process.cwd())
+    .option("--rebind <old>", "replace one explicitly named old clone path for the same Project")
     .option("--json", "emit JSON")
-    .option("--all", "include uninstalled projects")
-    .addOption(
-      new Option("--status <status>", "filter: active | missing | uninstalled").choices([
-        ...PROJECT_STATUSES,
-      ]),
-    )
-    .action(async (commandOptions: ProjectListOptions) => {
-      const status = parseStatusFilter(commandOptions.status);
-      const records = (await listProjectRecords()).filter((record) => {
-        if (status) {
-          return record.status === status;
-        }
-        if (commandOptions.all) {
-          return true;
-        }
-        return record.status !== "uninstalled";
+    .action(async (root, commandOptions) => {
+      const record = await trackWorkspace({
+        root,
+        ...(commandOptions.rebind === undefined ? {} : { rebind: commandOptions.rebind }),
       });
-
-      if (commandOptions.json) {
-        writeJson(output, records);
-        return;
-      }
-      writeLine(output, "stdout", formatProjectList("tracked Assay projects", records));
+      if (commandOptions.json) writeJson(output, record);
+      else writeLine(output, "stdout", `Tracked ${record.project_id}\n  ${record.path}`);
     });
 
-  projects
-    .command("show")
-    .description("Show one tracked project by id, id prefix, or path")
-    .argument("<selector>", "project id, id prefix, or filesystem path")
-    .option("--json", "emit JSON")
-    .action(async (selector: string, commandOptions: ProjectJsonOptions) => {
-      const record = await findProjectRecord(selector);
-      if (commandOptions.json) {
-        writeJson(output, record);
-        return;
-      }
-      writeLine(output, "stdout", formatProjectRecord(record));
-    });
-
-  projects
-    .command("scan")
-    .description("Scan directories for .assay/manifest.json projects and register them")
+  workspaceCommand
+    .command("discover")
     .argument("<roots...>", "directories to scan")
     .option("--json", "emit JSON")
-    .action(async (roots: string[], commandOptions: ProjectJsonOptions) => {
-      const records = await scanForProjects(roots);
-      if (commandOptions.json) {
-        writeJson(output, records);
-        return;
+    .action(async (roots, commandOptions) => {
+      const records = await discoverWorkspaces(roots);
+      if (commandOptions.json) writeJson(output, records);
+      else {
+        writeLine(output, "stdout", `Tracked ${records.length} workspace(s).`);
+        for (const record of records)
+          writeLine(output, "stdout", `- ${record.project_id}: ${record.path}`);
       }
-      writeLine(
-        output,
-        "stdout",
-        records.length === 0
-          ? "No Assay projects found."
-          : formatProjectList(`registered ${records.length} Assay project(s)`, records),
-      );
     });
 
-  projects
-    .command("forget")
-    .description("Remove a project from the registry without touching files")
-    .argument("<selector>", "project id, id prefix, or filesystem path")
-    .action(async (selector: string) => {
-      const record = await forgetProject(selector);
-      writeLine(output, "stdout", `Forgot ${record.id}\n  ${record.path}`);
-    });
-
-  projects
-    .command("prune")
-    .description("Remove missing/uninstalled projects from the registry")
-    .option("--dry-run", "show what would be removed")
-    .option("--json", "emit JSON")
-    .action(async (commandOptions: ProjectPruneOptions) => {
-      const records = await pruneProjects({ dryRun: commandOptions.dryRun ?? false });
-      if (commandOptions.json) {
-        writeJson(output, records);
-        return;
-      }
-      if (records.length === 0) {
-        writeLine(output, "stdout", "No missing or uninstalled projects to prune.");
-        return;
-      }
-      const verb = commandOptions.dryRun ? "Would prune" : "Pruned";
-      writeLine(
-        output,
-        "stdout",
-        formatProjectList(`${verb} ${records.length} project(s)`, records),
-      );
-    });
-
-  const archetypeCommand = program
-    .command("archetype")
-    .description("Show the current manifest archetype and mode")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--json", "emit JSON")
-    .action(async (commandOptions) => {
-      await writeArchetypeCommandResult(output, commandOptions);
-    });
-
-  archetypeCommand
+  workspaceCommand
     .command("list")
-    .description("List built-in and custom archetypes")
-    .option("--root <target-dir>", "project root for local archetypes", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
-      const parentOptions = archetypeCommand.opts() as { json?: boolean; root?: string };
-      const rootOption =
-        commandOptions.root === process.cwd()
-          ? (parentOptions.root ?? commandOptions.root)
-          : commandOptions.root;
-      const root = await archetypeListRoot(rootOption);
-      const archetypes = await listAvailableArchetypes({ root });
-      if (commandOptions.json || parentOptions.json) {
-        writeJson(output, archetypes);
-        return;
-      }
-      writeLine(output, "stdout", "Available archetypes:");
-      for (const archetype of archetypes) {
-        writeLine(output, "stdout", `- ${archetype.name} (${archetype.source}): ${archetype.path}`);
+      const records = await listWorkspaces();
+      if (commandOptions.json) writeJson(output, records);
+      else {
+        if (records.length === 0) writeLine(output, "stdout", "No tracked workspaces.");
+        for (const item of records) {
+          const label = item.record ? `${item.record.project_id}: ${item.record.path}` : item.file;
+          writeLine(
+            output,
+            "stdout",
+            `- ${item.status}: ${label}${item.message ? ` (${item.message})` : ""}`,
+          );
+        }
       }
     });
 
+  workspaceCommand
+    .command("forget")
+    .argument("<selector>", "record hash, filename, or workspace path")
+    .option("--json", "emit JSON")
+    .action(async (selector, commandOptions) => {
+      const record = await forgetWorkspace(selector);
+      if (commandOptions.json) writeJson(output, record);
+      else writeLine(output, "stdout", `Forgot ${record.project_id}\n  ${record.path}`);
+    });
+
+  const templateCommand = program
+    .command("template")
+    .description("Inspect one-shot workspace templates");
+
+  templateCommand
+    .command("list")
+    .option("--json", "emit JSON")
+    .action(async (commandOptions) => {
+      const templates = await listAvailableTemplates();
+      if (commandOptions.json) writeJson(output, templates);
+      else {
+        writeLine(output, "stdout", "Available templates:");
+        for (const template of templates)
+          writeLine(output, "stdout", `- ${template.name}: ${template.description}`);
+      }
+    });
+
+  templateCommand
+    .command("show")
+    .argument("<template>", "built-in name or explicit custom YAML path")
+    .option("--json", "emit JSON")
+    .action(async (template, commandOptions) => {
+      const loaded = await loadTemplate(template);
+      if (commandOptions.json) writeJson(output, loaded);
+      else {
+        writeLine(output, "stdout", `${loaded.name}: ${loaded.description}`);
+        writeLine(output, "stdout", `Directories: ${loaded.directories.length}`);
+        writeLine(output, "stdout", `Files: ${loaded.files.length}`);
+      }
+    });
   const plugin = program
     .command("plugin")
     .description("Register and inspect external plugin metadata");
@@ -1284,27 +1151,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           ? `Next: \`assay knowledge add pattern "<title>" --from-analysis ${result.path}\` to keep what survived.`
           : "Next: `assay status` shows what is still open in this workspace.",
       );
-    });
-
-  const event = program.command("event").description("Event ledger operations");
-  event
-    .command("capture")
-    .description("Capture a low-friction event")
-    .addOption(
-      new Option("--kind <kind>", "event kind")
-        .choices(["observation", "analysis", "decision", "gotcha", "note"])
-        .makeOptionMandatory(),
-    )
-    .requiredOption("--text <text>", "event text")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await captureEvent({
-        root,
-        kind: commandOptions.kind,
-        text: commandOptions.text,
-      });
-      writeLine(output, "stdout", `Captured event: ${result.eventFile}`);
     });
 
   const system = program.command("system").description("System registry operations");

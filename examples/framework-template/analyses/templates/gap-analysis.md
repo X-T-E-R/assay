@@ -1,13 +1,9 @@
+# Gap analysis
 
-# Gap Analysis
+## Current state
 
-- Compared system:
-- Date:
+## Target state
 
-| Dimension | External approach | Our current approach | Gap | Action |
-| --- | --- | --- | --- | --- |
-| Structure | | | | |
-| CLI | | | | |
-| Version/update | | | | |
-| Knowledge capture | | | | |
-| Governance | | | | |
+## Gap
+
+## Decision

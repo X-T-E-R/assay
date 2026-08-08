@@ -12,6 +12,7 @@ import { appendEvent } from "./events.js";
 import { defaultStandaloneLayout, resolveWorkspaceLayout, workspaceSubpath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
+import { loadNativeProject } from "./project.js";
 import {
   type SystemRecord,
   type SystemStatus,
@@ -348,9 +349,10 @@ async function createSystemContractIfMissing(
   }
 
   const manifest = await loadManifest(root);
+  const project = manifest ? await loadNativeProject(root, manifest.layout) : null;
   const contractPath = path.resolve(root, system.contract_file);
   const content = renderSystemContract({
-    project: manifest?.project.name ?? path.basename(root),
+    project: project?.name ?? path.basename(root),
     name: system.name,
     version: system.version,
     status: system.status,

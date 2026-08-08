@@ -146,7 +146,7 @@ describe("saveSystemsRegistry / loadSystemsRegistry", () => {
     await mkdir(authority, { recursive: true });
     await writeFile(
       path.join(authority, "manifest.json"),
-      `${JSON.stringify(defaultManifest("Redirected registry"))}\n`,
+      `${JSON.stringify(defaultManifest())}\n`,
       "utf8",
     );
     const file = path.join(authority, "systems-registry.json");

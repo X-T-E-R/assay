@@ -1,0 +1,47 @@
+{
+  "__schema": 1,
+  "files": [
+    {
+      "baseline_hash": "8fe9e5e031df645dc045bf14a1fe068414b25defbeb66a383012273c35f6e4f1",
+      "executable": false,
+      "generator": "root.readme",
+      "path": "README.md",
+      "protected": true
+    },
+    {
+      "baseline_hash": "a2805ee7f944374e1e29d8e518828d58afa11b3f616e94eedf15d1c038dd4ed1",
+      "executable": false,
+      "generator": "root.gitignore",
+      "path": ".gitignore",
+      "protected": true
+    },
+    {
+      "baseline_hash": "f19e97054e49862de0cb151440049f46787c1f3ca899277154401e87a7aa28dc",
+      "executable": false,
+      "generator": "framework.readme",
+      "path": ".assay/README.md",
+      "protected": false
+    },
+    {
+      "baseline_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executable": false,
+      "generator": "framework.backups.gitkeep",
+      "path": ".assay/backups/.gitkeep",
+      "protected": false
+    },
+    {
+      "baseline_hash": "d38e6bbded4f7e1da770357041bf5529619f0941c273809b97e171865bb6bd48",
+      "executable": false,
+      "generator": "systems.readme",
+      "path": "systems/README.md",
+      "protected": false
+    },
+    {
+      "baseline_hash": "07964d240c08a2e69895a587627fdcbe4483f0dd44badd889cca6a092cecdbfa",
+      "executable": false,
+      "generator": "knowledge.readme",
+      "path": "knowledge/README.md",
+      "protected": false
+    }
+  ]
+}

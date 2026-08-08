@@ -1,105 +1,43 @@
-# Framework directory structure
+# Assay 0.12 framework structure
 
-Every current Assay workspace has a shared base, then the selected archetype adds its own working directories:
+Every current workspace has a fixed core plus one-shot Template output. The Template is selected only by `init` or `attach`, expanded to actual `layout.entries`, and never persisted or reloaded.
 
-```text
-<project-root>/
-├── .assay/       # version, manifest, plugin receipts, registries, events, migrations, backups
-├── tasks/             # native bounded outcomes; overlay uses .assay/tasks/
-├── systems/          # registered systems and local implementations
-│   ├── <name>/             # active system (system.yaml + source; may be independent git repo)
-│   └── archive/            # archived prior systems, copy-first move
-├── knowledge/        # accepted reusable knowledge only
-│   ├── patterns/     # validated reusable patterns
-│   ├── guides/       # operational guides
-│   └── troubleshooting/  # failure modes and fixes
-├── sources/       # native external evidence; eager in study, lazy elsewhere
-├── analyses/         # native analyses; eager in study, lazy elsewhere
-├── problem/          # solve/absorption-mode source materials, when enabled
-├── project/           # required native Project envelope, charter, and Roadmap items
-└── approaches/       # explore alternatives, when enabled
+## Fixed core
+
+- `.assay/manifest.json` — schema 4 framework/layout authority; only non-native Template output appears in `layout.entries`.
+- `.assay/managed-files.json` — schema 1 core no-clobber receipt.
+- `<work-root>/project/project.yaml` — schema 1 Project id/name authority.
+- `<work-root>/project/README.md` and `roadmap/README.md`.
+- Systems and Knowledge roots.
+
+## Templates
+
+```bash
+assay template list
+assay template show study
+assay init . --template study
+assay init . --template ./custom.yaml
 ```
 
-## Project archetype and mode
-
-A workspace records `project.archetype` and `project.mode` in `.assay/manifest.json`. `assay init --archetype <archetype>` selects the archetype; the archetype YAML sets the mode. Use `assay archetype` to read the active values from the manifest.
-
-Custom archetypes are YAML files resolved in order: project-local `.assay/archetypes/<name>.yaml`, user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. Template entries may reuse built-in templateIds, carry inline `content` (with `{{project}}` substitution), or reference a `file` relative to the archetype directory — so third-party archetype packs can ship their own README/template content. Unresolvable template entries fail loudly at init/update time.
-
-An archetype should also say what it is for and what each directory holds:
+Built-ins are study, solve, and explore. Custom descriptors use closed schema 1:
 
 ```yaml
-description: Attack one goal that has a measurable success criterion, using bounded attempts until the score moves.
-
-dirs:
-  - path: problem
-    purpose: Task statement, official rules, scoring definition
-  - plain-directory-with-no-purpose
+__schema: 1
+description: Purpose.
+directories:
+  - path: notes
+    purpose: User-owned notes
+files:
+  - path: notes/README.md
+    content: "# Notes\n"
 ```
 
-`assay status`, the `AGENTS.md` managed block, and the placement advisories in `assay check --advisories` all read those declarations, so a custom archetype explains itself everywhere without any change to Assay. Directories under `.assay/` and `<zone>/templates` folders are treated as machinery rather than places to put work and stay out of all three; declare the parent directory when you want it listed. After changing an archetype, run `assay update --agents` so the `AGENTS.md` table matches it again.
+A file declares exactly one of inline `content` or a descriptor-relative `file`; `executable` is optional. Core is always included. Template outputs do not enter the managed receipt.
 
-- **learning** (default): the project learns from external systems. Living external sources are added under `sources/<alias>/` with `source.yaml`, bounded `materials/`, and an observation ledger (`observations/`, `manifests/`, `captures/`). Use this when the external thing is something you study, not something you are.
-- **absorption**: the project centers on a specific external thing (a benchmark target, a paper, a repo you are rebuilding). Its official materials land under `problem/<name>/` because they are the project. `sources/` remains available for genuine third-party side evidence.
+## Runtime views
 
-`source add --mode living|frozen` is the single Source intake. Living Sources may sync or switch; frozen Sources use archive capture and are immutable. Project mode still governs the project-specific `problem/` workflow, not Source storage.
+Status, check, AGENTS generation, placement advisories, and conversion combine `layout.entries` with fixed native resolvers. Deleting a custom descriptor after init has no runtime effect.
 
-## Integrity checks and optional advisories
+## Workspace index
 
-`assay check` validates workspace structure and persisted-record integrity. A
-file existing does not prove content quality, so Assay does not turn prose
-heuristics into mandatory gates. Use `assay check --advisories` when workflow
-reminders are useful:
-
-- Every Source observation retains provenance, fingerprint, and manifest
-  metadata. Frozen Sources are immutable archive captures in the same namespace.
-- An analysis at `Status: draft` with empty `## Key observations` is listed as
-  an unfinished-draft advisory.
-- `analysis close --exit …` records the explicit Analysis decision without rewriting a bound
-  source observation closed; it does not judge section prose.
-
-
-## Intent-to-directory mapping
-
-| User intent | Directory |
-| --- | --- |
-| study others' projects/materials | `sources/` |
-| analyze them | `analyses/` |
-| absorption-mode objective inputs | `problem/`, `intake/` |
-| explore local approaches | `approaches/`, `trials/`, `comparison.md` |
-| build local systems | `systems/` |
-| keep one bounded outcome identifiable across contexts | `tasks/` |
-| promote accepted findings | `knowledge/` |
-| record the adopted charter, roadmap, specifications, and selected extensions | `project/` |
-
-`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap records are added under `roadmap/<id>/`. Native Specifications are lazy under `specs/<id>/{spec.yaml,specification.md}` and promotion never changes its Analysis or Task source. Project-selected Relay records and extensions are also lazy; Source, Analysis, Task, System, and runtime state keep separate authority.
-
-Native Task follows the same work root: `tasks/` in standalone and
-`.assay/tasks/` in overlay. Each stable-id directory requires a machine
-`task.json` envelope and a reader-editable `prd.md` contract. `handoff.md`,
-`design.md`, and `research/` are optional. `.assay/task-contexts.json` stores
-exact host-context bindings. Task does not own roadmaps, specifications,
-acceptance, permissions, dispatch, agent ownership, or Relay promotion.
-
-## `.assay/` managed files
-
-The CLI writes and maintains these files automatically:
-
-- `.assay/VERSION` — installed framework template version.
-- `.assay/manifest.json` — managed file manifest with template IDs, hashes, desired plugins, and exclusive provider bindings.
-- `.assay/task-contexts.json` — exact host-context bindings for native Tasks; the CLI owns this file.
-- `.assay/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain.
-- `.assay/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
-- `.assay/backups/` — pre-update and pre-migration backups.
-- `.assay/migrations/` — migration records.
-
-## `systems/` and version control
-
-`systems/` may contain a mix of:
-
-- **Independent git repositories** — declared as `vcs: independent-git` in the registry. The root repo `.gitignore` typically excludes the system path but allows `system.yaml`. Framework `check` skips system internals and validates only the contract file.
-- **Embedded systems** — declared as `vcs: embedded`. System source is tracked by the root repo.
-
-Each registered system has a `systems/<name>/system.yaml` contract file recording project, name, version, status, vcs, and supersedes. The contract is the only system-side file the framework receives; `README.md`, `CHANGELOG.md`, and `docs/*` belong to the system itself, not the framework.
-
-Read `systems-registry.md` for registry schema, status state machine, and migration notes for legacy layouts.
+Only `assay workspace track|discover|list|forget` touches `~/.assay/workspaces`. Records are path-hash named schema 1 `{project_id,path}` objects. Normal lifecycle/read/update commands do not track implicitly.

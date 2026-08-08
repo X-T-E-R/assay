@@ -1,40 +1,22 @@
 import { CURRENT_VERSION, LAYOUT_VERSION } from "./constants.js";
-import { FrameworkError } from "./errors.js";
 import { workspaceTemplateRelativePath } from "./layout.js";
-import {
-  type Archetype,
-  type ArchetypeLookupOptions,
-  type ArchetypeTemplateEntry,
-  loadArchetype,
-} from "./profile.js";
-import type { WorkspaceLayout } from "./schemas/index.js";
+import type { ManifestEntry, WorkspaceLayout } from "./schemas/index.js";
+import type { WorkspaceTemplate } from "./template.js";
 
 export interface TemplateFile {
   readonly path: string;
-  readonly templateId: string;
-  readonly template_id: string;
+  readonly generator?: string;
+  readonly asset?: string;
   readonly content: string;
   readonly executable: boolean;
   readonly protected: boolean;
+  readonly managed: boolean;
 }
 
-export interface TemplateFileInput {
-  readonly path: string;
-  readonly templateId: string;
-  readonly content: string;
-  readonly executable?: boolean;
-  readonly protected?: boolean;
-}
-
-function templateFile(input: TemplateFileInput): TemplateFile {
-  return {
-    path: input.path,
-    templateId: input.templateId,
-    template_id: input.templateId,
-    content: input.content,
-    executable: input.executable ?? false,
-    protected: input.protected ?? false,
-  };
+export interface ExpandedTemplate {
+  readonly description: string;
+  readonly directories: readonly ManifestEntry[];
+  readonly files: readonly TemplateFile[];
 }
 
 function dedent(text: string): string {
@@ -46,149 +28,76 @@ function dedent(text: string): string {
   return lines.map((line) => (line.trim().length > 0 ? line.slice(margin) : "")).join("\n");
 }
 
-/**
- * Generate the list of template files for a new workspace, driven by an archetype.
- * The archetype YAML declares which templates to write and at what path; this
- * function resolves each templateId to its content generator.
- * To evolve the default structure, edit profiles/study.yaml or add a custom
- * archetype YAML — not this function.
- */
-export async function desiredTemplates(
-  project: string,
-  mode: "learning" | "absorption" = "learning",
-  archetypeName = "study",
-  options: ArchetypeLookupOptions = {},
-): Promise<TemplateFile[]> {
-  const archetype = await loadArchetype(archetypeName, options);
-  return archetypeTemplates(project, mode, archetype);
-}
-
-export function archetypeTemplates(
-  project: string,
-  mode: "learning" | "absorption",
-  archetype: Archetype,
-  layout?: WorkspaceLayout,
-): TemplateFile[] {
-  return renderTemplateEntries(archetype.templates, project, mode, archetype, layout);
-}
-
-function renderTemplateEntries(
-  entries: readonly ArchetypeTemplateEntry[],
-  project: string,
-  mode: "learning" | "absorption",
-  archetype: Archetype,
-  layout?: WorkspaceLayout,
-): TemplateFile[] {
-  const result: TemplateFile[] = [];
-  for (const entry of entries) {
-    if (layout && skipTemplateForLayout(layout, entry.path)) {
-      continue;
-    }
-    const content =
-      entry.content !== undefined
-        ? renderArchetypeContent(entry.content, project)
-        : templateContentById(entry.templateId, project, mode, archetype);
-    if (content === null) {
-      throw new FrameworkError(
-        `archetype ${archetype.name} references unknown templateId '${entry.templateId}' for ${entry.path}; custom archetypes must provide inline content or a file next to the archetype YAML`,
-        { code: "IO_ERROR" },
-      );
-    }
-    const templatePath = layout ? workspaceTemplateRelativePath(layout, entry.path) : entry.path;
-    result.push(templateFile({ path: templatePath, templateId: entry.templateId, content }));
-  }
-  return result;
-}
-
-/**
- * Root files an attached product repository owns. Overlay workspaces keep all
- * Assay-managed content under `.assay/`, so these are never written or
- * replaced there; `assay attach` makes the same promise.
- */
-const OVERLAY_PROTECTED_ROOT_FILES = new Set(["README.md", ".gitignore", "AGENTS.md"]);
-
-function skipTemplateForLayout(layout: WorkspaceLayout, templatePath: string): boolean {
-  return layout.mode === "overlay" && OVERLAY_PROTECTED_ROOT_FILES.has(templatePath);
-}
-
-/** Substitution surface for archetype-carried template content. */
-function renderArchetypeContent(content: string, project: string): string {
+function render(content: string, project: string): string {
   return content.replaceAll("{{project}}", project);
 }
 
-function templateContentById(
-  templateId: string,
-  project: string,
-  _mode: "learning" | "absorption",
-  _archetype: Archetype,
-): string | null {
-  switch (templateId) {
-    case "root.readme":
-      return rootReadme(project);
-    case "root.gitignore":
-      return rootGitignore();
-    case "framework.readme":
-      return frameworkReadme();
-    case "framework.version":
-      return `${CURRENT_VERSION}\n`;
-    case "framework.migrations.readme":
-      return migrationsReadme();
-    case "framework.backups.gitkeep":
-    case "analyses.references.gitkeep":
-    case "analyses.gaps.gitkeep":
-    case "analyses.patterns.gitkeep":
-      return "";
-    case "sources.readme":
-      return sourcesReadme();
-    case "analyses.readme":
-      return analysesReadme();
-    case "analysis.template.source":
-      return sourceAnalysisTemplate();
-    case "analysis.template.gap":
-      return gapAnalysisTemplate();
-    case "analysis.template.pattern":
-      return patternCardTemplate();
-    case "systems.readme":
-      return systemsReadme();
-    case "knowledge.readme":
-      return knowledgeReadme();
-    case "knowledge.guides.readme":
-      return "# guides/\n\nReusable operational guides.\n";
-    case "knowledge.patterns.readme":
-      return "# patterns/\n\nValidated reusable patterns only.\n";
-    case "knowledge.troubleshooting.readme":
-      return "# troubleshooting/\n\nReusable failure modes and fixes.\n";
-    case "data.readme":
-      return dataReadme();
-    case "releases.readme":
-      return releasesReadme();
-    case "solve.readme":
-      return solveReadme(project);
-    case "solve.objective":
-      return solveObjective(project);
-    case "solve.current_attempt":
-      return solveCurrentAttempt();
-    case "solve.problem.readme":
-      return solveProblemReadme();
-    case "solve.intake.readme":
-      return solveIntakeReadme();
-    case "solve.benchmarks.readme":
-      return solveBenchmarksReadme();
-    case "solve.attempts.readme":
-      return solveAttemptsReadme();
-    case "solve.tools.readme":
-      return solveToolsReadme();
-    case "explore.approaches.readme":
-      return exploreApproachesReadme();
-    case "explore.trials.readme":
-      return exploreTrialsReadme();
-    case "explore.comparison":
-      return exploreComparison();
-    default:
-      return null;
-  }
+function baseFile(
+  layout: WorkspaceLayout,
+  path: string,
+  generator: string,
+  content: string,
+  protectedFile = false,
+): TemplateFile {
+  return {
+    path: workspaceTemplateRelativePath(layout, path),
+    generator,
+    content,
+    executable: false,
+    protected: protectedFile,
+    managed: true,
+  };
 }
 
+export function baseCoreTemplates(project: string, layout: WorkspaceLayout): TemplateFile[] {
+  const candidates = [
+    baseFile(layout, "README.md", "root.readme", rootReadme(project), true),
+    baseFile(layout, ".gitignore", "root.gitignore", rootGitignore(), true),
+    baseFile(layout, ".assay/README.md", "framework.readme", frameworkReadme()),
+    baseFile(layout, ".assay/backups/.gitkeep", "framework.backups.gitkeep", ""),
+    baseFile(layout, "systems/README.md", "systems.readme", systemsReadme()),
+    baseFile(layout, "knowledge/README.md", "knowledge.readme", knowledgeReadme()),
+  ];
+  return layout.mode === "overlay"
+    ? candidates.filter(
+        (file) => file.generator !== "root.readme" && file.generator !== "root.gitignore",
+      )
+    : candidates;
+}
+
+export function expandTemplate(
+  project: string,
+  template: WorkspaceTemplate,
+  layout: WorkspaceLayout,
+): ExpandedTemplate {
+  const directories = template.directories.map((entry) => ({
+    path: workspaceTemplateRelativePath(layout, entry.path),
+    kind: "directory" as const,
+    purpose: entry.purpose,
+  }));
+  const files: TemplateFile[] = template.files.map((entry) => ({
+    path: workspaceTemplateRelativePath(layout, entry.path),
+    ...(template.source === "file" && entry.file ? { asset: entry.file } : {}),
+    content: render(entry.content ?? "", project),
+    executable: entry.executable,
+    protected: false,
+    managed: false,
+  }));
+  return { description: template.description, directories, files };
+}
+
+export function manifestEntriesForScaffold(
+  _layout: WorkspaceLayout,
+  expanded: ExpandedTemplate,
+  _coreFiles: readonly TemplateFile[],
+): ManifestEntry[] {
+  const entries = new Map<string, ManifestEntry>();
+  for (const entry of expanded.directories) entries.set(entry.path, entry);
+  for (const file of expanded.files) {
+    entries.set(file.path, { path: file.path, kind: "file", purpose: "" });
+  }
+  return [...entries.values()];
+}
 export function rootReadme(project: string): string {
   return dedent(`
     # ${project}
@@ -203,12 +112,12 @@ export function rootReadme(project: string): string {
 
     | Path | Purpose |
     | --- | --- |
-    | \`.assay/\` | Runtime metadata: version, manifest, events, migrations, backups |
+    | \`.assay/\` | Runtime metadata: manifest, managed receipt, events, backups |
     | \`project/\` | Native Project identity, charter, and Roadmap items |
     | \`systems/\` | Registered active systems and local implementations |
     | \`knowledge/\` | Accepted reusable knowledge |
 
-    Archetype-specific working directories sit alongside this base. Use \`assay status\` to inspect open work and \`assay check\` to validate the workspace.
+    One-shot Template working directories sit alongside this base. Use \`assay status\` to inspect open work and \`assay check\` to validate the workspace.
     `);
 }
 
@@ -232,112 +141,14 @@ export function frameworkReadme(): string {
 
     Assay runtime metadata. Do not store external evidence or long-lived user knowledge here.
 
-    - \`VERSION\`: installed template version.
-    - \`manifest.json\`: managed file hashes and template IDs.
+    - \`managed-files.json\`: fixed core asset baselines for no-clobber updates.
+    - \`manifest.json\`: framework version, exact layout, and expanded path entries.
     - \`systems-registry.json\`: registered systems and the current primary system after \`assay system register\`.
     - \`events/\`: JSONL event ledger.
-    - \`migrations/\`: migration notes and plans.
-    - \`backups/\`: timestamped backups before update or migration.
 
-    Current template release is ${CURRENT_VERSION}; layout release is ${LAYOUT_VERSION}.
-    `);
-}
+    - \`backups/\`: timestamped backups before managed updates.
 
-export function migrationsReadme(): string {
-  return "# migrations/\n\nHuman-readable migration plans and generated migration logs.\n";
-}
-
-export function sourcesReadme(): string {
-  return dedent(`
-    # sources/
-
-    Store external systems here. Sources are evidence inputs, not local implementations.
-
-    - \`<source>/\`: one Source with explicit \`mode: living|frozen\`, \`source.yaml\`, bounded \`materials/\`, and the observation ledger (\`observations/\`, \`manifests/\`, \`captures/\`).
-    - Living Sources may sync or switch; frozen Sources are immutable and always use archive capture.
-    `);
-}
-
-export function analysesReadme(): string {
-  return dedent(`
-    # analyses/
-
-    Analysis is the conversion layer from external Sources to local decisions.
-
-    | Subdir | Purpose |
-    | --- | --- |
-    | \`references/\` | Analysis cards for external systems (retained Analysis subtype) |
-    | \`gaps/\` | Gaps between an external system and the current workspace |
-    | \`patterns/\` | Candidate reusable patterns that need validation |
-    | \`templates/\` | Analysis templates |
-    `);
-}
-
-export function sourceAnalysisTemplate(): string {
-  return dedent(`
-    # Source Analysis Card
-
-    - Source alias:
-    - Source observation:
-    - Source materials:
-    - Date:
-
-    ## Problem it solves
-
-    ## Architecture / structure
-
-    ## CLI and workflow mechanisms
-
-    ## Version/update mechanisms
-
-    ## What we should adopt
-
-    ## What we should reject
-
-    ## Decision exit
-
-    - [ ] adopt
-    - [ ] reject
-    - [ ] experiment
-    `);
-}
-
-export function gapAnalysisTemplate(): string {
-  return dedent(`
-    # Gap Analysis
-
-    - Compared system:
-    - Date:
-
-    | Dimension | External approach | Our current approach | Gap | Action |
-    | --- | --- | --- | --- | --- |
-    | Structure | | | | |
-    | CLI | | | | |
-    | Version/update | | | | |
-    | Knowledge capture | | | | |
-    | Governance | | | | |
-    `);
-}
-
-export function patternCardTemplate(): string {
-  return dedent(`
-    # Candidate Pattern
-
-    - Name:
-    - Evidence:
-    - Status: candidate
-
-    ## Problem
-
-    ## Mechanism
-
-    ## Applicability
-
-    ## Anti-applicability
-
-    ## Minimum local validation
-
-    ## Exit criteria
+    Current Assay release is ${CURRENT_VERSION}; layout release is ${LAYOUT_VERSION}.
     `);
 }
 
@@ -346,252 +157,5 @@ export function systemsReadme(): string {
 }
 
 export function knowledgeReadme(): string {
-  return "# knowledge/\n\nStore accepted reusable knowledge only. Work-in-progress analysis belongs in the archetype-specific working directories.\n";
-}
-
-export function changelog(today: string): string {
-  return dedent(`
-    # Changelog
-
-    All notable changes to this framework should be documented here.
-
-    ## [${CURRENT_VERSION}] - ${today}
-
-    ### Added
-
-    - Versioned framework layout.
-    - Manifest-based managed file tracking.
-    `);
-}
-
-export function artifactModelDoc(): string {
-  return dedent(`
-    # Artifact Model
-
-    | Artifact | Path | Exit |
-    | --- | --- | --- |
-    | Living source | \`sources/<source>/\` | sync / delta analysis / revalidation |
-    | Frozen source | \`sources/<source>/\` | immutable full-capture analysis |
-    | Analysis | \`analyses/\` | adopt / reject / experiment |
-    | Knowledge entry | \`knowledge/\` | future reuse |
-    `);
-}
-
-export function workflowsDoc(): string {
-  return dedent(`
-    # Workflows
-
-    ## Source intake
-
-    1. Define the theme and acceptance criteria.
-    2. Add living sources with \`assay source add <repo-or-dir> [alias]\`.
-    3. Use \`assay source sync\` when the external source changes.
-    4. Write an analysis or create a bounded Task; do not stop at collecting files.
-
-    ## Analysis to pattern
-
-    1. Identify the problem solved by the external system.
-    2. Extract a mechanism, not just surface file names.
-    3. Record applicability and anti-applicability.
-    4. Choose an exit: adopt, reject, or experiment.
-    `);
-}
-
-export function updateMechanismDoc(): string {
-  return dedent(`
-    # Update Mechanism
-
-    ## State files
-
-    - \`.assay/VERSION\`: installed Assay version.
-    - \`.assay/manifest.json\`: managed files, template IDs, hashes, and installed versions.
-    - \`.assay/backups/\`: backups before writes.
-
-    ## Classification
-
-    | Classification | Meaning | Default |
-    | --- | --- | --- |
-    | new | desired template does not exist and is not user-deleted | create |
-    | auto-update | manifest hash equals current hash | update |
-    | modified | current hash differs from manifest hash | skip |
-    | user-deleted | manifest tracked it but path is absent | respect deletion |
-    | untracked-existing | path exists but not in manifest | skip / \`.new\` |
-    `);
-}
-
-export function dataReadme(): string {
-  return "# data/\n\nResearch samples, evaluation datasets, and generated outputs.\n";
-}
-
-export function releasesReadme(): string {
-  return "# releases/\n\nRelease notes, packages, and migration guides.\n";
-}
-
-export function solveObjective(project: string): string {
-  return dedent(`
-    {
-      "kind": "objective",
-      "schema_version": 1,
-      "objective_id": "${slugifyForJson(project)}",
-      "title": "${project}",
-      "status": "template",
-      "success_criteria": [],
-      "current_attempt_path": "systems/current.json",
-      "artifact_store": {
-        "type": "local-content-addressed",
-        "root": "intake/objects/sha256"
-      }
-    }
-  `);
-}
-
-export function solveCurrentAttempt(): string {
-  return dedent(`
-    {
-      "kind": "current_attempt",
-      "schema_version": 1,
-      "attempts": [],
-      "objective_id": null,
-      "benchmark_id": null,
-      "updated_at": null
-    }
-  `);
-}
-
-export function solveReadme(project: string): string {
-  return `${rootReadme(project)}${solveRunRecordsSection()}`;
-}
-
-/**
- * Run-record convention for solve workspaces.
- *
- * Assay does not create `runs.jsonl` and no command writes to it. The format is
- * documented here because harnesses that already exist — an evaluator, a judge
- * script, a packaging step — can append to it in one line, which is the only
- * way run logs have ever actually been filled.
- */
-function solveRunRecordsSection(): string {
-  return dedent(`
-    ## Run records
-
-    Nothing in Assay writes a run log, and there is no command to run. If a
-    harness in \`tools/\` should keep one, append one JSON object per line to
-    \`runs.jsonl\` at the workspace root:
-
-    \`\`\`text
-    {"run_id": "2026-07-26-01", "benchmark": "local-v3", "attempt": "att-014", "score": 0.813, "started_at": "2026-07-26T09:12:00Z"}
-    \`\`\`
-
-    Suggested fields: \`run_id\`, \`started_at\`, \`benchmark\`, \`attempt\`,
-    \`score\`, \`params\`, \`artifact\`, \`notes\`. Nothing validates the shape, so
-    add whatever the harness already knows. Once the file exists,
-    \`assay status\` reports how many records it holds.
-    `);
-}
-
-export function solveProblemReadme(): string {
-  return dedent(`
-    # problem/
-
-    The objective exactly as it was handed to you: task statement, official
-    rules, scoring definition, data dictionaries, deadlines.
-
-    Keep this directory faithful to the source. Restatements, interpretations,
-    and plans derived from the rules belong in a Task or an analysis, so
-    that when the rules change a clean copy of the new statement is the only
-    edit here.
-  `);
-}
-
-export function solveIntakeReadme(): string {
-  return dedent(`
-    # intake/
-
-    Raw objective inputs and external evidence. Immutable layer.
-
-    Every delivery lives at \`intake/<delivery-id>/\` and records the original artifact, a hash, and source context. Once written, a delivery is not modified; mistakes create a new delivery.
-
-    This is the evidence boundary before normalization. The normalized form lives under the relevant system with a back-reference to the delivery.
-  `);
-}
-
-export function solveBenchmarksReadme(): string {
-  return dedent(`
-    # benchmarks/
-
-    Versioned checks with explicit applicability scope.
-
-    Each benchmark should declare what it tests, how it was generated, leakage risk, and interpretive scope. Scores are scoped to the benchmark that produced them.
-  `);
-}
-
-export function solveAttemptsReadme(): string {
-  return dedent(`
-    # attempts/
-
-    Immutable attempt packages.
-
-    Each attempt lives at \`attempts/<attempt-id>/\` and contains the preserved output, hashes, and a manifest referencing the objective, source inputs, benchmark, score, and validation report.
-
-    An attempt is assembled from an explicit snapshot referenced by \`systems/current.json\`. Once recorded, it is not edited; a new attempt gets a new id.
-  `);
-}
-
-export function solveToolsReadme(): string {
-  return dedent(`
-    # tools/
-
-    Objective-specific tooling. Conventional sub-locations:
-
-    - \`tools/evaluate/\` — local evaluator, runner, or scoring config. It should make benchmark scoring repeatable and inspectable.
-    - \`tools/package/\` — attempt packagers that stamp both staging-tree and artifact/package SHA-256 values.
-    - \`tools/import/\` — importers for external deliveries into a normalized form usable by a candidate approach.
-    - \`tools/report/\` — objective-specific reporting helpers if benchmark output needs a repeatable publication format.
-
-    Tools that are not objective-specific belong elsewhere, such as generic build scripts under the relevant system source.
-  `);
-}
-
-export function exploreApproachesReadme(): string {
-  return dedent(`
-    # approaches/
-
-    Parallel local approaches.
-
-    Give each approach a short premise, owner, expected upside, risk, and trial plan. Keep approaches comparable enough for converging later.
-  `);
-}
-
-export function exploreTrialsReadme(): string {
-  return dedent(`
-    # trials/
-
-    Trial notes for local approaches.
-
-    Record setup, observed behavior, costs, surprises, and whether the approach should continue, merge, or stop.
-  `);
-}
-
-export function exploreComparison(): string {
-  return dedent(`
-    # Approach Comparison
-
-    Use this as the horse-race board for approaches that are still being shaped.
-
-    | Approach | Evidence | Strength | Weakness | Next move |
-    | --- | --- | --- | --- | --- |
-
-    ## Convergence decision
-
-    State what is converging, what remains uncertain, and which approach should become the next concrete direction.
-  `);
-}
-
-function slugifyForJson(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)+/g, "")
-    .slice(0, 64);
+  return "# knowledge/\n\nStore accepted reusable knowledge only. Work-in-progress analysis belongs in the manifest-declared working directories.\n";
 }
