@@ -17,6 +17,7 @@ import {
   registerSystem,
 } from "../src/index.js";
 import { inspectAdoptionLock, releaseAdoptionLock } from "../src/source-adoption/index.js";
+import { sameBootEpoch } from "../src/source-adoption/storage.js";
 
 const tempDirs = createTempDirectoryFixture("assay-source-adoption-persistence");
 
@@ -308,6 +309,16 @@ describe("Source adoption state does not drift from the rest of the workspace st
 });
 
 describe("a crashed Source adoption run leaves a recoverable lock", () => {
+  it("tolerates only the one-second uncertainty of independently sampled boot epochs", () => {
+    expect(sameBootEpoch(10_000, 9_999)).toBe(true);
+    expect(sameBootEpoch(10_000, 10_000)).toBe(true);
+    expect(sameBootEpoch(10_000, 10_001)).toBe(true);
+    expect(sameBootEpoch(10_000, 9_998)).toBe(false);
+    expect(sameBootEpoch(10_000, 10_002)).toBe(false);
+    expect(sameBootEpoch(10_000.5, 10_000)).toBe(false);
+    expect(sameBootEpoch(Number.NaN, 10_000)).toBe(false);
+  });
+
   it("treats an empty lock file as abandoned once past the grace window", async () => {
     const fixture = await registeredFixture("EmptyLock");
     const file = lockFile(fixture.root, "upstream-product");

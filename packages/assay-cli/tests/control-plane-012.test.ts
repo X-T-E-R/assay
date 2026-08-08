@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type BuiltCliRunner,
@@ -60,14 +60,16 @@ describe("0.13 CLI control plane", () => {
 
     const tracked = await runner.runCli(["workspace", "track", root, "--json"]);
     expect(tracked.exitCode).toBe(0);
-    expect(JSON.parse(tracked.stdout)).toMatchObject({ __schema: 1, path: root });
+    const trackedRecord = JSON.parse(tracked.stdout) as { __schema: number; path: string };
+    const canonicalRoot = await realpath(root);
+    expect(trackedRecord).toMatchObject({ __schema: 1, path: canonicalRoot });
     const listed = await runner.runCli(["workspace", "list", "--json"]);
     expect(JSON.parse(listed.stdout)).toEqual([
       expect.objectContaining({
         status: "current",
-        record: expect.objectContaining({ path: root }),
+        record: expect.objectContaining({ path: canonicalRoot }),
       }),
     ]);
-    expect((await runner.runCli(["workspace", "forget", root])).exitCode).toBe(0);
+    expect((await runner.runCli(["workspace", "forget", trackedRecord.path])).exitCode).toBe(0);
   });
 });

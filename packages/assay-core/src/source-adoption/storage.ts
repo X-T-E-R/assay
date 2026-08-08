@@ -303,6 +303,20 @@ function bootToken(): number {
   return Math.round((Date.now() - uptime() * 1000) / 1000);
 }
 
+/**
+ * `Date.now()` and `uptime()` are sampled independently, so two calculations
+ * of the same boot instant can straddle a rounding boundary. One second is the
+ * complete rounding uncertainty; a larger difference still denotes another
+ * boot epoch.
+ */
+export function sameBootEpoch(recorded: number, current: number): boolean {
+  return (
+    Number.isSafeInteger(recorded) &&
+    Number.isSafeInteger(current) &&
+    Math.abs(recorded - current) <= 1
+  );
+}
+
 interface AdoptionLockPayload {
   readonly pid: number;
   readonly host: string;
@@ -437,7 +451,7 @@ async function evaluateLock(
       reason: "lock file carries no usable owner record (interrupted acquisition)",
     };
   }
-  if (payload.host !== hostname() || payload.boot !== bootToken()) {
+  if (payload.host !== hostname() || !sameBootEpoch(payload.boot, bootToken())) {
     return {
       ...base,
       stale: ageMs > LOCK_UNCONFIRMED_STALE_MS,
