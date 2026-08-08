@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { safelyWriteAuthorityFile } from "./authority-file-write.js";
 import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError, WorkspaceCutoverRequiredError } from "./errors.js";
-import { identitySafeRealpath } from "./filesystem-boundary.js";
+import { identitySafePathNamesOpenFile, identitySafeRealpath } from "./filesystem-boundary.js";
 import { projectFileRelativePath } from "./project.js";
 import {
   type FrameworkManifest,
@@ -212,9 +212,18 @@ export async function forgetWorkspace(
   let file = isRecordSelector ? path.join(indexRoot, recordName) : "";
   let record = isRecordSelector ? await readRecord(file) : null;
   if (!record) {
-    const canonical = path.normalize(path.resolve(selector));
-    file = path.join(indexRoot, workspaceRecordFilename(canonical));
+    const lexical = path.normalize(path.resolve(selector));
+    file = path.join(indexRoot, workspaceRecordFilename(lexical));
     record = await readRecord(file);
+    if (!record) {
+      try {
+        const canonical = await canonicalSafeWorkspacePath(lexical);
+        file = path.join(indexRoot, workspaceRecordFilename(canonical));
+        record = await readRecord(file);
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      }
+    }
   }
   if (!record) throw new FrameworkNotFoundError(`Tracked workspace not found: ${selector}`);
   await removeRecordFile(file);
@@ -395,10 +404,9 @@ async function readWorkspaceAuthority(rootInput: string, relative: string): Prom
   try {
     const opened = await handle.stat();
     if (
-      opened.dev !== before.dev ||
-      opened.ino !== before.ino ||
       opened.nlink !== 1 ||
-      opened.size > 1024 * 1024
+      opened.size > 1024 * 1024 ||
+      !(await identitySafePathNamesOpenFile(target, handle))
     ) {
       throw new FrameworkError(`workspace authority identity changed: ${target}`);
     }
@@ -407,7 +415,7 @@ async function readWorkspaceAuthority(rootInput: string, relative: string): Prom
       throw new FrameworkError(`workspace authority exceeds size limit: ${target}`);
     }
     const after = await lstat(target);
-    if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1) {
+    if (after.nlink !== 1 || !(await identitySafePathNamesOpenFile(target, handle))) {
       throw new FrameworkError(`workspace authority identity changed: ${target}`);
     }
     try {

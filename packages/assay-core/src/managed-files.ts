@@ -4,7 +4,7 @@ import path from "node:path";
 import { recoverAuthorityFile, safelyWriteAuthorityFile } from "./authority-file-write.js";
 import { MANAGED_FILES_FILE } from "./constants.js";
 import { InvalidManifestError } from "./errors.js";
-import { identitySafeRealpath } from "./filesystem-boundary.js";
+import { identitySafePathNamesOpenFile, identitySafeRealpath } from "./filesystem-boundary.js";
 import { computeHash } from "./hashing.js";
 import {
   type ManagedFileRecord,
@@ -138,7 +138,8 @@ async function readReceiptAuthority(file: string): Promise<string> {
   if (!namedBefore.isFile() || namedBefore.isSymbolicLink() || namedBefore.nlink !== 1) {
     throw invalid(file, "Managed receipt must be an ordinary, unshared file.");
   }
-  if (!(await identitySafeRealpath(file))) {
+  const safePath = await identitySafeRealpath(file);
+  if (!safePath) {
     throw invalid(file, "Managed receipt must not resolve through a redirect.");
   }
   const handle = await open(file, "r");
@@ -147,14 +148,13 @@ async function readReceiptAuthority(file: string): Promise<string> {
     if (
       !opened.isFile() ||
       opened.nlink !== 1 ||
-      opened.dev !== namedBefore.dev ||
-      opened.ino !== namedBefore.ino
+      !(await identitySafePathNamesOpenFile(file, handle, safePath))
     ) {
       throw invalid(file, "Managed receipt identity changed while opening.");
     }
     const bytes = await handle.readFile();
     const namedAfter = await lstat(file);
-    if (namedAfter.nlink !== 1 || namedAfter.dev !== opened.dev || namedAfter.ino !== opened.ino) {
+    if (namedAfter.nlink !== 1 || !(await identitySafePathNamesOpenFile(file, handle, safePath))) {
       throw invalid(file, "Managed receipt identity changed while reading.");
     }
     return bytes.toString("utf8");

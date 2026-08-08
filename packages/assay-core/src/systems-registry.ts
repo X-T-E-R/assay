@@ -16,7 +16,7 @@ import {
   SystemsRegistryCutoverRequiredError,
 } from "./errors.js";
 import { appendEvent } from "./events.js";
-import { identitySafeRealpath } from "./filesystem-boundary.js";
+import { identitySafePathNamesOpenFile, identitySafeRealpath } from "./filesystem-boundary.js";
 import { loadManifest } from "./manifest.js";
 import {
   type SystemRecord,
@@ -395,7 +395,8 @@ async function readRegistryAuthority(file: string, allowTransactionLink = false)
   ) {
     throw new FrameworkError(`systems registry must be an ordinary, unshared file: ${file}`);
   }
-  if (!(await identitySafeRealpath(file))) {
+  const safePath = await identitySafeRealpath(file);
+  if (!safePath) {
     throw new FrameworkError(`systems registry must not resolve through a redirect: ${file}`);
   }
   const handle = await open(file, "r");
@@ -404,8 +405,7 @@ async function readRegistryAuthority(file: string, allowTransactionLink = false)
     if (
       !opened.isFile() ||
       !allowedLinks.has(opened.nlink) ||
-      opened.dev !== namedBefore.dev ||
-      opened.ino !== namedBefore.ino
+      !(await identitySafePathNamesOpenFile(file, handle, safePath))
     ) {
       throw new FrameworkError(`systems registry identity changed while opening: ${file}`);
     }
@@ -413,8 +413,7 @@ async function readRegistryAuthority(file: string, allowTransactionLink = false)
     const namedAfter = await lstat(file);
     if (
       !allowedLinks.has(namedAfter.nlink) ||
-      namedAfter.dev !== opened.dev ||
-      namedAfter.ino !== opened.ino
+      !(await identitySafePathNamesOpenFile(file, handle, safePath))
     ) {
       throw new FrameworkError(`systems registry identity changed while reading: ${file}`);
     }

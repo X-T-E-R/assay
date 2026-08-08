@@ -16,6 +16,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { identitySafeRealpath } from "../src/filesystem-boundary.js";
 import * as publicCore from "../src/index.js";
 import {
   applyUpdate,
@@ -116,9 +117,20 @@ describe("0.13 control-plane cleanup", () => {
     if (process.platform !== "win32") return;
     const temp = path.resolve(tmpdir());
     const canonicalTemp = await import("node:fs/promises").then(({ realpath }) => realpath(temp));
+    const runnerProvidedShortTemp = /~[0-9]+(?:\\|$)/i.test(temp);
+    if (runnerProvidedShortTemp) {
+      expect(canonicalTemp.toLowerCase()).not.toBe(temp.toLowerCase());
+      await expect(identitySafeRealpath(temp)).resolves.toMatchObject({
+        windowsShortPathAlias: true,
+      });
+    }
     const shortTemp =
       temp.toLowerCase() !== canonicalTemp.toLowerCase() ? temp : await windowsShortPath(temp);
     if (!shortTemp || !/~[0-9]+(?:\\|$)/i.test(shortTemp)) return;
+
+    await expect(identitySafeRealpath(shortTemp)).resolves.toMatchObject({
+      windowsShortPathAlias: true,
+    });
 
     const parent = await mkdtemp(path.join(shortTemp, "assay-short-path-"));
     roots.push(parent);
@@ -126,10 +138,13 @@ describe("0.13 control-plane cleanup", () => {
     const root = path.join(parent, "workspace");
     await initFramework({ target: root, name: "Short Path", template: descriptor });
 
-    await expect(loadManifest(root)).resolves.toMatchObject({
+    const manifest = await loadManifest(root);
+    expect(manifest).toMatchObject({
       framework_version: "0.13.0",
       layout: { version: 8 },
     });
+    if (!manifest) throw new Error("short-path workspace manifest was not created");
+    await expect(publicCore.saveManifest(root, manifest)).resolves.toEqual(manifest);
     await expect(checkFramework({ root })).resolves.toMatchObject({ ok: true });
   });
 
@@ -339,13 +354,15 @@ describe("0.13 control-plane cleanup", () => {
     for (const root of [one, two, three])
       await initFramework({ target: root, name: "Clone", agents: false });
     await trackWorkspace({ root: one, indexRoot });
-    await trackWorkspace({ root: two, indexRoot });
+    const trackedTwo = await trackWorkspace({ root: two, indexRoot });
     expect(
       (await listWorkspaces({ indexRoot })).filter((item) => item.status === "current"),
     ).toHaveLength(2);
-    await trackWorkspace({ root: three, rebind: one, indexRoot });
+    const trackedThree = await trackWorkspace({ root: three, rebind: one, indexRoot });
     const listed = await listWorkspaces({ indexRoot });
-    expect(listed.map((item) => item.record?.path).sort()).toEqual([two, three].sort());
+    expect(listed.map((item) => item.record?.path).sort()).toEqual(
+      [trackedTwo.path, trackedThree.path].sort(),
+    );
     await forgetWorkspace(two, { indexRoot });
     expect(await listWorkspaces({ indexRoot })).toHaveLength(1);
 
@@ -372,8 +389,8 @@ describe("0.13 control-plane cleanup", () => {
 
     const stale = path.join(parent, "stale");
     await initFramework({ target: stale, name: "Same", agents: false });
-    await trackWorkspace({ root: stale, indexRoot });
-    const staleRecord = path.join(indexRoot, workspaceRecordFilename(stale));
+    const trackedStale = await trackWorkspace({ root: stale, indexRoot });
+    const staleRecord = path.join(indexRoot, workspaceRecordFilename(trackedStale.path));
     const payload = JSON.parse(await readFile(staleRecord, "utf8"));
     payload.project_id = "project-forged";
     await writeFile(staleRecord, JSON.stringify(payload), "utf8");
@@ -453,11 +470,11 @@ describe("0.13 control-plane cleanup", () => {
     const root = path.join(parent, "workspace");
     const indexRoot = path.join(parent, "index");
     await initFramework({ target: root, agents: false });
-    await trackWorkspace({ root, indexRoot });
+    const tracked = await trackWorkspace({ root, indexRoot });
     const outside = path.join(parent, "outside-state");
     await rename(path.join(root, ".assay"), outside);
     await symlink(outside, path.join(root, ".assay"), "junction");
-    const recordFile = path.join(indexRoot, workspaceRecordFilename(root));
+    const recordFile = path.join(indexRoot, workspaceRecordFilename(tracked.path));
     const before = await readFile(recordFile, "utf8");
     expect(await listWorkspaces({ indexRoot })).toMatchObject([{ status: "invalid" }]);
     expect(await readFile(recordFile, "utf8")).toBe(before);

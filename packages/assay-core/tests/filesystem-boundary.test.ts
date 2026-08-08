@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { identitySafeRealpath } from "../src/filesystem-boundary.js";
+import { identitySafePathNamesOpenFile, identitySafeRealpath } from "../src/filesystem-boundary.js";
 
 const roots: string[] = [];
 
@@ -25,5 +25,26 @@ describe("identity-safe filesystem boundaries", () => {
       expect.objectContaining({ resolved: path.resolve(target), canonical: expect.any(String) }),
     );
     await expect(identitySafeRealpath(redirect)).resolves.toBeNull();
+  });
+
+  it("binds an open authority file to its current name and rejects replacement", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "assay-open-identity-"));
+    roots.push(root);
+    const target = path.join(root, "authority.json");
+    const displaced = path.join(root, "authority.old.json");
+    await writeFile(target, "old\n", "utf8");
+
+    const safePath = await identitySafeRealpath(target);
+    expect(safePath).not.toBeNull();
+    if (!safePath) throw new Error("ordinary authority path was rejected");
+    const handle = await open(target, "r");
+    try {
+      await expect(identitySafePathNamesOpenFile(target, handle, safePath)).resolves.toBe(true);
+      await rename(target, displaced);
+      await writeFile(target, "new\n", "utf8");
+      await expect(identitySafePathNamesOpenFile(target, handle, safePath)).resolves.toBe(false);
+    } finally {
+      await handle.close();
+    }
   });
 });

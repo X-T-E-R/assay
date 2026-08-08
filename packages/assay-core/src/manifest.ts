@@ -8,7 +8,7 @@ import {
 } from "./authority-file-write.js";
 import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
 import { InvalidManifestError, WorkspaceCutoverRequiredError } from "./errors.js";
-import { identitySafeRealpath } from "./filesystem-boundary.js";
+import { identitySafePathNamesOpenFile, identitySafeRealpath } from "./filesystem-boundary.js";
 import { defaultStandaloneLayout } from "./layout.js";
 import {
   type FrameworkManifest,
@@ -119,7 +119,8 @@ async function readManifestAuthority(file: string): Promise<string> {
   if (!namedBefore.isFile() || namedBefore.isSymbolicLink() || namedBefore.nlink !== 1) {
     throw new InvalidManifestError(file, "Framework manifest must be an ordinary, unshared file.");
   }
-  if (!(await identitySafeRealpath(file))) {
+  const safePath = await identitySafeRealpath(file);
+  if (!safePath) {
     throw new InvalidManifestError(file, "Framework manifest must not resolve through a redirect.");
   }
   const handle = await open(file, "r");
@@ -128,14 +129,13 @@ async function readManifestAuthority(file: string): Promise<string> {
     if (
       !opened.isFile() ||
       opened.nlink !== 1 ||
-      opened.dev !== namedBefore.dev ||
-      opened.ino !== namedBefore.ino
+      !(await identitySafePathNamesOpenFile(file, handle, safePath))
     ) {
       throw new InvalidManifestError(file, "Framework manifest identity changed while opening.");
     }
     const bytes = await handle.readFile();
     const namedAfter = await lstat(file);
-    if (namedAfter.nlink !== 1 || namedAfter.dev !== opened.dev || namedAfter.ino !== opened.ino) {
+    if (namedAfter.nlink !== 1 || !(await identitySafePathNamesOpenFile(file, handle, safePath))) {
       throw new InvalidManifestError(file, "Framework manifest identity changed while reading.");
     }
     return bytes.toString("utf8");

@@ -1,10 +1,18 @@
-import { lstat, realpath } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
 export interface IdentitySafePath {
   readonly resolved: string;
   readonly canonical: string;
   readonly windowsShortPathAlias: boolean;
+}
+
+function sameOpenFileIdentity(
+  left: Awaited<ReturnType<FileHandle["stat"]>>,
+  right: Awaited<ReturnType<FileHandle["stat"]>>,
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function pathKey(value: string): string {
@@ -70,4 +78,40 @@ export async function identitySafeRealpath(target: string): Promise<IdentitySafe
   }
 
   return { resolved, canonical, windowsShortPathAlias: true };
+}
+
+/**
+ * Prove that an already-open file is still the ordinary file named by target.
+ *
+ * Windows can report different path-stat and handle-stat identities when a
+ * path contains a DOS 8.3 alias. Compare two open handles instead, while the
+ * identity-safe path checks on both sides preserve redirect rejection. This
+ * also keeps replacement detection: a name rebound after the caller opened
+ * its handle produces a different verifier handle identity.
+ */
+export async function identitySafePathNamesOpenFile(
+  target: string,
+  handle: FileHandle,
+  expectedPath?: IdentitySafePath,
+): Promise<boolean> {
+  const before = await identitySafeRealpath(target);
+  if (!before) return false;
+  if (expectedPath && pathKey(before.canonical) !== pathKey(expectedPath.canonical)) return false;
+
+  const verifier = await open(target, "r");
+  try {
+    const [openedInfo, verifierInfo] = await Promise.all([handle.stat(), verifier.stat()]);
+    if (
+      !openedInfo.isFile() ||
+      !verifierInfo.isFile() ||
+      !sameOpenFileIdentity(openedInfo, verifierInfo)
+    ) {
+      return false;
+    }
+  } finally {
+    await verifier.close();
+  }
+
+  const after = await identitySafeRealpath(target);
+  return Boolean(after && pathKey(after.canonical) === pathKey(before.canonical));
 }

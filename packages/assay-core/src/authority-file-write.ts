@@ -5,7 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { AuthorityRepairRequiredError, AuthorityWriteConflictError } from "./errors.js";
-import { identitySafeRealpath } from "./filesystem-boundary.js";
+import { identitySafePathNamesOpenFile, identitySafeRealpath } from "./filesystem-boundary.js";
 import { stringifySortedJson } from "./serialization.js";
 
 export type AuthorityWriteProbePhase =
@@ -305,7 +305,8 @@ async function snapshotFile(file: string, allowHardlink = false): Promise<FileSn
   ) {
     throw new AuthorityRepairRequiredError(`authority transaction found an unsafe file: ${file}`);
   }
-  if (!(await identitySafeRealpath(file))) {
+  const safePath = await identitySafeRealpath(file);
+  if (!safePath) {
     throw new AuthorityRepairRequiredError(
       `authority transaction found a redirected file: ${file}`,
     );
@@ -313,7 +314,7 @@ async function snapshotFile(file: string, allowHardlink = false): Promise<FileSn
   const handle = await open(file, "r");
   try {
     const opened = await handle.stat();
-    if (!opened.isFile() || !sameIdentity(identity(opened), identity(namedBefore))) {
+    if (!opened.isFile() || !(await identitySafePathNamesOpenFile(file, handle, safePath))) {
       throw new AuthorityRepairRequiredError(
         `authority file identity changed while opening: ${file}`,
       );
@@ -344,7 +345,7 @@ async function snapshotFile(file: string, allowHardlink = false): Promise<FileSn
     }
     const namedAfter = await lstat(file);
     if (
-      !sameIdentity(identity(opened), identity(namedAfter)) ||
+      !(await identitySafePathNamesOpenFile(file, handle, safePath)) ||
       opened.nlink !== namedAfter.nlink
     ) {
       throw new AuthorityRepairRequiredError(
@@ -401,7 +402,8 @@ async function readJsonReceipt<T>(file: string, schema: z.ZodType<T>): Promise<T
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
     throw new AuthorityRepairRequiredError(`authority transaction receipt is unsafe: ${file}`);
   }
-  if (!(await identitySafeRealpath(file))) {
+  const safePath = await identitySafeRealpath(file);
+  if (!safePath) {
     throw new AuthorityRepairRequiredError(`authority transaction receipt is redirected: ${file}`);
   }
   if (info.size > MAX_RECEIPT_BYTES) {
@@ -418,7 +420,11 @@ async function readJsonReceipt<T>(file: string, schema: z.ZodType<T>): Promise<T
   const handle = await open(file, "r");
   try {
     const opened = await handle.stat();
-    if (!opened.isFile() || opened.nlink !== 1 || !sameIdentity(identity(opened), identity(info))) {
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      !(await identitySafePathNamesOpenFile(file, handle, safePath))
+    ) {
       throw new AuthorityRepairRequiredError(
         `authority transaction receipt identity changed while opening: ${file}`,
       );
@@ -448,7 +454,7 @@ async function readJsonReceipt<T>(file: string, schema: z.ZodType<T>): Promise<T
       );
     }
     const after = await lstat(file);
-    if (!sameIdentity(identity(opened), identity(after)) || after.nlink !== 1) {
+    if (!(await identitySafePathNamesOpenFile(file, handle, safePath)) || after.nlink !== 1) {
       throw new AuthorityRepairRequiredError(
         `authority transaction receipt identity changed while reading: ${file}`,
       );
