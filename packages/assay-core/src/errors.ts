@@ -45,19 +45,40 @@ export class InvalidManifestError extends FrameworkError {
 
 export class WorkspaceCutoverRequiredError extends FrameworkError {
   readonly observed: string;
-  readonly required = "0.12.0+s4+l8";
+  readonly required = "0.13.0+s4+l8";
   readonly locator: string;
 
   constructor(observed: string) {
-    const locator = `assay-cutover:${observed}->0.12.0+s4+l8`;
+    const locator = `assay-cutover:${observed}->0.13.0+s4+l8`;
     super(
-      `Workspace cutover required: observed ${observed}; required 0.12.0+s4+l8; locator ${locator}`,
+      `Workspace cutover required: observed ${observed}; required 0.13.0+s4+l8; locator ${locator}`,
       {
         code: "WORKSPACE_CUTOVER_REQUIRED",
-        details: { observed, required: "0.12.0+s4+l8", locator },
+        details: { observed, required: "0.13.0+s4+l8", locator },
       },
     );
     this.name = "WorkspaceCutoverRequiredError";
+    this.observed = observed;
+    this.locator = locator;
+  }
+}
+
+export class SystemsRegistryCutoverRequiredError extends FrameworkError {
+  readonly observed: string;
+  readonly required = "0.13.0+s4+l8+r3";
+  readonly locator: string;
+
+  constructor(observedRegistrySchema: number | "unknown") {
+    const observed = `0.13.0+s4+l8+r${observedRegistrySchema}`;
+    const locator = `assay-cutover:${observed}->0.13.0+s4+l8+r3`;
+    super(
+      `Systems registry cutover required: observed ${observed}; required 0.13.0+s4+l8+r3; locator ${locator}`,
+      {
+        code: "WORKSPACE_CUTOVER_REQUIRED",
+        details: { observed, required: "0.13.0+s4+l8+r3", locator },
+      },
+    );
+    this.name = "SystemsRegistryCutoverRequiredError";
     this.observed = observed;
     this.locator = locator;
   }

@@ -15,6 +15,7 @@ import path from "node:path";
 
 import { parse, stringify } from "yaml";
 
+import { FrameworkError } from "./errors.js";
 import {
   defaultStandaloneLayout,
   resolveWorkspaceLayout,
@@ -24,7 +25,7 @@ import { loadManifest } from "./manifest.js";
 import { loadNativeProject, validateNativeProjectStructure } from "./project.js";
 import { allocateReadableId, isReadableId } from "./readable-id.js";
 import type { WorkspaceLayout } from "./schemas/index.js";
-import { loadSystemsRegistry } from "./systems-registry.js";
+import { loadSystemsRegistry, systemRecordForSelector } from "./systems-registry.js";
 import { showTask } from "./task.js";
 import {
   TaskInvalidEncodingError,
@@ -477,6 +478,7 @@ function errorFrom(error: unknown, fallback = "spec storage operation failed"): 
 }
 
 function throwStorage(error: unknown): never {
+  if (error instanceof FrameworkError) throw error;
   throw errorFrom(error);
 }
 
@@ -821,7 +823,7 @@ async function resolveScope(location: SpecLocation, selector: string): Promise<S
   if (selector.startsWith("system:") && selector.slice("system:".length).length > 0) {
     const id = selector.slice("system:".length);
     const registry = await loadSystemsRegistry(location.root);
-    if (!registry?.systems[id]) {
+    if (!registry || !systemRecordForSelector(registry, id)) {
       throw new SpecError("SPEC_SCOPE_INVALID", `registered system not found: ${id}`);
     }
     return { kind: "system", id };
@@ -837,8 +839,8 @@ async function scopeIssue(
     const project = await loadNativeProject(location.root, location.layout).catch(() => null);
     if (project?.id === scope.id) return undefined;
   } else {
-    const registry = await loadSystemsRegistry(location.root).catch(() => null);
-    if (registry?.systems[scope.id]) return undefined;
+    const registry = await loadSystemsRegistry(location.root);
+    if (registry && systemRecordForSelector(registry, scope.id)) return undefined;
   }
   return {
     code: "SPEC_SCOPE_INVALID",
@@ -1074,9 +1076,20 @@ export async function showSpec(options: {
 }): Promise<SpecRecordResult> {
   const location = await locationFor(options.root);
   const id = assertId(options.id);
+  const preliminaryLocation = await locate(location, id);
+  const preliminary = await readAt(location, preliminaryLocation, id);
+  if (preliminary.result.item.scope.kind === "system") {
+    const issue = await scopeIssue(location, preliminary.result.item.scope);
+    if (issue) throw new SpecError("SPEC_SCOPE_INVALID", issue.message);
+  }
   return withTaskLock(location.root, itemLock(location, id), async () => {
     const located = await locate(location, id);
-    return (await readAt(location, located, id)).result;
+    const current = await readAt(location, located, id);
+    if (current.result.item.scope.kind === "system") {
+      const issue = await scopeIssue(location, current.result.item.scope);
+      if (issue) throw new SpecError("SPEC_SCOPE_INVALID", issue.message);
+    }
+    return current.result;
   }).catch(throwStorage);
 }
 
@@ -1508,6 +1521,7 @@ async function validation(location: SpecLocation): Promise<SpecValidationResult>
             }
           }
         } catch (error) {
+          if (error instanceof FrameworkError) throw error;
           const mapped = errorFrom(error);
           issues.push({ code: mapped.code, message: mapped.message });
         }

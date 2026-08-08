@@ -10,4 +10,4 @@ Assay runtime metadata. Do not store external evidence or long-lived user knowle
 
 - `backups/`: timestamped backups before managed updates.
 
-Current Assay release is 0.12.0; layout release is 8.
+Current Assay release is 0.13.0; layout release is 8.

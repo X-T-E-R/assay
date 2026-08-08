@@ -1,6 +1,6 @@
 # Commands
 
-Every workspace command discovers `.assay/manifest.json` and accepts only the exact `0.12.0+s4+l8` envelope.
+Every workspace command discovers `.assay/manifest.json` and accepts only the exact `0.13.0+s4+l8` workspace envelope. System commands additionally require systems registry schema 3 (`0.13.0+s4+l8+r3`).
 
 ## Lifecycle
 
@@ -45,7 +45,7 @@ assay spec ...
 assay system register|update|promote|archive|list|show ...
 ```
 
-Task, Roadmap, Spec, and System authority remain independent. The systems registry remains schema 2; 0.12 does not change System authority.
+Task, Roadmap, Spec, and System authority remain independent. Systems registry schema 3 is canonical for Project-local System membership and selectors. `system update --path` only rebinds the locator. `system archive --apply` is a logical registry transition and never moves or deletes System bytes. A file named `system.yaml` is ordinary user content, not an Assay contract.
 
 ## Sources and adoptions
 

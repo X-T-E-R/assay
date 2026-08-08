@@ -1,4 +1,4 @@
-# Assay 0.12 framework structure
+# Assay 0.13 framework structure
 
 Every current workspace has a fixed core plus one-shot Template output. The Template is selected only by `init` or `attach`, expanded to actual `layout.entries`, and never persisted or reloaded.
 

@@ -78,7 +78,7 @@ Distinct from the optional global workspace index, each current workspace has a 
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]
-assay system update <selector> [--path ...] [--vcs ...] [--vcs-ref ...] [--system-version ...] [--contract-file ... | --no-contract-file] [--primary] [--supersedes ...]
+assay system update <selector> [--path ...] [--vcs ...] [--vcs-ref ...] [--system-version ...] [--primary] [--supersedes ...]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status ...] [--json]

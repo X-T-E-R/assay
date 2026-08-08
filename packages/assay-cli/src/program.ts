@@ -30,7 +30,7 @@ import {
   diffSource,
   discoverFrameworkRoot,
   discoverWorkspaces,
-  findSystem,
+  findSystemEntry,
   forgetWorkspace,
   getFrameworkStatus,
   getSourceAdoption,
@@ -184,17 +184,11 @@ function splitList(value: string | undefined): string[] | undefined {
     .filter(Boolean);
 }
 
-function systemRegisterNextLine(system: {
-  readonly name: string;
-  readonly status: string;
-  readonly contract_file: string | null;
-}): string {
-  if (system.status !== "primary") {
-    return `Next: \`assay system promote ${system.name}\` when it becomes the primary system.`;
+function systemRegisterNextLine(selector: string, status: string): string {
+  if (status !== "primary") {
+    return `Next: \`assay system promote ${selector}\` when it becomes the primary system.`;
   }
-  return system.contract_file
-    ? `Next: describe what ${system.name} does in ${system.contract_file}.`
-    : `Next: \`assay system show ${system.name}\` to confirm what was recorded.`;
+  return `Next: \`assay system show ${selector}\` to confirm what was recorded.`;
 }
 
 export function createProgram(options: CreateProgramOptions = {}): Command {
@@ -1187,18 +1181,17 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         primary: commandOptions.primary ?? false,
         supersedes,
       });
-      writeLine(output, "stdout", `Registered system: ${result.system.name}`);
+      writeLine(output, "stdout", `Registered system: ${result.selector}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
-      writeLine(output, "stdout", `Contract: ${result.system.contract_file ?? "-"}`);
       writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
-      writeLine(output, "stdout", systemRegisterNextLine(result.system));
+      writeLine(output, "stdout", systemRegisterNextLine(result.selector, result.system.status));
     });
 
   system
     .command("update")
     .description("Update metadata for an existing system registry record")
-    .argument("<selector>", "system name or unique name prefix")
+    .argument("<selector>", "exact canonical system selector")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--path <path>", "system directory (relative to workspace root)")
     .addOption(
@@ -1210,20 +1203,12 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     )
     .option("--vcs-ref <ref>", "branch, commit, or tag")
     .option("--system-version <version>", "system semantic version")
-    .option("--contract-file <path>", "contract file path")
-    .option("--no-contract-file", "clear the contract file path")
     .option("--primary", "set this system as the primary system")
     .option("--supersedes <names>", "comma-separated superseded system names")
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const vcs = commandOptions.vcs as SystemVcs | undefined;
       const supersedes = splitList(commandOptions.supersedes);
-      const contractFile =
-        commandOptions.contractFile === false
-          ? null
-          : typeof commandOptions.contractFile === "string"
-            ? commandOptions.contractFile
-            : undefined;
       const result = await updateSystem(root, selector, {
         ...(commandOptions.path === undefined ? {} : { path: commandOptions.path }),
         ...(vcs === undefined ? {} : { vcs }),
@@ -1231,12 +1216,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.systemVersion === undefined
           ? {}
           : { version: commandOptions.systemVersion }),
-        ...(contractFile === undefined ? {} : { contractFile }),
         ...(supersedes === undefined ? {} : { supersedes }),
         ...(commandOptions.primary ? { primary: true } : {}),
       });
       const changedFields = result.changes.map((change) => change.field).join(", ");
-      writeLine(output, "stdout", `Updated system: ${result.system.name}`);
+      writeLine(output, "stdout", `Updated system: ${result.selector}`);
       writeLine(output, "stdout", `Status: ${result.system.status}`);
       writeLine(output, "stdout", "Registry: .assay/systems-registry.json");
       writeLine(output, "stdout", `Changed fields: ${changedFields || "(none)"}`);
@@ -1246,17 +1230,17 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   system
     .command("promote")
     .description("Promote a system to primary; demotes the previous primary")
-    .argument("<selector>", "system name or unique name prefix")
+    .argument("<selector>", "exact canonical system selector")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await promoteSystem(root, selector);
-      writeLine(output, "stdout", `Promoted: ${result.system.name}`);
+      writeLine(output, "stdout", `Promoted: ${result.selector}`);
       if (result.previousPrimary) {
         writeLine(
           output,
           "stdout",
-          `Previous primary: ${result.previousPrimary.name} (now superseded)`,
+          `Previous primary: ${result.previousPrimary.selector} (now superseded)`,
         );
       }
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
@@ -1264,24 +1248,18 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   system
     .command("archive")
-    .description("Archive a non-primary system into systems/archive/")
-    .argument("<selector>", "system name or unique name prefix")
+    .description("Logically archive a non-primary system without moving its files")
+    .argument("<selector>", "exact canonical system selector")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .addOption(new Option("--dry-run", "plan archive without moving files").conflicts("apply"))
-    .addOption(new Option("--apply", "move the system into the archive").conflicts("dryRun"))
+    .addOption(new Option("--dry-run", "plan the logical registry transition").conflicts("apply"))
+    .addOption(new Option("--apply", "apply the logical registry transition").conflicts("dryRun"))
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const dryRun = commandOptions.dryRun ?? !commandOptions.apply;
       const result = await archiveSystem(root, selector, { dryRun });
       writeLine(output, "stdout", `System archive: ${result.dryRun ? "dry-run" : "applied"}`);
-      writeLine(output, "stdout", `System: ${result.system.name}`);
-      if (result.movedTo) {
-        writeLine(
-          output,
-          "stdout",
-          `${result.dryRun ? "Would move to" : "Moved to"}: ${result.movedTo}`,
-        );
-      }
+      writeLine(output, "stdout", `System: ${result.selector}`);
+      writeLine(output, "stdout", "Archive mode: logical (locator unchanged; no files moved)");
       if (result.eventFile) {
         writeLine(output, "stdout", `Event: ${result.eventFile}`);
       }
@@ -1304,10 +1282,13 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       const root = await discoveredRoot(commandOptions.root);
       const { registry, systems } = await listSystems(root);
       const filtered = commandOptions.status
-        ? systems.filter((sys) => sys.status === commandOptions.status)
+        ? systems.filter((entry) => entry.system.status === commandOptions.status)
         : systems;
       if (commandOptions.json) {
-        writeJson(output, { primary: registry.primary, systems: filtered });
+        writeJson(output, {
+          primary: registry.primary,
+          systems: filtered.map(({ selector, system }) => ({ selector, ...system })),
+        });
         return;
       }
       writeLine(
@@ -1319,19 +1300,19 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   system
     .command("show")
-    .description("Show one registered system by name or unique prefix")
-    .argument("<selector>", "system name or unique name prefix")
+    .description("Show one registered system by exact canonical selector")
+    .argument("<selector>", "exact canonical system selector")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (selector, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const registry = await requireSystemsRegistry(root);
-      const record = await findSystem(registry, selector);
+      const entry = await findSystemEntry(registry, selector);
       if (commandOptions.json) {
-        writeJson(output, record);
+        writeJson(output, { selector: entry.selector, ...entry.system });
         return;
       }
-      writeLine(output, "stdout", formatSystemRecord(record));
+      writeLine(output, "stdout", formatSystemRecord(entry));
     });
 
   const knowledge = program.command("knowledge").description("Knowledge operations");

@@ -1,3 +1,3 @@
 # systems/
 
-Your active system implementations and registered system metadata. Assay manages each system's registry contract; system source and docs belong to the system itself.
+Your active System implementations live here. Assay manages only their Project-local schema-3 registry records; System source, docs, and release identity belong to each System itself.

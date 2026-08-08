@@ -8,7 +8,11 @@ import { FrameworkError, FrameworkNotFoundError } from "../errors.js";
 import { stringifySortedJson, toPosixPath } from "../serialization.js";
 import { resolveSourceObservation } from "../sources.js";
 import { collectGitMetadata } from "../sources/git.js";
-import { requireSystemsRegistry } from "../systems-registry.js";
+import {
+  requireSystemsRegistry,
+  resolveRegistryPath,
+  systemRecordForSelector,
+} from "../systems-registry.js";
 import type {
   SourceAdoptionDefinition,
   SourceAdoptionLocatorSnapshot,
@@ -370,11 +374,11 @@ export async function snapshotDonorTarget(
     );
   }
   const registry = await requireSystemsRegistry(root);
-  const system = registry.systems[target.system];
+  const system = systemRecordForSelector(registry, target.system);
   if (!system) {
     throw new FrameworkNotFoundError(`registered target system not found: ${target.system}`);
   }
-  const systemRoot = path.resolve(root, system.path);
+  const systemRoot = resolveRegistryPath(root, system.path);
   let systemInfo: Stats;
   try {
     systemInfo = await lstat(systemRoot);
@@ -396,13 +400,13 @@ export async function snapshotDonorTarget(
         ]),
       );
       return donorTargetSnapshotSchema.parse({
-        system: system.name,
+        system: target.system,
         registered_path: system.path,
         adapter: target.adapter,
         revision: null,
         working_tree: "unknown",
         fingerprint: hashJson({
-          system: system.name,
+          system: target.system,
           registered_path: system.path,
           locators,
         }),
@@ -428,13 +432,13 @@ export async function snapshotDonorTarget(
       ]),
     );
     return donorTargetSnapshotSchema.parse({
-      system: system.name,
+      system: target.system,
       registered_path: system.path,
       adapter: target.adapter,
       revision: null,
       working_tree: "unknown",
       fingerprint: hashJson({
-        system: system.name,
+        system: target.system,
         registered_path: system.path,
         locators,
       }),
@@ -453,12 +457,12 @@ export async function snapshotDonorTarget(
   const vcs = system.vcs === "none" ? undefined : await collectGitMetadata(systemRoot);
   const workingTree = vcs ? (vcs.dirty ? "dirty" : "clean") : "not-versioned";
   const fingerprint = hashJson({
-    system: system.name,
+    system: target.system,
     registered_path: system.path,
     locators,
   });
   return donorTargetSnapshotSchema.parse({
-    system: system.name,
+    system: target.system,
     registered_path: system.path,
     adapter: target.adapter,
     revision: vcs ? { kind: "git-commit", value: vcs.commit } : null,

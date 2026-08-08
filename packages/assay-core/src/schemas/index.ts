@@ -60,7 +60,7 @@ export const responsibilityBindingSchema = z
   })
   .strict();
 
-// --- Systems registry (layout v3) -------------------------------------------
+// --- Systems registry (schema 3; workspace layout remains v8) ----------------
 
 export const systemVcsSchema = z.enum(["independent-git", "embedded", "none"]);
 
@@ -68,24 +68,64 @@ export const systemStatusSchema = z.enum(["primary", "active", "archived", "supe
 
 export const systemRecordSchema = z
   .object({
-    name: z.string().min(1),
     path: z.string().min(1),
     status: systemStatusSchema,
     vcs: systemVcsSchema,
     vcs_ref: z.string(),
     version: z.string(),
-    contract_file: z.string().nullable(),
     supersedes: z.array(z.string().min(1)),
-    absorbed_on: z.string().nullable(),
-    archived_on: z.string().nullable(),
-    archive_path: z.string().nullable(),
+    absorbed_on: z.string().min(1).optional(),
+    archived_on: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((record, context) => {
+    if (record.status === "superseded") {
+      if (!record.absorbed_on) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["absorbed_on"],
+          message: "superseded system must record absorbed_on",
+        });
+      }
+      if (record.archived_on) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["archived_on"],
+          message: "superseded system must not record archived_on",
+        });
+      }
+      return;
+    }
+    if (record.status === "archived") {
+      if (!record.archived_on) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["archived_on"],
+          message: "archived system must record archived_on",
+        });
+      }
+      if (record.absorbed_on) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["absorbed_on"],
+          message: "archived system must not record absorbed_on",
+        });
+      }
+      return;
+    }
+    if (record.absorbed_on || record.archived_on) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: record.absorbed_on ? ["absorbed_on"] : ["archived_on"],
+        message: "live system must not record lifecycle transition dates",
+      });
+    }
+  });
 
 export const systemsRegistrySchema = z
   .object({
-    __schema: z.literal(2),
-    primary: z.string().min(1).nullable(),
+    __schema: z.literal(3),
+    primary: z.string().min(1),
     systems: z.record(systemRecordSchema),
     updated_at: z.string().min(1),
   })
@@ -201,7 +241,7 @@ export const workspaceLayoutSchema = z
 export const frameworkManifestSchema = z
   .object({
     __schema: z.literal(4),
-    framework_version: z.literal("0.12.0"),
+    framework_version: z.literal("0.13.0"),
     layout: workspaceLayoutSchema,
   })
   .strict();

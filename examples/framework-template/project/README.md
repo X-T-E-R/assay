@@ -11,7 +11,7 @@ Authority remains separate elsewhere:
 - `sources/` owns living and frozen external evidence.
 - `analyses/` owns analysis records.
 - `tasks/` owns Assay-native Task records.
-- `systems/` owns registered System contracts and implementations.
+- `systems/` contains System implementations; schema-3 registry records own Project-local membership and locators.
 - `.assay/` owns workspace layout, runtime state, receipts, and caches.
 
 Project ownership does not grant plugins, Relay, Ponytail, or external tooling permission to write this area. Those tools act only through an explicit Project selection and their own declared authority.

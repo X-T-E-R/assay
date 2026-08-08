@@ -2,14 +2,15 @@
 
 Assay 是一个 local-first 证据工作台，管理 Project、Source、Analysis、Knowledge、Task、Roadmap、Spec 与独立版本化的 System。
 
-## 0.12 工作区契约
+## 0.13 工作区契约
 
-Assay 0.12 只接受 `0.12.0+s4+l8`。旧 envelope 或畸形 authority 会 fail closed，必须交给外部 cutover 工具。
+Assay 0.13 只接受 `0.13.0+s4+l8+r3`。旧 workspace/System registry envelope 或畸形 authority 会 fail closed，必须交给外部 exact-pair cutover 工具。
 
 - `.assay/manifest.json` schema 4 只保存固定 framework version 与精确 layout 8；`layout.entries` 仅含一次性 Template 展开后的有界路径，不重复 deterministic native/core path。
 - `project/project.yaml`（overlay 中是 `.assay/project/project.yaml`）是唯一 Project id/name authority。
 - `.assay/managed-files.json` schema 1 只记录固定 core 资产的 no-clobber receipt。一次性 Template 输出属于用户，不进入 receipt。
-- `.assay/systems-registry.json` 继续使用 schema 2；外部 Plugin descriptor 继续使用 schema 1，Assay 不安装或执行 payload。
+- `.assay/systems-registry.json` schema 3 是 Project-local System 的唯一 authority；map key 是 canonical selector，record 只保存 locator、lifecycle、VCS/version observation 与 supersedes edge。Assay 不创建、不解析 `system.yaml`。
+- 外部 Plugin descriptor 继续使用 schema 1，Assay 不安装或执行 payload。
 
 ## 开始
 

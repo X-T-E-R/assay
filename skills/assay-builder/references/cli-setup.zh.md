@@ -79,7 +79,7 @@ assay workspace forget <selector> # 移除一条注册记录(绝不删除项目�
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]
-assay system update <selector> [--path ...] [--vcs ...] [--vcs-ref ...] [--system-version ...] [--contract-file ... | --no-contract-file] [--primary] [--supersedes ...]
+assay system update <selector> [--path ...] [--vcs ...] [--vcs-ref ...] [--system-version ...] [--primary] [--supersedes ...]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status ...] [--json]

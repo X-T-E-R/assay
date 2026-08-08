@@ -995,7 +995,7 @@ describe("native Task overlay conversion", () => {
       await expect(
         convertOverlayToStandalone({ root, target, move, keepOverlay: !move }),
       ).rejects.toThrow(
-        /task contexts target ancestor.*symlink|task contexts target ancestor.*junction|task contexts target ancestor.*reparse point/,
+        /(?:task contexts|Source adoption) target ancestor.*(?:symlink|junction|reparse point)/,
       );
       expect(await readFile(sourceContext)).toEqual(sourceBefore);
       expect(await readFile(outsideContext, "utf8")).toBe("outside\n");

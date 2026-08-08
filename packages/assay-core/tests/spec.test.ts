@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -578,6 +578,55 @@ describe("native Spec", { timeout: 60_000 }, () => {
     await expect(
       createSpec({ root, title: "Missing", scope: "system:missing", strength: "required" }),
     ).rejects.toMatchObject({ code: "SPEC_SCOPE_INVALID" });
+  });
+
+  it("propagates an r2 System cutover fault from scope validation without writes", async () => {
+    const root = await workspace("Scope cutover");
+    await registerSystem(root, { name: "api", path: "systems/api" });
+    const spec = await createSpec({
+      root,
+      title: "System scoped requirement",
+      scope: "system:api",
+      strength: "required",
+    });
+    const registryFile = path.join(root, ".assay", "systems-registry.json");
+    const oldRegistry = {
+      __schema: 2,
+      primary: "api",
+      systems: {
+        api: {
+          name: "api",
+          path: "systems/api",
+          status: "primary",
+          vcs: "embedded",
+          vcs_ref: "",
+          version: "0.1.0",
+          contract_file: "systems/api/system.yaml",
+          supersedes: [],
+          absorbed_on: null,
+          archived_on: null,
+          archive_path: null,
+        },
+      },
+      updated_at: "2026-08-08T00:00:00.000Z",
+    };
+    await writeFile(registryFile, `${JSON.stringify(oldRegistry)}\n`, "utf8");
+    const before = await readFile(registryFile, "utf8");
+    const entriesBefore = (await readdir(path.join(root, ".assay"))).sort();
+
+    for (const operation of [
+      () => validateSpecs({ root, id: spec.item.id }),
+      () => listSpecs({ root, scope: "system:api" }),
+      () => showSpec({ root, id: spec.item.id }),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({
+        code: "WORKSPACE_CUTOVER_REQUIRED",
+        observed: "0.13.0+s4+l8+r2",
+        required: "0.13.0+s4+l8+r3",
+      });
+    }
+    expect(await readFile(registryFile, "utf8")).toBe(before);
+    expect((await readdir(path.join(root, ".assay"))).sort()).toEqual(entriesBefore);
   });
 
   it("serializes concurrent allocation without duplicate ids", async () => {

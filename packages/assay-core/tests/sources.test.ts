@@ -379,7 +379,7 @@ describe("source observations", () => {
 
     await expect(addSource({ root, source, alias: "old" })).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
-      required: "0.12.0+s4+l8",
+      required: "0.13.0+s4+l8",
     });
     expect(await exists(path.join(root, ".assay", "coordination"))).toBe(false);
     expect(await exists(path.join(root, "sources", "old"))).toBe(false);

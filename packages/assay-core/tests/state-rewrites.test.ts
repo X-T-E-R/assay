@@ -141,7 +141,7 @@ describe("analysis close writes the header status and the real decision checkbox
     expect(await readFile(created.absolutePath, "utf8")).toContain("- Status: draft");
   });
 
-  it("moves an out-of-root system to the destination it reports", async () => {
+  it("logically archives an out-of-root system without moving external bytes", async () => {
     const root = await workspace("ArchiveOutOfRoot");
     const outside = path.join(path.dirname(root), "precious");
     await mkdir(outside, { recursive: true });
@@ -152,10 +152,9 @@ describe("analysis close writes the header status and the real decision checkbox
 
     const result = await archiveSystem(root, "precious", { now: new Date("2026-07-26") });
 
-    expect(result.movedTo).toBe("systems/archive/2026-07-26-pre-precious/precious");
-    if (!result.movedTo) throw new Error("archive destination missing");
-    expect(await exists(path.join(root, result.movedTo, "marker.txt"))).toBe(true);
-    expect(await exists(outside)).toBe(false);
+    expect(result.archiveMode).toBe("logical");
+    expect(await readFile(path.join(outside, "marker.txt"), "utf8")).toBe("keep me\n");
+    expect(await exists(outside)).toBe(true);
 
     const check = await checkFramework({ root });
     expect(check.rows.filter((row) => row.status === "error")).toEqual([]);
@@ -175,25 +174,23 @@ describe("analysis close writes the header status and the real decision checkbox
     expect(check.ok).toBe(true);
   });
 
-  it("fails the check when an archived record points at a missing archive", async () => {
+  it("does not invent or require a physical archive for a logical record", async () => {
     const root = await workspace("CheckMissingArchive");
     await mkdir(path.join(root, "systems", "main"), { recursive: true });
     await mkdir(path.join(root, "systems", "old"), { recursive: true });
     await registerSystem(root, { path: "systems/main", name: "main", primary: true });
     await registerSystem(root, { path: "systems/old", name: "old" });
     const archived = await archiveSystem(root, "old", { now: new Date("2026-07-26") });
-    if (!archived.system.archive_path) throw new Error("archive_path missing");
-    await rm(path.join(root, archived.system.archive_path), { recursive: true, force: true });
+    expect(Object.hasOwn(archived.system, "archive_path")).toBe(false);
+    await rm(path.join(root, "systems", "old"), { recursive: true, force: true });
 
     const check = await checkFramework({ root });
 
-    expect(check.ok).toBe(false);
     expect(
       check.rows.some(
-        (row) =>
-          row.status === "error" && row.message?.includes("archived system 'old' has no archive"),
+        (row) => row.path === ".assay/systems-registry.json" && row.status === "error",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

@@ -36,7 +36,7 @@ function fixtureDescriptor(id = "example.readonly-command") {
     __schema: 1,
     id,
     adapter_version: "1.0.0",
-    assay: { spi_version: 1, version: "0.12.0" },
+    assay: { spi_version: 1, version: "0.13.0" },
     provenance: {
       source: "npm:@example/assay-plugin-fixture",
       ref: "v1.0.0",
@@ -537,7 +537,7 @@ describe("external plugin descriptor control plane", () => {
       await expect(operation()).rejects.toMatchObject({
         code: "WORKSPACE_CUTOVER_REQUIRED",
         observed: "0.10.0+s4+l8",
-        required: "0.12.0+s4+l8",
+        required: "0.13.0+s4+l8",
       });
       expect(await readFile(stateFile)).toEqual(before);
     }

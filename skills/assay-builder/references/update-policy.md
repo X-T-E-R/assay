@@ -31,6 +31,5 @@ The following are always treated as user-owned and are never auto-overwritten:
 - Native Task contracts and handoffs under `tasks/`
 - Knowledge documents under `knowledge/`
 - Data files under `data/`
-- System contract files at `systems/<name>/system.yaml` (managed metadata only; never auto-overwritten without `--force`)
 
-System internals — `systems/<name>/README.md`, `CHANGELOG.md`, `docs/*`, source code — are **not** managed files in current layouts. The framework treats system internals as opaque; only the contract file links the system to the registry.
+System internals — `systems/<name>/README.md`, `CHANGELOG.md`, `docs/*`, and source code — are **not** managed files in current layouts. The framework treats System internals as opaque; only the schema-3 registry records Project-local membership and locators.

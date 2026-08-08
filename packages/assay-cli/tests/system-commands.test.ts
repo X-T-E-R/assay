@@ -56,8 +56,6 @@ describe("assay system CLI", () => {
       "--vcs",
       "--vcs-ref",
       "--system-version",
-      "--contract-file",
-      "--no-contract-file",
       "--supersedes",
       "--primary",
     ]) {
@@ -65,10 +63,11 @@ describe("assay system CLI", () => {
     }
     expect(result.stdout).not.toContain("intent-authority");
     expect(result.stdout).not.toContain("intent-pointer");
+    expect(result.stdout).not.toContain("contract-file");
     expect(result.stderr).toBe("");
   });
 
-  it("register creates a registry entry, contract, and event", async () => {
+  it("register creates a registry entry and event without a sidecar", async () => {
     const root = await initWorkspace("Register");
     const systemPath = path.join(root, "systems", "demo-core");
     await mkdir(systemPath, { recursive: true });
@@ -89,10 +88,10 @@ describe("assay system CLI", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Registered system: demo-core");
     expect(result.stdout).toContain("Status: primary");
-    expect(result.stdout).toContain("Contract: systems/demo-core/system.yaml");
+    expect(result.stdout).not.toContain("Contract:");
     expect(result.stdout).toContain("Event: .assay/events/");
     expect(await pathExists(path.join(root, ".assay", "systems-registry.json"))).toBe(true);
-    expect(await pathExists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(true);
+    expect(await pathExists(path.join(root, "systems", "demo-core", "system.yaml"))).toBe(false);
 
     const check = await runCli(["check", "--root", root]);
     expect(check.exitCode).toBe(0);
@@ -121,6 +120,16 @@ describe("assay system CLI", () => {
   it("update corrects vcs metadata and preserves omitted fields", async () => {
     const root = await initWorkspace("UpdateVcs");
     await mkdir(path.join(root, "systems", "skill-creator"), { recursive: true });
+    await mkdir(path.join(root, "systems", "old-skill"), { recursive: true });
+    await runCli([
+      "system",
+      "register",
+      "systems/old-skill",
+      "--root",
+      root,
+      "--name",
+      "old-skill",
+    ]);
     await runCli([
       "system",
       "register",
@@ -140,7 +149,7 @@ describe("assay system CLI", () => {
     const result = await runCli([
       "system",
       "update",
-      "skill",
+      "skill-creator",
       "--root",
       root,
       "--vcs",
@@ -159,13 +168,12 @@ describe("assay system CLI", () => {
     const show = await runCli(["system", "show", "skill-creator", "--root", root, "--json"]);
     expect(show.exitCode).toBe(0);
     expect(JSON.parse(show.stdout)).toMatchObject({
-      name: "skill-creator",
+      selector: "skill-creator",
       path: "systems/skill-creator",
       status: "active",
       vcs: "independent-git",
       vcs_ref: "main",
       version: "0.2.0",
-      contract_file: "systems/skill-creator/system.yaml",
       supersedes: ["old-skill"],
     });
   });
@@ -219,7 +227,7 @@ describe("assay system CLI", () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed.primary).toBe("alpha");
     expect(parsed.systems).toHaveLength(1);
-    expect(parsed.systems[0]).toMatchObject({ name: "alpha", status: "primary" });
+    expect(parsed.systems[0]).toMatchObject({ selector: "alpha", status: "primary" });
   });
 
   it("list --status filters by status", async () => {
@@ -245,7 +253,7 @@ describe("assay system CLI", () => {
     expect(result.stdout).not.toContain("beta\n");
   });
 
-  it("show returns details by full name and by prefix", async () => {
+  it("show returns details only by the exact selector", async () => {
     const root = await initWorkspace("Show");
     await mkdir(path.join(root, "systems", "alpha-core"), { recursive: true });
     await runCli([
@@ -269,8 +277,8 @@ describe("assay system CLI", () => {
     expect(byName.stdout).toContain("independent-git@main");
 
     const byPrefix = await runCli(["system", "show", "alpha", "--root", root]);
-    expect(byPrefix.exitCode).toBe(0);
-    expect(byPrefix.stdout).toContain("alpha-core");
+    expect(byPrefix.exitCode).toBe(1);
+    expect(byPrefix.stderr).toContain("system not found");
   });
 
   it("show --json emits structured output", async () => {
@@ -289,7 +297,7 @@ describe("assay system CLI", () => {
 
     const result = await runCli(["system", "show", "alpha", "--root", root, "--json"]);
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ name: "alpha", status: "primary" });
+    expect(JSON.parse(result.stdout)).toMatchObject({ selector: "alpha", status: "primary" });
   });
 
   it("promote demotes the previous primary to superseded", async () => {
@@ -308,11 +316,11 @@ describe("assay system CLI", () => {
     const list = await runCli(["system", "list", "--root", root, "--json"]);
     const parsed = JSON.parse(list.stdout);
     expect(parsed.primary).toBe("b");
-    const a = parsed.systems.find((s: { name: string }) => s.name === "a");
+    const a = parsed.systems.find((s: { selector: string }) => s.selector === "a");
     expect(a.status).toBe("superseded");
   });
 
-  it("archive dry-run reports destination without moving files", async () => {
+  it("archive dry-run reports a logical transition without moving files", async () => {
     const root = await initWorkspace("ArchiveDry");
     await mkdir(path.join(root, "systems", "active"), { recursive: true });
     await mkdir(path.join(root, "systems", "old"), { recursive: true });
@@ -333,13 +341,13 @@ describe("assay system CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("dry-run");
-    expect(result.stdout).toContain("Would move to");
-    expect(result.stdout).toContain("systems/archive/");
+    expect(result.stdout).toContain("Archive mode: logical");
+    expect(result.stdout).not.toContain("systems/archive/");
     // Source still present
     expect(await pathExists(path.join(root, "systems", "old", "marker.txt"))).toBe(true);
   });
 
-  it("archive apply moves the directory and marks system archived", async () => {
+  it("archive apply leaves the directory and marks system logically archived", async () => {
     const root = await initWorkspace("ArchiveApply");
     await mkdir(path.join(root, "systems", "active"), { recursive: true });
     await mkdir(path.join(root, "systems", "old"), { recursive: true });
@@ -360,15 +368,14 @@ describe("assay system CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("applied");
-    expect(result.stdout).toContain("Moved to");
-    // Source removed
-    expect(await pathExists(path.join(root, "systems", "old"))).toBe(false);
+    expect(result.stdout).toContain("Archive mode: logical");
+    expect(await pathExists(path.join(root, "systems", "old"))).toBe(true);
 
     const list = await runCli(["system", "list", "--root", root, "--json"]);
     const parsed = JSON.parse(list.stdout);
-    const old = parsed.systems.find((s: { name: string }) => s.name === "old");
+    const old = parsed.systems.find((s: { selector: string }) => s.selector === "old");
     expect(old.status).toBe("archived");
-    expect(old.archive_path).toContain("systems/archive/");
+    expect(old).not.toHaveProperty("archive_path");
   });
 
   it("archive refuses to archive the primary system", async () => {

@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -6,27 +7,39 @@ import {
   recoverAuthorityFile,
   safelyWriteAuthorityFile,
 } from "./authority-file-write.js";
-import { SYSTEMS_REGISTRY_FILE } from "./constants.js";
-import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
+import { SYSTEMS_REGISTRY_FILE, SYSTEMS_REGISTRY_SCHEMA } from "./constants.js";
+import {
+  AuthorityWriteConflictError,
+  FrameworkAlreadyExistsError,
+  FrameworkError,
+  FrameworkNotFoundError,
+  SystemsRegistryCutoverRequiredError,
+} from "./errors.js";
 import { appendEvent } from "./events.js";
-import { defaultStandaloneLayout, resolveWorkspaceLayout, workspaceSubpath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
-import { relativeDisplayPath, slugify } from "./paths.js";
-import { loadNativeProject } from "./project.js";
 import {
   type SystemRecord,
   type SystemStatus,
   type SystemVcs,
   type SystemsRegistry,
-  type WorkspaceLayout,
   systemsRegistrySchema,
 } from "./schemas/index.js";
-import { stringifySortedJson } from "./serialization.js";
-import { renderSystemContract } from "./system-contract.js";
+import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import { nowIso } from "./time.js";
 
 export interface SystemsRegistryOptions {
   readonly now?: Date;
+}
+
+export interface SystemsRegistrySnapshot {
+  readonly registry: SystemsRegistry;
+  /** SHA-256 of the exact canonical authority bytes read from disk. */
+  readonly revision: string;
+}
+
+export interface SaveSystemsRegistryOptions {
+  /** Null only for first creation; otherwise the exact loaded snapshot revision. */
+  readonly expectedRevision: string | null;
 }
 
 let systemsRegistrySaveProbe: AuthorityWriteProbe | undefined;
@@ -36,6 +49,7 @@ export function setSystemsRegistrySaveProbeForTests(probe: AuthorityWriteProbe |
 }
 
 export interface RegisterSystemInput {
+  /** Project-local canonical selector. Defaults to the locator basename. */
   readonly name?: string;
   readonly path: string;
   readonly vcs?: SystemVcs;
@@ -43,13 +57,16 @@ export interface RegisterSystemInput {
   readonly version?: string;
   readonly primary?: boolean;
   readonly supersedes?: readonly string[];
-  readonly contractFile?: string | null;
 }
 
-export interface RegisterSystemResult {
+export interface SystemEntry {
+  readonly selector: string;
+  readonly system: SystemRecord;
+}
+
+export interface RegisterSystemResult extends SystemEntry {
   readonly root: string;
   readonly registry: SystemsRegistry;
-  readonly system: SystemRecord;
   readonly eventFile: string;
 }
 
@@ -60,17 +77,9 @@ export interface UpdateSystemInput {
   readonly version?: string;
   readonly primary?: boolean;
   readonly supersedes?: readonly string[];
-  readonly contractFile?: string | null;
 }
 
-export type SystemUpdateField =
-  | "path"
-  | "vcs"
-  | "vcs_ref"
-  | "version"
-  | "contract_file"
-  | "supersedes"
-  | "status";
+export type SystemUpdateField = "path" | "vcs" | "vcs_ref" | "version" | "supersedes" | "status";
 
 export type SystemUpdateValue = string | readonly string[] | null;
 
@@ -80,20 +89,18 @@ export interface SystemUpdateChange {
   readonly current: SystemUpdateValue;
 }
 
-export interface UpdateSystemResult {
+export interface UpdateSystemResult extends SystemEntry {
   readonly root: string;
   readonly registry: SystemsRegistry;
   readonly previous: SystemRecord;
-  readonly system: SystemRecord;
   readonly changes: readonly SystemUpdateChange[];
   readonly eventFile: string;
 }
 
-export interface PromoteSystemResult {
+export interface PromoteSystemResult extends SystemEntry {
   readonly root: string;
   readonly registry: SystemsRegistry;
-  readonly previousPrimary: SystemRecord | null;
-  readonly system: SystemRecord;
+  readonly previousPrimary: SystemEntry | null;
   readonly eventFile: string;
 }
 
@@ -102,72 +109,263 @@ export interface ArchiveSystemInput {
   readonly now?: Date;
 }
 
-export interface ArchiveSystemResult {
+export interface ArchiveSystemResult extends SystemEntry {
   readonly root: string;
   readonly dryRun: boolean;
+  readonly archiveMode: "logical";
   readonly registry: SystemsRegistry;
-  readonly system: SystemRecord;
-  readonly movedTo: string | null;
   readonly eventFile: string | null;
+}
+
+interface NormalizedLocator {
+  readonly recorded: string;
+  readonly absolute: string;
+  readonly external: boolean;
+  readonly key: string;
 }
 
 export function systemsRegistryPath(root: string): string {
   return path.join(root, SYSTEMS_REGISTRY_FILE);
 }
 
-export function defaultSystemsRegistry(): SystemsRegistry {
-  const now = nowIso();
-  return {
-    __schema: 2,
-    primary: null,
-    systems: {},
-    updated_at: now,
-  };
+function hasOwn(record: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
-export async function loadSystemsRegistry(root: string): Promise<SystemsRegistry | null> {
-  await loadManifest(root);
-  const file = systemsRegistryPath(root);
-  await recoverAuthorityFile({
-    root,
-    file,
-    error: (message, cause) => new FrameworkError(message, cause === undefined ? {} : { cause }),
-    ...(systemsRegistrySaveProbe ? { probe: systemsRegistrySaveProbe } : {}),
-  });
-  let text: string;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
+export function systemRecordForSelector(
+  registry: SystemsRegistry,
+  selector: string,
+): SystemRecord | undefined {
+  return hasOwn(registry.systems, selector) ? registry.systems[selector] : undefined;
+}
 
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch (error) {
-    throw new FrameworkError(`systems registry is not valid JSON: ${file}`, { cause: error });
-  }
-
-  const result = systemsRegistrySchema.safeParse(data);
-  if (!result.success) {
-    throw new FrameworkError(`systems registry failed validation: ${file}`, {
-      details: result.error.flatten(),
-      cause: result.error,
+function systemMap(entries: Iterable<readonly [string, SystemRecord]>): SystemsRegistry["systems"] {
+  const systems = Object.create(null) as SystemsRegistry["systems"];
+  for (const [selector, record] of entries) {
+    Object.defineProperty(systems, selector, {
+      value: record,
+      enumerable: true,
+      configurable: true,
+      writable: true,
     });
   }
-  return result.data;
+  return systems;
 }
 
-function validateExistingRegistryBytes(bytes: Buffer, file: string): void {
+function revisionOf(bytes: Buffer | string): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function pathKey(value: string): string {
+  const normalized = path.normalize(path.resolve(value));
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function samePath(left: string, right: string): boolean {
+  return pathKey(left) === pathKey(right);
+}
+
+function isContained(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+/**
+ * One lexical locator codec is shared by every System reader and writer.
+ * Workspace-owned locators are normalized POSIX-relative paths; external
+ * locators remain normalized absolute paths and can never be reclassified as
+ * workspace-owned by a later realpath operation.
+ */
+export function normalizeRegistryPath(root: string, value: string): string {
+  return normalizeLocator(root, value).recorded;
+}
+
+function normalizeLocator(root: string, value: string): NormalizedLocator {
+  if (value.length === 0 || value.includes("\0")) {
+    throw new FrameworkError("system locator must be a non-empty ordinary path");
+  }
+  const resolvedRoot = path.resolve(root);
+  const absolute = path.resolve(resolvedRoot, value);
+  const external = !isContained(resolvedRoot, absolute);
+  if (!path.isAbsolute(value) && external) {
+    throw new FrameworkError(`relative system locator escapes the workspace: ${value}`);
+  }
+  const recorded = external
+    ? toPosixPath(path.normalize(absolute))
+    : toPosixPath(path.relative(resolvedRoot, absolute)) || ".";
+  return { recorded, absolute, external, key: pathKey(absolute) };
+}
+
+/** Absolute locator for a record that already passed full registry validation. */
+export function resolveRegistryPath(root: string, recordedPath: string): string {
+  return normalizeLocator(root, recordedPath).absolute;
+}
+
+async function nearestExistingAncestor(target: string): Promise<string> {
+  let current = path.resolve(target);
+  while (true) {
+    try {
+      await lstat(current);
+      return current;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current)
+      throw new FrameworkError(`system locator has no existing ancestor: ${target}`);
+    current = parent;
+  }
+}
+
+async function assertLocatorBoundary(
+  root: string,
+  selector: string,
+  locator: NormalizedLocator,
+): Promise<void> {
+  const resolvedRoot = path.resolve(root);
+  const rootReal = await realpath(resolvedRoot);
+  if (!samePath(rootReal, resolvedRoot)) {
+    throw new FrameworkError(`workspace root resolves through a redirect: ${root}`);
+  }
+  const ancestor = await nearestExistingAncestor(locator.absolute);
+  const info = await lstat(ancestor);
+  if (info.isSymbolicLink()) {
+    throw new FrameworkError(
+      `system '${selector}' locator resolves through a redirect: ${locator.recorded}`,
+    );
+  }
+  if (samePath(ancestor, locator.absolute) && !info.isDirectory()) {
+    throw new FrameworkError(
+      `system '${selector}' locator is not a directory: ${locator.recorded}`,
+    );
+  }
+  const ancestorReal = await realpath(ancestor);
+  if (!samePath(ancestorReal, ancestor)) {
+    throw new FrameworkError(
+      `system '${selector}' locator resolves through a redirect: ${locator.recorded}`,
+    );
+  }
+  const canonicalTarget = path.resolve(ancestorReal, path.relative(ancestor, locator.absolute));
+  const canonicalInside = isContained(rootReal, canonicalTarget);
+  if (locator.external ? canonicalInside : !canonicalInside) {
+    throw new FrameworkError(
+      `system '${selector}' locator crosses its ${locator.external ? "external" : "workspace"} boundary: ${locator.recorded}`,
+    );
+  }
+}
+
+function validateRegistryGraph(
+  root: string,
+  registry: SystemsRegistry,
+): Map<string, NormalizedLocator> {
+  const selectors = Object.keys(registry.systems);
+  for (const selector of selectors) {
+    if (!selector || selector !== selector.trim()) {
+      throw new FrameworkError(`systems registry selector is not canonical: '${selector}'`);
+    }
+  }
+
+  const primarySelectors = selectors.filter(
+    (selector) => systemRecordForSelector(registry, selector)?.status === "primary",
+  );
+  if (
+    primarySelectors.length !== 1 ||
+    primarySelectors[0] !== registry.primary ||
+    !systemRecordForSelector(registry, registry.primary)
+  ) {
+    throw new FrameworkError(
+      `systems registry must have exactly one primary matching pointer '${registry.primary}'`,
+    );
+  }
+
+  const locators = new Map<string, NormalizedLocator>();
+  const liveByLocator = new Map<string, string>();
+  for (const selector of selectors) {
+    const system = systemRecordForSelector(registry, selector);
+    if (!system) continue;
+    const normalized = normalizeLocator(root, system.path);
+    if (system.path !== normalized.recorded) {
+      throw new FrameworkError(
+        `system '${selector}' locator is not normalized; expected '${normalized.recorded}'`,
+      );
+    }
+    locators.set(selector, normalized);
+    if (system.status !== "archived") {
+      const previous = liveByLocator.get(normalized.key);
+      if (previous) {
+        throw new FrameworkError(
+          `live systems '${previous}' and '${selector}' share locator '${normalized.recorded}'`,
+        );
+      }
+      liveByLocator.set(normalized.key, selector);
+    }
+
+    const edges = new Set<string>();
+    for (const target of system.supersedes) {
+      if (!systemRecordForSelector(registry, target)) {
+        throw new FrameworkError(`system '${selector}' supersedes unknown selector '${target}'`);
+      }
+      if (target === selector) {
+        throw new FrameworkError(`system '${selector}' cannot supersede itself`);
+      }
+      if (edges.has(target)) {
+        throw new FrameworkError(`system '${selector}' repeats supersedes edge '${target}'`);
+      }
+      edges.add(target);
+    }
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (selector: string): void => {
+    if (visiting.has(selector)) {
+      throw new FrameworkError(
+        `systems registry supersedes graph contains a cycle at '${selector}'`,
+      );
+    }
+    if (visited.has(selector)) return;
+    visiting.add(selector);
+    for (const target of systemRecordForSelector(registry, selector)?.supersedes ?? []) {
+      visit(target);
+    }
+    visiting.delete(selector);
+    visited.add(selector);
+  };
+  for (const selector of selectors) visit(selector);
+  return locators;
+}
+
+async function validateRegistry(root: string, registry: SystemsRegistry): Promise<void> {
+  const locators = validateRegistryGraph(root, registry);
+  for (const [selector, locator] of locators) {
+    await assertLocatorBoundary(root, selector, locator);
+  }
+}
+
+function observedRegistrySchema(data: unknown): number | "unknown" {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return "unknown";
+  const value = (data as Record<string, unknown>).__schema;
+  return typeof value === "number" ? value : "unknown";
+}
+
+async function parseRegistryBytes(
+  root: string,
+  bytes: Buffer,
+  file: string,
+): Promise<SystemsRegistry> {
   let data: unknown;
   try {
     data = JSON.parse(bytes.toString("utf8"));
   } catch (error) {
     throw new FrameworkError(`systems registry is not valid JSON: ${file}`, { cause: error });
   }
+  const observed = observedRegistrySchema(data);
+  if (observed !== SYSTEMS_REGISTRY_SCHEMA) {
+    throw new SystemsRegistryCutoverRequiredError(observed);
+  }
   const result = systemsRegistrySchema.safeParse(data);
   if (!result.success) {
     throw new FrameworkError(`systems registry failed validation: ${file}`, {
@@ -175,21 +373,153 @@ function validateExistingRegistryBytes(bytes: Buffer, file: string): void {
       cause: result.error,
     });
   }
+  const registry: SystemsRegistry = {
+    ...result.data,
+    systems: systemMap(Object.entries(result.data.systems)),
+  };
+  await validateRegistry(root, registry);
+  return registry;
+}
+
+async function readRegistryAuthority(file: string, allowTransactionLink = false): Promise<Buffer> {
+  const namedBefore = await lstat(file);
+  const allowedLinks = allowTransactionLink ? new Set([1, 2]) : new Set([1]);
+  if (
+    !namedBefore.isFile() ||
+    namedBefore.isSymbolicLink() ||
+    !allowedLinks.has(namedBefore.nlink)
+  ) {
+    throw new FrameworkError(`systems registry must be an ordinary, unshared file: ${file}`);
+  }
+  if (!samePath(await realpath(file), file)) {
+    throw new FrameworkError(`systems registry must not resolve through a redirect: ${file}`);
+  }
+  const handle = await open(file, "r");
+  try {
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      !allowedLinks.has(opened.nlink) ||
+      opened.dev !== namedBefore.dev ||
+      opened.ino !== namedBefore.ino
+    ) {
+      throw new FrameworkError(`systems registry identity changed while opening: ${file}`);
+    }
+    const bytes = await handle.readFile();
+    const namedAfter = await lstat(file);
+    if (
+      !allowedLinks.has(namedAfter.nlink) ||
+      namedAfter.dev !== opened.dev ||
+      namedAfter.ino !== opened.ino
+    ) {
+      throw new FrameworkError(`systems registry identity changed while reading: ${file}`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readAndParseRegistry(
+  root: string,
+  file: string,
+  allowTransactionLink = false,
+): Promise<SystemsRegistrySnapshot | null> {
+  let bytes: Buffer;
+  try {
+    bytes = await readRegistryAuthority(file, allowTransactionLink);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+  return { registry: await parseRegistryBytes(root, bytes, file), revision: revisionOf(bytes) };
+}
+
+/**
+ * A transaction permits exactly the two non-terminal target forms created by
+ * the authority protocol: missing after old isolation, or an ordinary nlink-2
+ * replacement after linking. When target bytes exist they are still parsed
+ * and fully validated before recovery, so an r2 authority cannot cause writes.
+ */
+export async function loadSystemsRegistrySnapshot(
+  root: string,
+): Promise<SystemsRegistrySnapshot | null> {
+  await loadManifest(root);
+  const file = systemsRegistryPath(root);
+  const transaction = path.join(path.dirname(file), `.authority-${path.basename(file)}.txn`);
+  let transactionExists = true;
+  try {
+    await lstat(transaction);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      transactionExists = false;
+    } else {
+      throw error;
+    }
+  }
+
+  if (!transactionExists) return readAndParseRegistry(root, file);
+
+  // If a target exists, establish current schema/invariants before recovery.
+  // A missing target is a legitimate after-old-moved window; the transaction
+  // receipts and rollback/stage identities are then the only recovery source.
+  await readAndParseRegistry(root, file, true);
+  await recoverAuthorityFile({
+    root,
+    file,
+    error: (message, cause) => new FrameworkError(message, cause === undefined ? {} : { cause }),
+    ...(systemsRegistrySaveProbe ? { probe: systemsRegistrySaveProbe } : {}),
+  });
+  const recovered = await readAndParseRegistry(root, file);
+  if (!recovered) {
+    throw new FrameworkError(`systems registry recovery produced no authority: ${file}`);
+  }
+  return recovered;
+}
+
+export async function loadSystemsRegistry(root: string): Promise<SystemsRegistry | null> {
+  return (await loadSystemsRegistrySnapshot(root))?.registry ?? null;
 }
 
 export async function saveSystemsRegistry(
   root: string,
   registry: SystemsRegistry,
+  options: SaveSystemsRegistryOptions,
 ): Promise<SystemsRegistry> {
   await loadManifest(root);
   const file = systemsRegistryPath(root);
-  const next = systemsRegistrySchema.parse({ ...registry, updated_at: nowIso() });
+  const current = await loadSystemsRegistrySnapshot(root);
+  if ((current?.revision ?? null) !== options.expectedRevision) {
+    throw new AuthorityWriteConflictError(
+      `systems registry revision changed before write: ${file}`,
+    );
+  }
+  const parsed = systemsRegistrySchema.parse({ ...registry, updated_at: nowIso() });
+  const next: SystemsRegistry = {
+    ...parsed,
+    systems: systemMap(Object.entries(parsed.systems)),
+  };
+  await validateRegistry(root, next);
+  const content = stringifySortedJson(next);
   await safelyWriteAuthorityFile({
     root,
     file,
-    content: stringifySortedJson(next),
-    validateExisting: (bytes) => {
-      if (bytes) validateExistingRegistryBytes(bytes, file);
+    content,
+    validateExisting: async (bytes) => {
+      if (!bytes) {
+        if (options.expectedRevision !== null) {
+          throw new AuthorityWriteConflictError(
+            `systems registry disappeared before write: ${file}`,
+          );
+        }
+        return;
+      }
+      await parseRegistryBytes(root, bytes, file);
+      if (revisionOf(bytes) !== options.expectedRevision) {
+        throw new AuthorityWriteConflictError(
+          `systems registry revision changed during write: ${file}`,
+        );
+      }
     },
     error: (message, cause) => new FrameworkError(message, cause === undefined ? {} : { cause }),
     ...(systemsRegistrySaveProbe ? { probe: systemsRegistrySaveProbe } : {}),
@@ -198,88 +528,68 @@ export async function saveSystemsRegistry(
 }
 
 export async function requireSystemsRegistry(root: string): Promise<SystemsRegistry> {
-  const registry = await loadSystemsRegistry(root);
-  if (!registry) {
+  return (await requireSystemsRegistrySnapshot(root)).registry;
+}
+
+export async function requireSystemsRegistrySnapshot(
+  root: string,
+): Promise<SystemsRegistrySnapshot> {
+  const snapshot = await loadSystemsRegistrySnapshot(root);
+  if (!snapshot) {
     throw new FrameworkNotFoundError(
       `No systems registry found at ${systemsRegistryPath(root)}. Run \`assay system register\` first.`,
     );
   }
-  return registry;
+  return snapshot;
 }
 
-function systemByName(registry: SystemsRegistry, name: string): SystemRecord | undefined {
-  return registry.systems[name];
+export async function findSystemEntry(
+  registry: SystemsRegistry,
+  selector: string,
+): Promise<SystemEntry> {
+  const canonical = selector.trim();
+  if (!canonical || canonical !== selector) {
+    throw new FrameworkNotFoundError(`system selector is not canonical: '${selector}'`);
+  }
+  const system = systemRecordForSelector(registry, canonical);
+  if (!system) throw new FrameworkNotFoundError(`system not found: ${selector}`);
+  return { selector: canonical, system };
 }
 
 export async function findSystem(
   registry: SystemsRegistry,
   selector: string,
 ): Promise<SystemRecord> {
-  const trimmed = selector.trim();
-  if (trimmed.length === 0) {
-    throw new FrameworkNotFoundError("system selector cannot be empty");
-  }
-
-  const direct = systemByName(registry, trimmed);
-  if (direct) {
-    return direct;
-  }
-
-  const matches = Object.values(registry.systems).filter((system) =>
-    system.name.startsWith(trimmed),
-  );
-  if (matches.length === 1 && matches[0]) {
-    return matches[0];
-  }
-  if (matches.length > 1) {
-    throw new FrameworkNotFoundError(
-      `system selector '${selector}' is ambiguous (${matches.map((system) => system.name).join(", ")})`,
-    );
-  }
-  throw new FrameworkNotFoundError(`system not found: ${selector}`);
-}
-
-function setPrimaryInPlace(registry: SystemsRegistry, name: string): void {
-  for (const [existingName, system] of Object.entries(registry.systems)) {
-    if (system.status === "primary") {
-      registry.systems[existingName] = {
-        ...system,
-        status: existingName === name ? "primary" : "superseded",
-      };
-    }
-  }
-  const target = registry.systems[name];
-  if (target) {
-    registry.systems[name] = { ...target, status: "primary" };
-  }
-  registry.primary = name;
+  return (await findSystemEntry(registry, selector)).system;
 }
 
 function cloneSystemRecord(system: SystemRecord): SystemRecord {
   return { ...system, supersedes: [...system.supersedes] };
 }
 
-function normalizeRegistryPath(root: string, value: string): string {
-  return relativeDisplayPath(path.resolve(root, value), root);
-}
-
-/**
- * Absolute location of a path recorded in the systems registry. Recorded paths
- * are workspace-relative when the system lives inside the workspace and
- * absolute when it does not (`relativeDisplayPath` falls back to the absolute
- * form), so callers must resolve rather than join: joining an already-absolute
- * value onto the root produces a path that does not exist.
- */
-export function resolveRegistryPath(root: string, recordedPath: string): string {
-  return path.resolve(root, recordedPath);
+function setPrimaryInPlace(registry: SystemsRegistry, selector: string, dateStamp: string): void {
+  for (const [existingSelector, system] of Object.entries(registry.systems)) {
+    if (system.status === "primary" && existingSelector !== selector) {
+      registry.systems[existingSelector] = {
+        ...system,
+        status: "superseded",
+        absorbed_on: dateStamp,
+      };
+    }
+  }
+  const target = systemRecordForSelector(registry, selector);
+  if (target) {
+    const { absorbed_on: _absorbedOn, archived_on: _archivedOn, ...live } = target;
+    registry.systems[selector] = { ...live, status: "primary" };
+  }
+  registry.primary = selector;
 }
 
 function updateValuesEqual(previous: SystemUpdateValue, current: SystemUpdateValue): boolean {
   if (Array.isArray(previous) || Array.isArray(current)) {
-    if (!Array.isArray(previous) || !Array.isArray(current)) {
-      return false;
-    }
     return (
+      Array.isArray(previous) &&
+      Array.isArray(current) &&
       previous.length === current.length &&
       previous.every((value, index) => current[index] === value)
     );
@@ -292,85 +602,21 @@ function collectSystemUpdateChanges(
   current: SystemRecord,
 ): readonly SystemUpdateChange[] {
   const changes: SystemUpdateChange[] = [];
-  const addChange = (
+  const add = (
     field: SystemUpdateField,
-    previousValue: SystemUpdateValue,
-    currentValue: SystemUpdateValue,
+    before: SystemUpdateValue,
+    after: SystemUpdateValue,
   ): void => {
-    if (!updateValuesEqual(previousValue, currentValue)) {
-      changes.push({ field, previous: previousValue, current: currentValue });
-    }
+    if (!updateValuesEqual(before, after))
+      changes.push({ field, previous: before, current: after });
   };
-
-  addChange("path", previous.path, current.path);
-  addChange("vcs", previous.vcs, current.vcs);
-  addChange("vcs_ref", previous.vcs_ref, current.vcs_ref);
-  addChange("version", previous.version, current.version);
-  addChange("contract_file", previous.contract_file, current.contract_file);
-  addChange("supersedes", previous.supersedes, current.supersedes);
-  addChange("status", previous.status, current.status);
+  add("path", previous.path, current.path);
+  add("vcs", previous.vcs, current.vcs);
+  add("vcs_ref", previous.vcs_ref, current.vcs_ref);
+  add("version", previous.version, current.version);
+  add("supersedes", previous.supersedes, current.supersedes);
+  add("status", previous.status, current.status);
   return changes;
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
-
-/**
- * Resolve the archive destination for a system through the layout path map.
- * Standalone workspaces keep `systems/archive/...` at the root; overlay
- * workspaces archive under `.assay/systems/` so nothing lands in the product
- * repository tree.
- */
-function archiveBasePath(layout: WorkspaceLayout, dateStamp: string, systemName: string): string {
-  return workspaceSubpath(
-    layout,
-    "systemsContracts",
-    "archive",
-    `${dateStamp}-pre-${slugify(systemName)}`,
-  );
-}
-
-async function createSystemContractIfMissing(
-  root: string,
-  systemPath: string,
-  system: SystemRecord,
-): Promise<string | null> {
-  if (!system.contract_file || !(await exists(systemPath))) {
-    return null;
-  }
-
-  const manifest = await loadManifest(root);
-  const project = manifest ? await loadNativeProject(root, manifest.layout) : null;
-  const contractPath = path.resolve(root, system.contract_file);
-  const content = renderSystemContract({
-    project: project?.name ?? path.basename(root),
-    name: system.name,
-    version: system.version,
-    status: system.status,
-    vcs: system.vcs,
-    vcsRef: system.vcs_ref,
-    supersedes: system.supersedes,
-  });
-
-  await mkdir(path.dirname(contractPath), { recursive: true });
-  try {
-    await writeFile(contractPath, content, { encoding: "utf8", flag: "wx" });
-    return contractPath;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-      return null;
-    }
-    throw error;
-  }
 }
 
 export async function registerSystem(
@@ -379,62 +625,61 @@ export async function registerSystem(
   options: SystemsRegistryOptions = {},
 ): Promise<RegisterSystemResult> {
   const now = options.now ?? new Date();
-  const registry = (await loadSystemsRegistry(root)) ?? defaultSystemsRegistry();
-
-  const systemPath = path.resolve(root, input.path);
-  const relativeSystemPath = relativeDisplayPath(systemPath, root);
-  const name = input.name ?? path.basename(systemPath);
-
-  if (systemByName(registry, name)) {
-    throw new FrameworkAlreadyExistsError(`system already registered: ${name}`);
+  const snapshot = await loadSystemsRegistrySnapshot(root);
+  const existing = snapshot?.registry ?? null;
+  const normalizedPath = normalizeRegistryPath(root, input.path);
+  const selector = input.name ?? path.basename(path.resolve(root, input.path));
+  if (!selector || selector !== selector.trim()) {
+    throw new FrameworkError(`system selector is not canonical: '${selector}'`);
   }
-
-  const vcs: SystemVcs = input.vcs ?? "embedded";
-  const contractFile =
-    input.contractFile === undefined ? `${relativeSystemPath}/system.yaml` : input.contractFile;
-  const dateStamp = nowIso(now).slice(0, 10);
+  if (existing && systemRecordForSelector(existing, selector)) {
+    throw new FrameworkAlreadyExistsError(`system already registered: ${selector}`);
+  }
 
   const record: SystemRecord = {
-    name,
-    path: relativeSystemPath,
-    status: input.primary ? "primary" : "active",
-    vcs,
+    path: normalizedPath,
+    status: !existing || input.primary ? "primary" : "active",
+    vcs: input.vcs ?? "embedded",
     vcs_ref: input.vcsRef ?? "",
     version: input.version ?? "0.1.0",
-    contract_file: contractFile,
     supersedes: [...(input.supersedes ?? [])],
-    absorbed_on: dateStamp,
-    archived_on: null,
-    archive_path: null,
   };
+  const registry: SystemsRegistry = existing
+    ? {
+        ...existing,
+        systems: systemMap([...Object.entries(existing.systems), [selector, record]]),
+      }
+    : {
+        __schema: 3,
+        primary: selector,
+        systems: { [selector]: record },
+        updated_at: nowIso(now),
+      };
+  if (input.primary || !existing) setPrimaryInPlace(registry, selector, nowIso(now).slice(0, 10));
 
-  registry.systems[name] = record;
-  if (input.primary) {
-    setPrimaryInPlace(registry, name);
-  }
-
-  const createdContract = await createSystemContractIfMissing(root, systemPath, record);
-  try {
-    await saveSystemsRegistry(root, registry);
-  } catch (error) {
-    if (createdContract) {
-      await rm(createdContract, { force: true });
-    }
-    throw error;
-  }
+  const savedRegistry = await saveSystemsRegistry(root, registry, {
+    expectedRevision: snapshot?.revision ?? null,
+  });
+  const savedSystem = systemRecordForSelector(savedRegistry, selector);
+  if (!savedSystem) throw new FrameworkError(`registered system missing after save: ${selector}`);
   const eventFile = await appendEvent(
     root,
     {
       event: "system.registered",
-      name,
-      path: relativeSystemPath,
-      vcs,
-      primary: input.primary ?? false,
+      selector,
+      path: savedSystem.path,
+      vcs: savedSystem.vcs,
+      primary: savedSystem.status === "primary",
     },
     now,
   );
-
-  return { root, registry, system: record, eventFile: relativeDisplayPath(eventFile, root) };
+  return {
+    root,
+    registry: savedRegistry,
+    selector,
+    system: savedSystem,
+    eventFile: toPosixPath(path.relative(root, eventFile)),
+  };
 }
 
 export async function updateSystem(
@@ -444,60 +689,37 @@ export async function updateSystem(
   options: SystemsRegistryOptions = {},
 ): Promise<UpdateSystemResult> {
   const now = options.now ?? new Date();
-  const registry = await requireSystemsRegistry(root);
-  const system = await findSystem(registry, selector);
-
-  if (system.status === "archived") {
-    throw new FrameworkError(`cannot update an archived system: ${system.name}`);
+  const snapshot = await requireSystemsRegistrySnapshot(root);
+  const registry = snapshot.registry;
+  const entry = await findSystemEntry(registry, selector);
+  if (entry.system.status === "archived") {
+    throw new FrameworkError(`cannot update an archived system: ${entry.selector}`);
   }
-
-  const previous = cloneSystemRecord(system);
-  let updated = cloneSystemRecord(system);
-
-  if (input.path !== undefined) {
+  const previous = cloneSystemRecord(entry.system);
+  let updated = cloneSystemRecord(entry.system);
+  if (input.path !== undefined)
     updated = { ...updated, path: normalizeRegistryPath(root, input.path) };
-  }
-  if (input.vcs !== undefined) {
-    updated = { ...updated, vcs: input.vcs };
-  }
-  if (input.vcsRef !== undefined) {
-    updated = { ...updated, vcs_ref: input.vcsRef };
-  }
-  if (input.version !== undefined) {
-    updated = { ...updated, version: input.version };
-  }
-  if (input.contractFile !== undefined) {
-    updated = {
-      ...updated,
-      contract_file:
-        input.contractFile === null ? null : normalizeRegistryPath(root, input.contractFile),
-    };
-  }
-  if (input.supersedes !== undefined) {
-    updated = { ...updated, supersedes: [...input.supersedes] };
-  }
-  registry.systems[system.name] = updated;
-
+  if (input.vcs !== undefined) updated = { ...updated, vcs: input.vcs };
+  if (input.vcsRef !== undefined) updated = { ...updated, vcs_ref: input.vcsRef };
+  if (input.version !== undefined) updated = { ...updated, version: input.version };
+  if (input.supersedes !== undefined) updated = { ...updated, supersedes: [...input.supersedes] };
+  registry.systems[entry.selector] = updated;
   const previousPrimary =
-    input.primary && registry.primary && registry.primary !== system.name ? registry.primary : null;
-  if (input.primary) {
-    setPrimaryInPlace(registry, system.name);
-  }
+    input.primary && registry.primary !== entry.selector ? registry.primary : null;
+  if (input.primary) setPrimaryInPlace(registry, entry.selector, nowIso(now).slice(0, 10));
 
-  const savedRegistry = await saveSystemsRegistry(root, registry);
-  const savedSystem = savedRegistry.systems[system.name];
-  if (!savedSystem) {
-    throw new FrameworkError(
-      `internal error: updated system missing from registry: ${system.name}`,
-    );
-  }
-
+  const savedRegistry = await saveSystemsRegistry(root, registry, {
+    expectedRevision: snapshot.revision,
+  });
+  const savedSystem = systemRecordForSelector(savedRegistry, entry.selector);
+  if (!savedSystem)
+    throw new FrameworkError(`updated system missing after save: ${entry.selector}`);
   const changes = collectSystemUpdateChanges(previous, savedSystem);
   const eventFile = await appendEvent(
     root,
     {
       event: "system.updated",
-      name: system.name,
+      selector: entry.selector,
       changed_fields: changes.map((change) => change.field),
       changes,
       primary: savedSystem.status === "primary",
@@ -505,14 +727,14 @@ export async function updateSystem(
     },
     now,
   );
-
   return {
     root,
     registry: savedRegistry,
+    selector: entry.selector,
     previous,
     system: savedSystem,
     changes,
-    eventFile: relativeDisplayPath(eventFile, root),
+    eventFile: toPosixPath(path.relative(root, eventFile)),
   };
 }
 
@@ -522,141 +744,126 @@ export async function promoteSystem(
   options: SystemsRegistryOptions = {},
 ): Promise<PromoteSystemResult> {
   const now = options.now ?? new Date();
-  const registry = await requireSystemsRegistry(root);
-  const system = await findSystem(registry, selector);
-
-  if (system.status === "archived") {
-    throw new FrameworkError(`cannot promote an archived system: ${system.name}`);
+  const snapshot = await requireSystemsRegistrySnapshot(root);
+  const registry = snapshot.registry;
+  const entry = await findSystemEntry(registry, selector);
+  if (entry.system.status === "archived") {
+    throw new FrameworkError(`cannot promote an archived system: ${entry.selector}`);
   }
-
-  const previousPrimary = registry.primary
-    ? (systemByName(registry, registry.primary) ?? null)
-    : null;
-  const previousPrimaryName =
-    previousPrimary && previousPrimary.name !== system.name ? previousPrimary : null;
-
-  setPrimaryInPlace(registry, system.name);
-  await saveSystemsRegistry(root, registry);
-
-  const promotedSystem = registry.systems[system.name];
-  if (!promotedSystem) {
-    throw new FrameworkError(
-      `internal error: promoted system missing from registry: ${system.name}`,
-    );
-  }
-
+  const previousSelector = registry.primary === entry.selector ? null : registry.primary;
+  const previousRecord = previousSelector
+    ? systemRecordForSelector(registry, previousSelector)
+    : undefined;
+  setPrimaryInPlace(registry, entry.selector, nowIso(now).slice(0, 10));
+  const savedRegistry = await saveSystemsRegistry(root, registry, {
+    expectedRevision: snapshot.revision,
+  });
+  const savedSystem = systemRecordForSelector(savedRegistry, entry.selector);
+  if (!savedSystem)
+    throw new FrameworkError(`promoted system missing after save: ${entry.selector}`);
   const eventFile = await appendEvent(
     root,
     {
       event: "system.promoted",
-      name: system.name,
-      previous_primary: previousPrimaryName?.name ?? null,
+      selector: entry.selector,
+      previous_primary: previousSelector,
     },
     now,
   );
-
   return {
     root,
-    registry,
-    previousPrimary: previousPrimaryName,
-    system: promotedSystem,
-    eventFile: relativeDisplayPath(eventFile, root),
+    registry: savedRegistry,
+    selector: entry.selector,
+    system: savedSystem,
+    previousPrimary:
+      previousSelector && previousRecord
+        ? {
+            selector: previousSelector,
+            system: systemRecordForSelector(savedRegistry, previousSelector) ?? previousRecord,
+          }
+        : null,
+    eventFile: toPosixPath(path.relative(root, eventFile)),
   };
 }
 
+/**
+ * Phase 8 deliberately stops at logical archive. No registered source is
+ * copied, moved, deleted, or represented by a fictitious physical locator.
+ */
 export async function archiveSystem(
   root: string,
   selector: string,
   input: ArchiveSystemInput = {},
 ): Promise<ArchiveSystemResult> {
   const now = input.now ?? new Date();
-  const dryRun = input.dryRun ?? false;
-  const registry = await requireSystemsRegistry(root);
-  const system = await findSystem(registry, selector);
-
-  if (system.status === "archived") {
-    throw new FrameworkAlreadyExistsError(`system already archived: ${system.name}`);
+  const snapshot = await requireSystemsRegistrySnapshot(root);
+  const registry = snapshot.registry;
+  const entry = await findSystemEntry(registry, selector);
+  if (entry.system.status === "archived") {
+    throw new FrameworkAlreadyExistsError(`system already archived: ${entry.selector}`);
   }
-  if (system.status === "primary") {
+  if (entry.system.status === "primary") {
     throw new FrameworkError(
-      `cannot archive the primary system; promote another system first: ${system.name}`,
+      `cannot archive the primary system; promote another system first: ${entry.selector}`,
     );
   }
-
-  const dateStamp = nowIso(now).slice(0, 10);
-  const layout = resolveWorkspaceLayout(await loadManifest(root)) ?? defaultStandaloneLayout();
-  const archiveBase = archiveBasePath(layout, dateStamp, system.name);
-  const sourcePath = resolveRegistryPath(root, system.path);
-  const movedTo = path.join(root, archiveBase, path.basename(sourcePath));
-
-  if (dryRun) {
+  const { absorbed_on: _absorbedOn, ...record } = entry.system;
+  const archived: SystemRecord = {
+    ...record,
+    status: "archived",
+    archived_on: nowIso(now).slice(0, 10),
+  };
+  if (input.dryRun) {
     return {
       root,
       dryRun: true,
+      archiveMode: "logical",
       registry,
-      system,
-      movedTo: relativeDisplayPath(movedTo, root),
+      selector: entry.selector,
+      system: archived,
       eventFile: null,
     };
   }
-
-  if (await exists(sourcePath)) {
-    await mkdir(path.dirname(movedTo), { recursive: true });
-    // copy-first then remove for rollback safety
-    const { cp } = await import("node:fs/promises");
-    await cp(sourcePath, movedTo, { recursive: true });
-    await rm(sourcePath, { recursive: true, force: true });
-    if (!(await exists(movedTo))) {
-      throw new FrameworkError(
-        `system archive did not materialize at the reported destination: ${relativeDisplayPath(movedTo, root)}`,
-        { code: "IO_ERROR" },
-      );
-    }
-  }
-
-  const archived: SystemRecord = {
-    ...system,
-    status: "archived",
-    archived_on: dateStamp,
-    archive_path: relativeDisplayPath(movedTo, root),
-    contract_file: null,
-  };
-  registry.systems[system.name] = archived;
-  await saveSystemsRegistry(root, registry);
-
+  registry.systems[entry.selector] = archived;
+  const savedRegistry = await saveSystemsRegistry(root, registry, {
+    expectedRevision: snapshot.revision,
+  });
+  const savedSystem = systemRecordForSelector(savedRegistry, entry.selector);
+  if (!savedSystem)
+    throw new FrameworkError(`archived system missing after save: ${entry.selector}`);
   const eventFile = await appendEvent(
     root,
-    {
-      event: "system.archived",
-      name: system.name,
-      archive_path: archived.archive_path,
-    },
+    { event: "system.archived", selector: entry.selector, mode: "logical" },
     now,
   );
-
   return {
     root,
     dryRun: false,
-    registry,
-    system: archived,
-    movedTo: relativeDisplayPath(movedTo, root),
-    eventFile: relativeDisplayPath(eventFile, root),
+    archiveMode: "logical",
+    registry: savedRegistry,
+    selector: entry.selector,
+    system: savedSystem,
+    eventFile: toPosixPath(path.relative(root, eventFile)),
   };
 }
 
 export async function listSystems(root: string): Promise<{
   readonly registry: SystemsRegistry;
-  readonly systems: SystemRecord[];
+  readonly systems: SystemEntry[];
 }> {
   const registry = await requireSystemsRegistry(root);
-  const systems = Object.values(registry.systems).sort((a, b) => {
-    const order: Record<SystemStatus, number> = {
-      primary: 0,
-      active: 1,
-      superseded: 2,
-      archived: 3,
-    };
-    return order[a.status] - order[b.status] || a.name.localeCompare(b.name);
-  });
+  const order: Record<SystemStatus, number> = {
+    primary: 0,
+    active: 1,
+    superseded: 2,
+    archived: 3,
+  };
+  const systems = Object.entries(registry.systems)
+    .map(([selector, system]) => ({ selector, system }))
+    .sort(
+      (left, right) =>
+        order[left.system.status] - order[right.system.status] ||
+        left.selector.localeCompare(right.selector),
+    );
   return { registry, systems };
 }

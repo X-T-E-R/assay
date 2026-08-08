@@ -1,6 +1,6 @@
 {
   "__schema": 4,
-  "framework_version": "0.12.0",
+  "framework_version": "0.13.0",
   "layout": {
     "mode": "standalone",
     "paths": {

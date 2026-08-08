@@ -2,14 +2,15 @@
 
 Assay is a local-first evidence workbench for Projects, Sources, Analyses, Knowledge, Tasks, Roadmaps, Specs, and independently versioned Systems.
 
-## 0.12 workspace contract
+## 0.13 workspace contract
 
-Assay 0.12 accepts only `0.12.0+s4+l8`. Older or malformed workspace envelopes fail closed and require an external cutover tool.
+Assay 0.13 accepts only `0.13.0+s4+l8+r3`. Older or malformed workspace or System-registry envelopes fail closed and require an external exact-pair cutover tool.
 
 - `.assay/manifest.json` schema 4 stores only the literal framework version and exact layout 8 block. `layout.entries` contains only bounded, expanded one-shot Template paths; deterministic native/core paths are resolved rather than duplicated.
 - `project/project.yaml` (or `.assay/project/project.yaml` in overlay mode) is the single native Project id/name authority.
 - `.assay/managed-files.json` schema 1 is the no-clobber receipt for fixed core assets. One-shot Template output is user-owned and never enters this receipt.
-- `.assay/systems-registry.json` remains schema 2. External Plugin descriptors remain schema 1 metadata; Assay does not install or execute their payloads.
+- `.assay/systems-registry.json` schema 3 is the sole Project-local System authority. Its map key is the canonical selector; records contain only locator, lifecycle, VCS/version observations, and supersedes edges. Assay neither creates nor interprets `system.yaml`.
+- External Plugin descriptors remain schema 1 metadata; Assay does not install or execute their payloads.
 
 ## Start
 

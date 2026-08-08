@@ -99,12 +99,16 @@ describe("upstream drift in status", () => {
     GIT_INTEGRATION_TIMEOUT_MS,
   );
 
-  it("reports an unchanged checkout as unchanged", async () => {
-    const { root } = await workspaceWithGitSource("UpstreamClean");
-    const [source] = (await collectUpstreamStatus({ root })).sources;
-    expect(source?.signal).toBe("unchanged");
-    expect(source?.summary).toBe("no change");
-  });
+  it(
+    "reports an unchanged checkout as unchanged",
+    async () => {
+      const { root } = await workspaceWithGitSource("UpstreamClean");
+      const [source] = (await collectUpstreamStatus({ root })).sources;
+      expect(source?.signal).toBe("unchanged");
+      expect(source?.summary).toBe("no change");
+    },
+    GIT_INTEGRATION_TIMEOUT_MS,
+  );
 
   it("does not fingerprint a non-Git checkout", async () => {
     const root = path.join(await tempDirs.createTempDir(), "UpstreamPlainDir");

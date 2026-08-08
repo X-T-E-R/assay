@@ -16,7 +16,7 @@
       "protected": true
     },
     {
-      "baseline_hash": "f19e97054e49862de0cb151440049f46787c1f3ca899277154401e87a7aa28dc",
+      "baseline_hash": "d71ffc4eedf25a0b2f410673247dbce07624bfa54a4afd73c6d9b4b2f20bb5a0",
       "executable": false,
       "generator": "framework.readme",
       "path": ".assay/README.md",
@@ -30,7 +30,7 @@
       "protected": false
     },
     {
-      "baseline_hash": "d38e6bbded4f7e1da770357041bf5529619f0941c273809b97e171865bb6bd48",
+      "baseline_hash": "cfd1985d6a4abe32284b0571c411bc2f39676b57029df2614253b1b8336864bc",
       "executable": false,
       "generator": "systems.readme",
       "path": "systems/README.md",

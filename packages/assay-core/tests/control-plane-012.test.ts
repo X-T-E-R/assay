@@ -29,13 +29,25 @@ import {
   listWorkspaces,
   loadManagedFiles,
   loadManifest,
+  loadSystemsRegistry,
   loadTemplate,
+  registerSystem,
   trackWorkspace,
   workspaceRecordFilename,
 } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
+
+async function exists(target: string): Promise<boolean> {
+  try {
+    await stat(target);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
 
 async function tempRoot(name: string): Promise<string> {
   const parent = await mkdtemp(path.join(tmpdir(), "assay-012-"));
@@ -67,7 +79,7 @@ async function customTemplate(parent: string, content = "custom output\n"): Prom
   return file;
 }
 
-describe("0.12 control-plane cleanup", () => {
+describe("0.13 control-plane cleanup", () => {
   it("exposes exactly three built-ins and requires an explicit strict YAML path for custom templates", async () => {
     expect((await listAvailableTemplates()).map((entry) => entry.name)).toEqual([
       "study",
@@ -121,7 +133,7 @@ describe("0.12 control-plane cleanup", () => {
       ["registry-authority", ".assay/systems-registry.json"],
       ["external-state", ".assay/external-plugins.json"],
       ["task-contexts", ".assay/task-contexts.json"],
-      ["system-contract", "systems/root.yaml"],
+      ["systems-root", "systems/root.yaml"],
     ] as const) {
       const descriptor = path.join(parent, `${name}.yaml`);
       await writeFile(
@@ -160,7 +172,7 @@ describe("0.12 control-plane cleanup", () => {
     const manifest = await loadManifest(root);
     expect(manifest).toMatchObject({
       __schema: 4,
-      framework_version: "0.12.0",
+      framework_version: "0.13.0",
       layout: { version: 8, entries: expect.any(Array) },
     });
     expect(Object.hasOwn(manifest as object, "entries")).toBe(false);
@@ -185,7 +197,7 @@ describe("0.12 control-plane cleanup", () => {
     await expect(
       publicCore.saveManifest(root, {
         ...manifest,
-        framework_version: "0.12.1",
+        framework_version: "0.13.1",
       } as never),
     ).rejects.toThrow();
     expect(await readFile(manifestFile, "utf8")).toBe(before);
@@ -199,7 +211,7 @@ describe("0.12 control-plane cleanup", () => {
     const before = await readdir(path.join(root, ".assay"));
     await expect(initFramework({ target: root })).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
-      required: "0.12.0+s4+l8",
+      required: "0.13.0+s4+l8",
     });
     expect(await readdir(path.join(root, ".assay"))).toEqual(before);
     expect(await readFile(path.join(root, ".assay", "manifest.json"), "utf8")).toBe(
@@ -391,7 +403,21 @@ describe("0.12 control-plane cleanup", () => {
       template: "study",
       privacy: "tracked",
     });
-    const converted = await convertOverlayToStandalone({ root: source, target });
+    expect(await exists(path.join(source, ".assay", "systems", "root.yaml"))).toBe(false);
+    const ordinary = path.join(source, ".assay", "systems", "legacy", "system.yaml");
+    await mkdir(path.dirname(ordinary), { recursive: true });
+    await writeFile(ordinary, "ordinary-user-bytes: true\n", "utf8");
+    await registerSystem(source, {
+      path: path.dirname(ordinary),
+      name: "legacy",
+      vcs: "embedded",
+    });
+    const converted = await convertOverlayToStandalone({
+      root: source,
+      target,
+      move: true,
+      keepOverlay: false,
+    });
     expect(converted.layout).toMatchObject({ version: 8, mode: "standalone" });
     const manifest = await loadManifest(target);
     expect(manifest?.layout.entries.some((entry) => entry.path.startsWith(".assay/project"))).toBe(
@@ -400,6 +426,12 @@ describe("0.12 control-plane cleanup", () => {
     expect(manifest?.layout.entries.some((entry) => entry.path.startsWith("project/"))).toBe(false);
     const receipt = await loadManagedFiles(target);
     expect(receipt.files.every((entry) => !entry.path.startsWith(".assay/knowledge"))).toBe(true);
+    expect(await readFile(ordinary, "utf8")).toBe("ordinary-user-bytes: true\n");
+    expect(await readFile(path.join(target, "systems", "legacy", "system.yaml"), "utf8")).toBe(
+      "ordinary-user-bytes: true\n",
+    );
+    expect((await loadSystemsRegistry(target))?.systems.legacy?.path).toBe("systems/legacy");
+    expect(converted.overlayStateRemoved).toBe(false);
     expect((await checkFramework({ root: target })).ok).toBe(true);
   });
 

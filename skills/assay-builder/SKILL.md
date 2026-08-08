@@ -96,7 +96,7 @@ assay knowledge add <type> "Title" [--from-analysis <path>]
 
 # System registry
 assay system register <path> [--vcs independent-git|embedded|none] [--primary] [--supersedes <names>]
-assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--contract-file <path> | --no-contract-file] [--primary] [--supersedes <names>]
+assay system update <selector> [--path <path>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>]
 assay system promote <selector>
 assay system archive <selector> --dry-run | --apply
 assay system list [--status primary|active|superseded|archived] [--json]
@@ -193,18 +193,18 @@ learning and durable findings in analyses and knowledge.
 - Native Task owns durable Assay task identity and lifecycle. The host runtime owns dispatch, agent DAGs, execution permissions, and activation; do not alias or import another task store.
 
 
-Assay 0.12 has no native product-Intent object or capability-module commands. A manually created `intent/` or `.assay/intent/` directory is generic unowned content: Assay does not parse, promote, rewrite, migrate, or delete it. Keep product requirements in native Specifications or reader-owned Project prose, and preserve verbatim external evidence in its authoritative source or an Analysis when appropriate.
+Assay 0.13 has no native product-Intent object or capability-module commands. A manually created `intent/` or `.assay/intent/` directory is generic unowned content: Assay does not parse, promote, rewrite, migrate, or delete it. Keep product requirements in native Specifications or reader-owned Project prose, and preserve verbatim external evidence in its authoritative source or an Analysis when appropriate.
 
 
 ## Systems and version control
 
-Each system under `systems/` may be an independently version-controlled repository. The framework manages a **systems registry** (`.assay/systems-registry.json`) and per-system **contract files** (`systems/<name>/system.yaml`), not the system's source files.
+Each System may be an independently version-controlled repository. Assay manages only the schema-3 **systems registry** (`.assay/systems-registry.json`), not System source or release identity. The registry map key is the exact Project-local selector. A file named `system.yaml` is ordinary user content: never ask Assay to create, refresh, validate, move, or delete it.
 
-- `vcs: independent-git` — the system path is its own git repository; the root repo `.gitignore` should ignore the system directory but allow `system.yaml`. Framework `check` skips internals.
+- `vcs: independent-git` — the System path is its own Git repository. Framework `check` observes the registered boundary but does not rewrite repository/package/README identity.
 - `vcs: embedded` — system files live in the root repo directly.
 - Exactly one system has `status: primary` at any time. Use `system promote` to switch; the previous primary becomes `superseded` automatically.
 - Use `system update <selector>` to correct metadata for an existing record, for example `assay system update skill-creator --vcs independent-git --vcs-ref main` after a system was registered as `embedded` by mistake. Do not re-run `system register`; duplicate registration is intentionally rejected.
-- Archive non-primary systems with `system archive --apply` (copy-first move into `systems/archive/`).
+- Archive non-primary Systems with `system archive --apply`. Assay 0.13 performs a logical registry transition only; it never moves or deletes System bytes.
 
 Never hand-edit `.assay/systems-registry.json`. For the full registry schema, vcs semantics, gitignore patterns, and migration notes for legacy layouts, read `references/systems-registry.md`.
 
@@ -239,7 +239,7 @@ source add <source> <alias> --mode frozen
 7. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]`. Living and frozen Sources use the same resolver. Analysis close changes only the Analysis; Source observations remain immutable.
 9. **Fill the analysis body when the decision needs durable rationale**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next step`) with real content drawn from the source. `check --advisories` can list empty drafts; `analysis close` trusts the caller's explicit exit and does not block on section-content heuristics.
 10. Convert promising findings into a candidate pattern under `analyses/patterns/`. Create a native Task only when future bounded work needs a complete Goal, Acceptance Criteria, and durable identity.
-11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered system's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, contract file, supersedes, or primary status.
+11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered System's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, supersedes, or primary status. Path update is registry rebind only.
 12. Run `update --dry-run` before applying framework upgrades.
 
 ### Adoption with direction

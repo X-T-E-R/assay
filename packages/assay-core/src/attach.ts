@@ -1,7 +1,6 @@
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
-import { stringify as stringifyYaml } from "yaml";
 
 import { MANAGED_DIR, MANAGED_FILES_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError } from "./errors.js";
@@ -17,7 +16,7 @@ import type {
   WorkspaceLayout,
   WorkspacePrivacy,
 } from "./schemas/index.js";
-import { defaultSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
+import { saveSystemsRegistry } from "./systems-registry.js";
 import { assertTemplateWriteBoundary, loadTemplate } from "./template.js";
 import { baseCoreTemplates, expandTemplate, manifestEntriesForScaffold } from "./templates.js";
 import { nowIso } from "./time.js";
@@ -35,6 +34,7 @@ export interface AttachResult {
   readonly project: string;
   readonly privacy: WorkspacePrivacy;
   readonly layout: WorkspaceLayout;
+  readonly systemSelector: string;
   readonly system: SystemRecord;
   readonly registry: SystemsRegistry;
   readonly excludeUpdated: boolean;
@@ -97,16 +97,6 @@ async function ensureGitInfoExclude(root: string): Promise<boolean> {
     "utf8",
   );
   return true;
-}
-
-function rootSystemContract(): Record<string, unknown> {
-  return {
-    name: "root",
-    kind: "primary-system",
-    path: ".",
-    vcs: "independent-git",
-    notes: "The product repository root is the primary system in overlay mode.",
-  };
 }
 
 /**
@@ -191,29 +181,25 @@ export async function attachExistingRepo(
   await ensureNativeProject(root, layout, project);
 
   // Systems registry: register the repo root as the primary system.
-  const registry = defaultSystemsRegistry();
   const systemName = slugify(project);
   const systemRecord: SystemRecord = {
-    name: systemName,
     path: ".",
     status: "primary",
     vcs: "independent-git",
     vcs_ref: "",
     version: "0.1.0",
-    contract_file: `${MANAGED_DIR}/systems/root.yaml`,
     supersedes: [],
-    absorbed_on: nowIso(now).slice(0, 10),
-    archived_on: null,
-    archive_path: null,
   };
-  registry.systems[systemName] = systemRecord;
-  registry.primary = systemName;
-  await saveSystemsRegistry(root, registry);
-
-  // Root system sidecar contract.
-  const contractPath = path.join(root, MANAGED_DIR, "systems", "root.yaml");
-  await mkdir(path.dirname(contractPath), { recursive: true });
-  await writeFile(contractPath, stringifyYaml(rootSystemContract()), "utf8");
+  const registry = await saveSystemsRegistry(
+    root,
+    {
+      __schema: 3,
+      primary: systemName,
+      systems: { [systemName]: systemRecord },
+      updated_at: nowIso(now),
+    },
+    { expectedRevision: null },
+  );
 
   // Privacy: keep .assay/ out of product Git.
   let excludeUpdated = false;
@@ -243,7 +229,6 @@ export async function attachExistingRepo(
       mode: "overlay",
       privacy,
       system: systemName,
-      contract: relativeDisplayPath(contractPath, root),
     },
     now,
   );
@@ -253,6 +238,7 @@ export async function attachExistingRepo(
     project,
     privacy,
     layout,
+    systemSelector: systemName,
     system: systemRecord,
     registry,
     excludeUpdated,

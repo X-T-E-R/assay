@@ -20,7 +20,7 @@ import type {
   SourceLogResult,
   SourceStatusResult,
   SourceSyncResult,
-  SystemRecord,
+  SystemEntry,
   UpdateAnalysis,
   UpdatePlan,
 } from "assay-core";
@@ -66,8 +66,7 @@ export function formatAttachResult(result: AttachResult): string {
     `Project: ${result.project}`,
     "Mode: overlay",
     `Privacy: ${result.privacy}`,
-    `Primary system: ${result.system.name} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
-    `Contract: ${result.system.contract_file}`,
+    `Primary system: ${result.systemSelector} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
     result.excludeUpdated
       ? "Git: added /.assay/ to .git/info/exclude"
       : "Git: .assay/ already ignored",
@@ -91,8 +90,7 @@ export function formatConvertResult(result: ConvertOverlayResult): string {
     "Mode: standalone",
     `Transfer: ${result.moved ? "move" : "copy"}`,
     `Overlay: ${overlayDisposition(result)}`,
-    `Primary system: ${result.system.name} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
-    `Contract: ${result.system.contract_file}`,
+    `Primary system: ${result.systemSelector} (path: ${result.system.path}, vcs: ${result.system.vcs})`,
     `Manifest: ${result.targetManifestPath}`,
     `Event: ${result.eventFile}`,
   ].join("\n");
@@ -557,40 +555,37 @@ export function formatAdoptionResult(result: AdoptExistingProjectResult): string
   ].join("\n");
 }
 
-function supersedesLine(system: SystemRecord): string {
+function supersedesLine(system: SystemEntry["system"]): string {
   return system.supersedes.length > 0 ? system.supersedes.join(", ") : "-";
 }
 
-export function formatSystemRecord(system: SystemRecord): string {
+export function formatSystemRecord(entry: SystemEntry): string {
+  const { selector, system } = entry;
   return [
-    `${system.name} (${system.status})`,
+    `${selector} (${system.status})`,
     `  path:           ${system.path}`,
     `  vcs:            ${system.vcs}${system.vcs_ref ? `@${system.vcs_ref}` : ""}`,
     `  version:        ${system.version}`,
-    `  contract:       ${system.contract_file ?? "-"}`,
     `  supersedes:     ${supersedesLine(system)}`,
     `  absorbed on:    ${system.absorbed_on ?? "-"}`,
     `  archived on:    ${system.archived_on ?? "-"}`,
-    `  archive path:   ${system.archive_path ?? "-"}`,
   ].join("\n");
 }
 
 export function formatSystemList(
   title: string,
-  primary: string | null,
-  systems: readonly SystemRecord[],
+  primary: string,
+  systems: readonly SystemEntry[],
 ): string {
   if (systems.length === 0) {
     return `${title}\n(none)`;
   }
-  const lines = systems.map((system) => {
-    const marker = system.name === primary ? "*" : " ";
+  const lines = systems.map(({ selector, system }) => {
+    const marker = selector === primary ? "*" : " ";
     const vcs = `${system.vcs}${system.vcs_ref ? `@${system.vcs_ref}` : ""}`;
     const supersedes =
       system.supersedes.length > 0 ? ` supersedes ${system.supersedes.join(",")}` : "";
-    return `${marker} ${system.status.padEnd(11)} ${system.name.padEnd(28)} ${vcs.padEnd(20)} v${system.version}${supersedes}`;
+    return `${marker} ${system.status.padEnd(11)} ${selector.padEnd(28)} ${vcs.padEnd(20)} v${system.version}${supersedes}`;
   });
-  return [title, ...lines, "", `${systems.length} system(s), primary: ${primary ?? "(none)"}`].join(
-    "\n",
-  );
+  return [title, ...lines, "", `${systems.length} system(s), primary: ${primary}`].join("\n");
 }

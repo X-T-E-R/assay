@@ -19,7 +19,7 @@ beforeEach(async () => {
 
 afterEach(async () => tempDirs.cleanup());
 
-describe("0.12 CLI control plane", () => {
+describe("0.13 CLI control plane", () => {
   it("offers template/workspace commands and removes retired public surfaces", async () => {
     const help = await runner.runCli(["--help"]);
     expect(help.exitCode).toBe(0);

@@ -636,43 +636,11 @@ export async function checkFramework(
       primaryName = registry.primary;
       systemCount = Object.keys(registry.systems).length;
 
-      // Check primary uniqueness
-      const primaries = Object.values(registry.systems).filter((s) => s.status === "primary");
-      if (primaries.length === 0 && registry.primary !== null) {
-        rows.push({
-          path: SYSTEMS_REGISTRY_FILE,
-          status: "error",
-          message: `registry primary is '${registry.primary}' but no system has status: primary`,
-        });
-      } else if (primaries.length > 1) {
-        rows.push({
-          path: SYSTEMS_REGISTRY_FILE,
-          status: "error",
-          message: `expected exactly one primary system, found ${primaries.length}: ${primaries.map((s) => s.name).join(", ")}`,
-        });
-      }
-
       // Check each active/primary system exists on disk. Registry paths are
       // workspace-relative for systems inside the workspace and absolute for
       // systems outside it, so they are resolved rather than joined.
-      for (const system of Object.values(registry.systems)) {
+      for (const [selector, system] of Object.entries(registry.systems)) {
         if (system.status === "archived") {
-          if (system.archive_path) {
-            const archivePath = resolveRegistryPath(root, system.archive_path);
-            if (!(await exists(archivePath))) {
-              rows.push({
-                path: system.archive_path,
-                status: "error",
-                message: `archived system '${system.name}' has no archive on disk`,
-              });
-            }
-          } else {
-            rows.push({
-              path: SYSTEMS_REGISTRY_FILE,
-              status: "error",
-              message: `archived system '${system.name}' records no archive_path`,
-            });
-          }
           continue;
         }
         const systemPath = resolveRegistryPath(root, system.path);
@@ -680,25 +648,15 @@ export async function checkFramework(
           rows.push({
             path: system.path,
             status: "error",
-            message: `registered system '${system.name}' missing on disk`,
+            message: `registered system '${selector}' missing on disk`,
           });
-        }
-        if (system.contract_file) {
-          const contractPath = resolveRegistryPath(root, system.contract_file);
-          if (!(await exists(contractPath))) {
-            rows.push({
-              path: system.contract_file,
-              status: "warning",
-              message: `contract file missing for system '${system.name}'`,
-            });
-          }
         }
         if (system.vcs === "independent-git") {
           if (!(await exists(path.join(systemPath, ".git")))) {
             rows.push({
               path: system.path,
               status: "warning",
-              message: `system '${system.name}' declared independent-git but no .git found`,
+              message: `system '${selector}' declared independent-git but no .git found`,
             });
           }
         }
@@ -817,12 +775,12 @@ export async function checkFramework(
         const referenced = new Set(
           Object.values(registry.systems).flatMap((system) => system.supersedes),
         );
-        for (const system of Object.values(registry.systems)) {
-          if (system.status === "superseded" && !referenced.has(system.name)) {
+        for (const [selector, system] of Object.entries(registry.systems)) {
+          if (system.status === "superseded" && !referenced.has(selector)) {
             rows.push({
               path: SYSTEMS_REGISTRY_FILE,
               status: "warning",
-              message: `system '${system.name}' is superseded but no system records it in a supersedes chain, so its lineage cannot be followed. Record the replacement with \`assay system update <replacement> --supersedes ${system.name}\`.`,
+              message: `system '${selector}' is superseded but no system records it in a supersedes chain, so its lineage cannot be followed. Record the replacement with \`assay system update <replacement> --supersedes ${selector}\`.`,
             });
           }
         }
@@ -1414,29 +1372,28 @@ export async function getFrameworkStatus(
 
   // Systems section from registry
   let systems: readonly FrameworkStatusSystem[] | undefined;
-  try {
-    const registry = await loadSystemsRegistry(root);
-    if (registry) {
-      systems = Object.values(registry.systems)
-        .sort((a, b) => {
-          const order: Record<string, number> = {
-            primary: 0,
-            active: 1,
-            superseded: 2,
-            archived: 3,
-          };
-          return (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.name.localeCompare(b.name);
-        })
-        .map((s) => ({
-          name: s.name,
-          status: s.status,
-          vcs: s.vcs,
-          version: s.version,
-          supersedes: s.supersedes,
-        }));
-    }
-  } catch {
-    // registry missing or invalid; status omits systems section
+  const registry = await loadSystemsRegistry(root);
+  if (registry) {
+    systems = Object.entries(registry.systems)
+      .sort(([leftSelector, a], [rightSelector, b]) => {
+        const order: Record<string, number> = {
+          primary: 0,
+          active: 1,
+          superseded: 2,
+          archived: 3,
+        };
+        return (
+          (order[a.status] ?? 9) - (order[b.status] ?? 9) ||
+          leftSelector.localeCompare(rightSelector)
+        );
+      })
+      .map(([selector, s]) => ({
+        name: selector,
+        status: s.status,
+        vcs: s.vcs,
+        version: s.version,
+        supersedes: s.supersedes,
+      }));
   }
 
   let sourceSummary: FrameworkStatusSources | undefined;

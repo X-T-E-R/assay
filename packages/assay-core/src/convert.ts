@@ -38,7 +38,13 @@ import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import { getSourceAdoption, listSourceAdoptions } from "./source-adoptions.js";
 import { resolveSourceObservation } from "./sources.js";
 import { withSpecGlobalCoordination } from "./spec.js";
-import { requireSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
+import {
+  normalizeRegistryPath,
+  requireSystemsRegistrySnapshot,
+  resolveRegistryPath,
+  saveSystemsRegistry,
+  systemRecordForSelector,
+} from "./systems-registry.js";
 import { withWorkspaceConversionCoordination } from "./tasks/task-storage.js";
 
 export interface ConvertOverlayOptions {
@@ -81,14 +87,14 @@ async function preflightConversionSemantics(
       observation: definition.source.observation,
     });
     for (const target of definition.targets) {
-      const sourceSystem = input.sourceRegistry.systems[target.system];
-      const targetSystem = targetRegistry.systems[target.system];
+      const sourceSystem = systemRecordForSelector(input.sourceRegistry, target.system);
+      const targetSystem = systemRecordForSelector(targetRegistry, target.system);
       if (!sourceSystem || !targetSystem) {
         throw new FrameworkError(
           `source adoption '${definition.id}' targets unknown system '${target.system}'`,
         );
       }
-      const current = path.resolve(input.sourceRoot, sourceSystem.path);
+      const current = resolveRegistryPath(input.sourceRoot, sourceSystem.path);
       let info: Stats;
       try {
         info = await lstat(current);
@@ -117,6 +123,9 @@ function rewriteSystemRecord(
   record: SystemRecord,
   input: ConversionSemanticPreflight,
 ): SystemRecord {
+  if (path.isAbsolute(record.path)) {
+    return { ...record, path: normalizeRegistryPath(input.targetRoot, record.path) };
+  }
   const relayout = relayoutWorkPath(
     toPosixPath(record.path),
     input.sourceLayout,
@@ -126,17 +135,8 @@ function rewriteSystemRecord(
   const rewrittenPath =
     relayout !== toPosixPath(record.path)
       ? relayout
-      : toPosixPath(path.relative(input.targetRoot, path.resolve(input.sourceRoot, record.path))) ||
-        ".";
-  const contractFile = record.contract_file
-    ? relayoutWorkPath(
-        toPosixPath(record.contract_file),
-        input.sourceLayout,
-        input.targetLayout,
-        input.additionalWorkDirectories,
-      )
-    : null;
-  return { ...record, path: rewrittenPath, contract_file: contractFile };
+      : normalizeRegistryPath(input.targetRoot, resolveRegistryPath(input.sourceRoot, record.path));
+  return { ...record, path: rewrittenPath };
 }
 
 function predictedConvertedSystemAbsolutePath(
@@ -144,8 +144,11 @@ function predictedConvertedSystemAbsolutePath(
   target: SystemRecord,
   input: ConversionSemanticPreflight,
 ): string | null {
-  const current = path.resolve(input.sourceRoot, source.path);
-  const predicted = path.resolve(input.targetRoot, target.path);
+  const current = resolveRegistryPath(input.sourceRoot, source.path);
+  const predicted = resolveRegistryPath(input.targetRoot, target.path);
+  if (path.isAbsolute(source.path)) {
+    return path.normalize(predicted) === path.normalize(current) ? predicted : null;
+  }
   const relayout = relayoutWorkPath(
     toPosixPath(source.path),
     input.sourceLayout,
@@ -205,6 +208,7 @@ export interface ConvertOverlayResult {
   /** True when the emptied overlay state directory was removed after a move. */
   readonly overlayStateRemoved: boolean;
   readonly layout: WorkspaceLayout;
+  readonly systemSelector: string;
   readonly system: SystemRecord;
   readonly sourceManifestPath: string;
   readonly targetManifestPath: string;
@@ -224,8 +228,9 @@ const OVERLAY_WORK_DIRECTORIES = ["project", "tasks"] as const;
 
 /**
  * Layout `paths` keys whose location differs between overlay and standalone.
- * Managed-file records are rewritten across all of them, including the system
- * contracts directory, which is relocated separately from the work folders.
+ * Managed-file records are rewritten across all of them. The systems path is
+ * transferred as ordinary user/System content; no filename inside it is a
+ * contract or receives special parsing.
  */
 const RELOCATED_PATH_KEYS = [
   "sources",
@@ -362,7 +367,8 @@ async function convertOverlayToStandaloneLocked(
   }
   await assertSourceAdoptionStoreTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   const systemName = sourceProject.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  const sourceRegistry = await requireSystemsRegistry(sourceRoot);
+  const sourceRegistrySnapshot = await requireSystemsRegistrySnapshot(sourceRoot);
+  const sourceRegistry = sourceRegistrySnapshot.registry;
   const targetRegistry = await preflightConversionSemantics({
     sourceRoot,
     targetRoot,
@@ -470,14 +476,14 @@ async function convertOverlayToStandaloneLocked(
     }
   }
 
-  // Root system sidecar contracts under .assay/systems/ in overlay move to
-  // target .assay/systems/ (kept as contracts; the original repo is now an
-  // external independent system referenced by relative path).
+  // Transfer `.assay/systems/` as ordinary content. Even for `--move`, preserve
+  // the source tree: it may contain unknown user bytes that core has no
+  // authority to delete.
   const sourceContracts = workspacePath(sourceRoot, sourceLayout, "systemsContracts");
   const targetContracts = workspacePath(targetRoot, targetLayout, "systemsContracts");
   if (await exists(sourceContracts)) {
     await mkdir(targetContracts, { recursive: true });
-    await copyOrMoveDir(sourceContracts, targetContracts, move);
+    await copyOrMoveDir(sourceContracts, targetContracts, false);
   }
 
   // Rewrite the target manifest: standalone layout, drop overlay specifics.
@@ -505,11 +511,13 @@ async function convertOverlayToStandaloneLocked(
     })),
   });
 
-  await saveSystemsRegistry(targetRoot, targetRegistry);
+  await saveSystemsRegistry(targetRoot, targetRegistry, {
+    expectedRevision: sourceRegistrySnapshot.revision,
+  });
   const primaryName = targetRegistry.primary;
   const systemRecord =
-    (primaryName ? targetRegistry.systems[primaryName] : undefined) ??
-    targetRegistry.systems[systemName];
+    systemRecordForSelector(targetRegistry, primaryName) ??
+    systemRecordForSelector(targetRegistry, systemName);
   if (!systemRecord) {
     throw new FrameworkError("converted systems registry has no primary system");
   }
@@ -521,7 +529,7 @@ async function convertOverlayToStandaloneLocked(
       from: sourceRoot,
       to: targetRoot,
       mode: "standalone",
-      primary_system: systemRecord.name,
+      primary_system: primaryName,
       moved: move,
     },
     now,
@@ -540,6 +548,7 @@ async function convertOverlayToStandaloneLocked(
     keepOverlay,
     overlayStateRemoved,
     layout: targetLayout,
+    systemSelector: primaryName,
     system: systemRecord,
     sourceManifestPath: path.join(sourceRoot, sourceLayout.paths.manifest),
     targetManifestPath: path.join(targetRoot, targetLayout.paths.manifest),
