@@ -40,7 +40,7 @@ After adoption, follow these steps in order:
 
 6. **Close the adoption analysis** with `assay analysis close <path> --exit adopt|reject` so the decision is recorded in the event ledger.
 
-7. **Validate** persisted structure with `assay check` and inspect the workspace with `assay status`. Run `assay check --advisories` if you also want reminders about lingering `.old/` material or open iterations.
+7. **Validate** persisted structure with `assay check` and inspect the workspace with `assay status`. Run `assay check --advisories` if you also want reminders about lingering `.old/` material or unfinished analyses.
 
 ## Cleanup
 

@@ -489,9 +489,6 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     : [];
 
   const summary: string[] = [];
-  if (result.openIterations !== undefined) {
-    summary.push(`Open iterations: ${result.openIterations}`);
-  }
   if (result.knowledgeEntries !== undefined) {
     summary.push(`Knowledge entries: ${result.knowledgeEntries}`);
   }

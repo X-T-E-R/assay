@@ -18,7 +18,7 @@ The loop is simple:
 ```text
 sources / experiments / goals
         -> structured analysis + checks
-        -> knowledge, systems, and the next iteration
+        -> knowledge, systems, and bounded Tasks
 ```
 
 It is not a notes app, not an agent runtime, and not a prompt collection. It is the place where "this project does something interesting" becomes "we copied this pattern, rejected that claim, and can explain the decision later."
@@ -29,7 +29,7 @@ Assay fits the way your code already lives.
 
 | Mode | Use it when | Where Assay writes | Git posture |
 | --- | --- | --- | --- |
-| `standalone` | You want a dedicated study / solve / explore workspace. | `.assay/` for Assay state, with work folders such as `tasks/`, `references/`, `analyses/`, `iterations/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
+| `standalone` | You want a dedicated study / solve / explore workspace. | `.assay/` for Assay state, with work folders such as `tasks/`, `references/`, `analyses/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
 | `overlay` | You already have a product repo and want its root to be the primary system. | One private `.assay/` folder containing Assay state and work folders. Product files stay where they are. | Product Git ignores `.assay/` by default; Assay state can optionally have its own Git inside `.assay/`. |
 
 ## Choose what you're building
@@ -39,8 +39,8 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 | If you want to... | Start with | Assay gives you |
 | --- | --- | --- |
 | Study external projects without losing provenance | `study` | living sources, reference analyses, pattern notes, decision exits |
-| Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, iterations |
-| Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
+| Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, tools |
+| Explore several possible directions | `explore` | approaches, trials, comparison notes |
 
 
 ## Keep one outcome intact across context resets
@@ -69,7 +69,7 @@ Capability modules are optional features. An archetype enables some at init; the
 
 | Module | Turns on | Enable it with |
 | --- | --- | --- |
-| `iteration` | Planned changes to your own systems, opened and closed with a result | `assay capability add iteration` |
+| `intent` | Verbatim product intent and promoted requirements | `assay capability add intent` |
 
 `assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run. `assay capability add intent` remains a compatible legacy entrance; `assay reconcile --apply` adopts its existing files into the plugin receipt without moving or rewriting intent records.
 
@@ -168,8 +168,8 @@ assay check
 In overlay mode the product repo stays the product repo. Assay registers the repo root as the primary system and keeps its own work under `.assay/`. Product Git ignores `.assay/`, so `git status` stays clean.
 
 `assay check` defaults to workspace structure and persisted-record integrity.
-Use `assay check --advisories` when you also want reminders about open
-iterations, unfinished drafts, pending queues, adoption archives, or major
+Use `assay check --advisories` when you also want reminders about unfinished
+drafts, pending queues, adoption archives, or major
 source changes. Those reminders are optional and never turn ordinary workflow
 state into a failing check.
 

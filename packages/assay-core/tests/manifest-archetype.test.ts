@@ -71,20 +71,47 @@ function layout4Manifest() {
   return current;
 }
 
-describe("manifest 0.7 envelope", () => {
-  it("writes and loads exactly schema 2 and layout 5", async () => {
+describe("manifest 0.8 envelope", () => {
+  it("writes and loads exactly schema 2 and layout 6 without a retired work path", async () => {
     const root = await tempDir();
     const manifest = defaultManifest("Current");
     expect(manifest).toMatchObject({
       __schema: 2,
-      framework_version: "0.7.0",
-      minimum_assay_version: "0.7.0",
-      layout_version: 5,
-      layout: { version: 5 },
+      framework_version: "0.8.0",
+      minimum_assay_version: "0.8.0",
+      layout_version: 6,
+      layout: { version: 6 },
     });
     expect(manifest.layout.paths).not.toHaveProperty("adrs_index");
+    expect(manifest.layout.paths).not.toHaveProperty("iterations");
     await saveManifest(root, manifest);
-    await expect(loadManifest(root)).resolves.toMatchObject({ framework_version: "0.7.0" });
+    await expect(loadManifest(root)).resolves.toMatchObject({ framework_version: "0.8.0" });
+  });
+
+  it("rejects the exact 0.7 layout-5 envelope before reading retired work", async () => {
+    const root = await tempDir();
+    const manifest = defaultManifest("Retired work") as unknown as Record<string, unknown>;
+    manifest.framework_version = "0.7.0";
+    manifest.minimum_assay_version = "0.7.0";
+    manifest.layout_version = 5;
+    const layout = manifest.layout as Record<string, unknown>;
+    layout.version = 5;
+    layout.paths = { ...(layout.paths as Record<string, unknown>), iterations: "iterations" };
+    await writeManifestJson(root, manifest);
+    await mkdir(path.join(root, "iterations", "open"), { recursive: true });
+    await writeFile(path.join(root, "iterations", "open", "plan.md"), "not parsed", "utf8");
+    const before = await treeHash(root);
+
+    await expect(loadManifest(root)).rejects.toMatchObject({
+      code: "WORKSPACE_CUTOVER_REQUIRED",
+      observed: "0.7.0+s2+l5",
+      required: "0.8.0+s2+l6",
+      locator: "assay-cutover:0.7.0+s2+l5->0.8.0+s2+l6",
+    });
+    await expect(
+      convertOverlayToStandalone({ root, target: path.join(root, "target") }),
+    ).rejects.toMatchObject({ code: "WORKSPACE_CUTOVER_REQUIRED" });
+    expect(await treeHash(root)).toBe(before);
   });
 
   it.each([
@@ -99,8 +126,8 @@ describe("manifest 0.7 envelope", () => {
     await expect(loadManifest(root)).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
       observed: "0.6.0+s2+l4",
-      required: "0.7.0+s2+l5",
-      locator: "assay-cutover:0.6.0+s2+l4->0.7.0+s2+l5",
+      required: "0.8.0+s2+l6",
+      locator: "assay-cutover:0.6.0+s2+l4->0.8.0+s2+l6",
     });
     expect(await treeHash(root)).toBe(before);
   });
@@ -110,7 +137,7 @@ describe("manifest 0.7 envelope", () => {
     await writeManifestJson(root, layout4Manifest(), ".framework");
     await expect(loadManifest(root)).rejects.toBeInstanceOf(WorkspaceCutoverRequiredError);
     await expect(loadManifest(root)).rejects.toMatchObject({
-      locator: "assay-cutover:.framework:0.6.0+s2+l4->0.7.0+s2+l5",
+      locator: "assay-cutover:.framework:0.6.0+s2+l4->0.8.0+s2+l6",
     });
   });
 
@@ -135,7 +162,7 @@ describe("manifest 0.7 envelope", () => {
     ["dot alias", "references", "./references"],
     ["duplicate", "analyses", "references"],
     ["managed escape", "systems_contracts", ".assay/../systems"],
-  ])("rejects a non-canonical layout-5 path before use (%s)", async (_case, key, value) => {
+  ])("rejects a non-canonical layout-6 path before use (%s)", async (_case, key, value) => {
     const root = await tempDir();
     const manifest = defaultManifest("Unsafe layout");
     (manifest.layout.paths as Record<string, string>)[key] = value;
@@ -178,7 +205,6 @@ describe("manifest 0.7 envelope", () => {
         ...manifest.layout.paths,
         references: "../outside",
         analyses: ".assay/analyses",
-        iterations: ".assay/iterations",
         knowledge: ".assay/knowledge",
         systems_contracts: ".assay/systems",
       },

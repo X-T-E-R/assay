@@ -24,7 +24,6 @@ import {
   loadManifest,
   requireCapability,
   saveManifest,
-  startIteration,
 } from "../src/index.js";
 
 const tempDirs = createTempDirectoryFixture("assay-core-capability");
@@ -45,39 +44,36 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
 
 async function standaloneWorkspace(name: string, archetype = "study"): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
-  if (archetype === BARE_ARCHETYPE) {
-    await writeBareArchetype(root);
-  }
+  if (archetype === BARE_ARCHETYPE) await writeBareArchetype(root);
   await initFramework({ target: root, name, archetype });
   return root;
 }
 
-async function overlayWorkspace(
-  name: string,
-  archetype = BARE_ARCHETYPE,
-  privacy: "private" | "private-git" | "tracked" = "private",
-): Promise<string> {
+async function overlayWorkspace(name: string): Promise<string> {
   const root = path.join(await tempDirs.createTempDir(), name);
   await mkdir(root, { recursive: true });
-  if (archetype === BARE_ARCHETYPE) {
-    await writeBareArchetype(root);
-  }
+  await writeBareArchetype(root);
   await writeFile(path.join(root, "package.json"), '{"name":"product"}\n', "utf8");
   await git(root, ["init"]);
   await git(root, ["config", "user.email", "assay@example.test"]);
   await git(root, ["config", "user.name", "Assay Test"]);
   await git(root, ["add", "package.json"]);
   await git(root, ["commit", "-m", "initial"]);
-  await attachExistingRepo({ root, name, archetype, privacy, noTrack: true });
+  await attachExistingRepo({
+    root,
+    name,
+    archetype: BARE_ARCHETYPE,
+    privacy: "private",
+    noTrack: true,
+  });
   return root;
 }
 
 async function readEvents(root: string): Promise<Record<string, unknown>[]> {
   const eventsDir = path.join(root, ".assay", "events");
   const { readdir } = await import("node:fs/promises");
-  const files = await readdir(eventsDir);
   const entries: Record<string, unknown>[] = [];
-  for (const file of files) {
+  for (const file of await readdir(eventsDir)) {
     const content = await readFile(path.join(eventsDir, file), "utf8");
     for (const line of content.split("\n").filter((value) => value.trim().length > 0)) {
       entries.push(JSON.parse(line) as Record<string, unknown>);
@@ -87,217 +83,107 @@ async function readEvents(root: string): Promise<Record<string, unknown>[]> {
 }
 
 describe("effectiveCapabilities", () => {
-  it("unions archetype modules with manifest capabilities and drops unknown names", async () => {
+  it("keeps intent and drops unsupported names", async () => {
     const study = await loadArchetype("study");
-
     expect(effectiveCapabilities(study, undefined)).toEqual([]);
-    expect(effectiveCapabilities(study, ["iteration"])).toEqual(["iteration"]);
     expect(effectiveCapabilities(study, ["intent"])).toEqual(["intent"]);
-    expect(effectiveCapabilities(study, ["telepathy"])).toEqual([]);
-    expect(effectiveCapabilities(null, ["iteration"])).toEqual(["iteration"]);
+    expect(effectiveCapabilities(study, ["iteration", "telepathy"])).toEqual([]);
+    expect(effectiveCapabilities(null, ["intent"])).toEqual(["intent"]);
   });
 });
 
 describe("addCapability", () => {
-  it("scaffolds a module the archetype lacks and keeps the workspace checkable", async () => {
-    const root = await standaloneWorkspace("AddIteration", BARE_ARCHETYPE);
+  it("scaffolds intent and keeps the workspace checkable", async () => {
+    const root = await standaloneWorkspace("AddIntent", BARE_ARCHETYPE);
+    expect(await isCapabilityEnabled(root, "intent")).toBe(false);
 
-    expect(await isCapabilityEnabled(root, "iteration")).toBe(false);
-    await expect(startIteration({ root, title: "Too Early" })).rejects.toThrow(
-      `capability not enabled in archetype ${BARE_ARCHETYPE}: iteration`,
-    );
-
-    const result = await addCapability({ root, module: "iteration" });
-    expect(result.alreadyEnabled).toBe(false);
-    expect(result.source).toBe("added");
-    expect(result.capabilities).toEqual(["iteration"]);
-    expect(await exists(path.join(root, "iterations", "templates", "iteration-plan.md"))).toBe(
-      true,
-    );
-    expect((await loadManifest(root))?.project.capabilities).toEqual(["iteration"]);
-    await expect(startIteration({ root, title: "First Loop" })).resolves.toMatchObject({
-      path: expect.stringMatching(/^iterations\//),
+    const result = await addCapability({ root, module: "intent" });
+    expect(result).toMatchObject({
+      alreadyEnabled: false,
+      source: "added",
+      capabilities: ["intent"],
     });
+    expect(await exists(path.join(root, "intent", "original", "README.md"))).toBe(true);
+    expect((await loadManifest(root))?.project.capabilities).toEqual(["intent"]);
     expect((await checkFramework({ root })).ok).toBe(true);
+    expect(await requireCapability(root, "intent")).toEqual(
+      await loadArchetype(BARE_ARCHETYPE, { root }),
+    );
   });
 
-  it("writes a capability.added event", async () => {
+  it("writes one event and is idempotent", async () => {
     const root = await standaloneWorkspace("CapabilityEvent", BARE_ARCHETYPE);
+    const first = await addCapability({ root, module: "intent" });
+    const rerun = await addCapability({ root, module: "intent" });
 
-    const result = await addCapability({ root, module: "iteration" });
-
-    expect(result.eventFile).toBeDefined();
-    const events = await readEvents(root);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        event: "capability.added",
-        module: "iteration",
-        archetype: BARE_ARCHETYPE,
-      }),
-    );
-  });
-
-  it("is a no-op when the module is already enabled", async () => {
-    const root = await standaloneWorkspace("Idempotent", BARE_ARCHETYPE);
-    await addCapability({ root, module: "iteration" });
-    const before = await loadManifest(root);
-
-    const rerun = await addCapability({ root, module: "iteration" });
-
-    expect(rerun.alreadyEnabled).toBe(true);
-    expect(rerun.source).toBe("added");
+    expect(first.eventFile).toBeDefined();
+    expect(rerun).toMatchObject({ alreadyEnabled: true, source: "added" });
     expect(rerun.report.created_files).toEqual([]);
-    expect(rerun.report.skipped_files).toEqual([]);
-    expect(rerun.eventFile).toBeUndefined();
-    expect((await loadManifest(root))?.project.capabilities).toEqual(before?.project.capabilities);
-    expect(
-      (await readEvents(root)).filter((event) => event.event === "capability.added"),
-    ).toHaveLength(1);
+    expect((await readEvents(root)).filter((event) => event.event === "capability.added")).toEqual([
+      expect.objectContaining({ module: "intent", archetype: BARE_ARCHETYPE }),
+    ]);
   });
 
-  it("reports an archetype-provided module as already enabled without recording it", async () => {
-    const root = await standaloneWorkspace("ArchetypeProvided", "solve");
-
-    const result = await addCapability({ root, module: "iteration" });
-
-    expect(result.alreadyEnabled).toBe(true);
-    expect(result.source).toBe("archetype");
+  it("rejects retired and unknown modules without changing the manifest", async () => {
+    const root = await standaloneWorkspace("UnsupportedModules", BARE_ARCHETYPE);
+    for (const module of ["iteration", "telepathy"]) {
+      await expect(addCapability({ root, module })).rejects.toThrow(FrameworkError);
+      await expect(addCapability({ root, module })).rejects.toThrow(/supported modules: intent/);
+    }
     expect((await loadManifest(root))?.project.capabilities).toBeUndefined();
   });
 
-  it("rejects a module this build does not implement", async () => {
-    const root = await standaloneWorkspace("UnknownModule", BARE_ARCHETYPE);
-
-    await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(FrameworkError);
-    await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(
-      /supported modules: intent, iteration/,
-    );
-    expect((await loadManifest(root))?.project.capabilities).toBeUndefined();
-  });
-
-  it("scaffolds an overlay workspace under .assay and never the product repo root", async () => {
+  it("scaffolds overlay intent under .assay and never the product root", async () => {
     const root = await overlayWorkspace("OverlayCapability");
-    await addCapability({ root, module: "iteration" });
-    expect(
-      await exists(path.join(root, ".assay", "iterations", "templates", "iteration-plan.md")),
-    ).toBe(true);
-    expect(await exists(path.join(root, "iterations"))).toBe(false);
+    await addCapability({ root, module: "intent" });
+    expect(await exists(path.join(root, ".assay", "intent", "original", "README.md"))).toBe(true);
+    expect(await exists(path.join(root, "intent"))).toBe(false);
     expect((await git(root, ["status", "--short"])).trim()).toBe("");
     expect((await checkFramework({ root })).ok).toBe(true);
-  });
-
-  it("enables iteration on the study archetype", async () => {
-    const root = await standaloneWorkspace("AddIteration", "study");
-
-    await expect(startIteration({ root, title: "Too Early" })).rejects.toThrow(
-      /capability not enabled in archetype study: iteration/,
-    );
-
-    await addCapability({ root, module: "iteration" });
-
-    expect(await exists(path.join(root, "iterations", "templates", "iteration-plan.md"))).toBe(
-      true,
-    );
-    const started = await startIteration({ root, title: "First Loop" });
-    expect(started.path).toMatch(/^iterations\//);
-    expect((await checkFramework({ root })).ok).toBe(true);
-
-    const archetype = await loadArchetype("study");
-    expect(await requireCapability(root, "iteration")).toEqual(archetype);
   });
 });
 
 describe("capability-scaffolded templates stay under update management", () => {
-  it("appears in the update analysis and is restored after deletion", async () => {
+  it("detects deletion and restores a declared capability scaffold", async () => {
     const root = await standaloneWorkspace("UpdateReconcile", BARE_ARCHETYPE);
-    await addCapability({ root, module: "iteration" });
+    await addCapability({ root, module: "intent" });
+    expect(
+      (await analyzeUpdate({ root })).changes.unchanged.map((change) => change.path),
+    ).toContain("intent/original/README.md");
 
-    const clean = await analyzeUpdate({ root });
-    expect(clean.changes.unchanged.map((change) => change.path)).toContain(
-      "iterations/templates/iteration-plan.md",
-    );
-
-    await rm(path.join(root, "iterations", "templates", "iteration-plan.md"), { force: true });
-    const afterDelete = await analyzeUpdate({ root });
-    expect(afterDelete.changes.user_deleted.map((change) => change.path)).toContain(
-      "iterations/templates/iteration-plan.md",
-    );
+    await rm(path.join(root, "intent", "original", "README.md"), { force: true });
+    expect(
+      (await analyzeUpdate({ root })).changes.user_deleted.map((change) => change.path),
+    ).toContain("intent/original/README.md");
   });
 
-  it("creates capability templates that were never written", async () => {
+  it("creates intent templates declared directly in a manifest", async () => {
     const root = await standaloneWorkspace("UpdateCreate", BARE_ARCHETYPE);
     const manifest = await loadManifest(root);
     if (!manifest) throw new Error("manifest missing");
-    // A manifest that declares the capability without its files on disk: the
-    // update pass owns them, so it must create rather than ignore them.
-    manifest.project.capabilities = ["iteration"];
+    manifest.project.capabilities = ["intent"];
     await saveManifest(root, manifest);
 
     const result = await applyUpdate({ root, action: "skip" });
-
-    expect(result.report.created_files).toContain("iterations/README.md");
-    expect(await exists(path.join(root, "iterations", "templates", "iteration-plan.md"))).toBe(
-      true,
-    );
+    expect(result.report.created_files).toContain("intent/README.md");
+    expect(await exists(path.join(root, "intent", "requirements", "README.md"))).toBe(true);
   });
 });
 
-describe("manifests without a capabilities field", () => {
-  it("keeps working with archetype modules only", async () => {
-    const root = await standaloneWorkspace("LegacyManifest", "study");
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    expect(manifest.project.capabilities).toBeUndefined();
-
-    expect(await isCapabilityEnabled(root, "intent")).toBe(false);
-    expect(await isCapabilityEnabled(root, "iteration")).toBe(false);
-    expect((await checkFramework({ root })).ok).toBe(true);
-    expect((await analyzeUpdate({ root })).changes.new).toEqual([]);
-  });
-
-  it("ignores a manifest capability this build does not implement", async () => {
+describe("manifest capability compatibility", () => {
+  it("ignores unsupported manifest names while keeping them visible", async () => {
     const root = await standaloneWorkspace("UnknownCapability", BARE_ARCHETYPE);
     const manifest = await loadManifest(root);
     if (!manifest) throw new Error("manifest missing");
-    manifest.project.capabilities = ["telepathy"];
+    manifest.project.capabilities = ["iteration", "telepathy"];
     await saveManifest(root, manifest);
 
     expect(await isCapabilityEnabled(root, "intent")).toBe(false);
     expect((await checkFramework({ root })).ok).toBe(true);
-
-    const listed = await listCapabilities({ root });
-    expect(listed.capabilities).toContainEqual({
-      module: "telepathy",
-      enabled: false,
-      source: "added",
-      supported: false,
-    });
-  });
-});
-
-describe("listCapabilities", () => {
-  it("distinguishes archetype-provided modules from added ones", async () => {
-    const root = await standaloneWorkspace("ListCapabilities", "study");
-    await addCapability({ root, module: "iteration" });
-
-    const result = await listCapabilities({ root });
-
-    expect(result.project).toBe("ListCapabilities");
-    expect(result.archetype).toBe("study");
-    expect(result.capabilities).toEqual([
+    expect((await listCapabilities({ root })).capabilities).toEqual([
       { module: "intent", enabled: false, source: null, supported: true },
-      { module: "iteration", enabled: true, source: "added", supported: true },
-    ]);
-  });
-
-  it("marks modules the workspace has not enabled", async () => {
-    const root = await standaloneWorkspace("ListNone", BARE_ARCHETYPE);
-
-    const result = await listCapabilities({ root });
-
-    expect(result.capabilities).toEqual([
-      { module: "intent", enabled: false, source: null, supported: true },
-      { module: "iteration", enabled: false, source: null, supported: true },
+      { module: "iteration", enabled: false, source: "added", supported: false },
+      { module: "telepathy", enabled: false, source: "added", supported: false },
     ]);
   });
 });

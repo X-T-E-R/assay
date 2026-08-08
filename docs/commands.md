@@ -31,8 +31,8 @@ If `AGENTS.md` contains incomplete `<!-- ASSAY:START -->` / `<!-- ASSAY:END -->`
 `assay check` validates required structure, registries, managed-file state,
 source observation integrity, and donor persistence. It exits non-zero
 only for missing required structure or invalid persisted state. Add
-`--advisories` to request non-blocking workflow reminders such as open
-iterations, unfinished draft analyses, pending queue entries, lingering
+`--advisories` to request non-blocking workflow reminders such as unfinished
+draft analyses, pending queue entries, lingering
 adoption archives, frozen references with no `reference.yaml`, and major source
 changes that have not been re-reviewed.
 
@@ -397,7 +397,7 @@ are never modified.
 
 `assay update` follows the workspace layout. In an overlay workspace, managed templates are written under `.assay/`, and root `README.md`, `.gitignore`, and `AGENTS.md` are never created or replaced — including with `--force`.
 
-## Sources, analyses, and iterations
+## Sources, analyses, and knowledge
 
 ```bash
 assay source add <repo-or-dir> [alias] [--root <dir>] [--branch <branch>] [--capture checkout|archive]
@@ -410,10 +410,9 @@ assay absorb <source-dir> [--name <name>] [--root <dir>] [--as problem|intake]
 assay reference add <source-dir> <name> [--root <dir>]
 assay reference backfill <path> [--source <origin>] [--root <dir>]
 assay analysis new <title> [--root <dir>] [--for-source <alias>] [--observation <id-or-path>] [--for-reference <path>]
-assay iteration start <title> [--root <dir>]
-assay iteration close <selector> --result applied|rejected|retest [--note <note>] [--root <dir>]
+assay analysis close <path> --exit adopt|reject|experiment [--note <note>] [--root <dir>]
 assay event capture --kind observation|analysis|decision|gotcha|note --text <text> [--root <dir>]
-assay knowledge add <type> <title> [--from-analysis <path>] [--from-iteration <path>] [--root <dir>]
+assay knowledge add <type> <title> [--from-analysis <path>] [--root <dir>]
 ```
 
 Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`.
@@ -557,6 +556,8 @@ assay capability list [--root <dir>] [--json]
 
 `capability list` shows every module with how the workspace obtained it: `archetype` for modules the archetype provides, `added` for modules enabled afterwards.
 
+The current supported module is `intent`. Unknown module names fail closed.
+
 Templates a capability scaffolds are managed files like any other, so `assay update` reconciles them and `assay check` reports the module's directories as required structure.
 
 ## Custom archetypes
@@ -567,7 +568,7 @@ Template entries can carry their own content, so an archetype pack does not depe
 ```yaml
 templates:
   # Reuse a built-in content generator by templateId.
-  - { path: "iterations/README.md", templateId: "iterations.readme" }
+  - { path: "work/README.md", templateId: "custom.work.readme", content: "# Work\n" }
   # Inline content; {{project}} is substituted with the project name.
   - path: "inbox/README.md"
     templateId: "custom.inbox.readme"

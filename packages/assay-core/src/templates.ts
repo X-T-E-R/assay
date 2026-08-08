@@ -193,10 +193,6 @@ function templateContentById(
       return patternCardTemplate();
     case "systems.readme":
       return systemsReadme();
-    case "iterations.readme":
-      return iterationsReadme();
-    case "iterations.template.plan":
-      return iterationPlanTemplate();
     case "knowledge.readme":
       return knowledgeReadme();
     case "intent.readme":
@@ -363,7 +359,7 @@ export function referenceAnalysisTemplate(): string {
 
     - [ ] adopt
     - [ ] reject
-    - [ ] experiment/iteration
+    - [ ] experiment
     `);
 }
 
@@ -400,7 +396,7 @@ export function patternCardTemplate(): string {
 
     ## Anti-applicability
 
-    ## Minimum local iteration
+    ## Minimum local validation
 
     ## Exit criteria
     `);
@@ -460,50 +456,6 @@ export function intentRequirementsReadme(): string {
     `);
 }
 
-export function iterationsReadme(): string {
-  return "# iterations/\n\nIterations are controlled changes to your own systems. Each iteration should contain a hypothesis, scope, verification, result, and rollback plan.\n";
-}
-
-export function iterationPlanTemplate(): string {
-  return dedent(`
-    # Iteration Plan
-
-    - Topic:
-    - Date:
-    - Related analysis/pattern:
-
-    ## Hypothesis
-
-    ## Scope
-
-    ## Steps
-
-    ## Verification
-
-    ## Rollback
-
-    ## Result
-    `);
-}
-
-export function bootstrapIterationPlan(today: string): string {
-  return dedent(`
-    # Bootstrap Framework Iteration
-
-    - Date: ${today}
-    - Status: open
-
-    ## Hypothesis
-
-    A versioned Assay structure will reduce ambiguity and make updates safer than a notes-first layout.
-
-    ## Verification
-
-    - \`assay check --root .\` passes.
-    - \`.assay/manifest.json\` exists.
-    `);
-}
-
 export function changelog(today: string): string {
   return dedent(`
     # Changelog
@@ -528,7 +480,6 @@ export function artifactModelDoc(): string {
     | Living source | \`references/<source>/\` | sync / delta analysis / revalidation |
     | Frozen reference | \`references/frozen/YYYYMM/<name>/\` | legacy/full-capture analysis |
     | Analysis | \`analyses/\` | adopt / reject / experiment |
-    | Iteration | \`iterations/YYYY-MM-DD-<topic>/\` | adopt / reject / retest |
     | Knowledge entry | \`knowledge/\` | future reuse |
     `);
 }
@@ -542,7 +493,7 @@ export function workflowsDoc(): string {
     1. Define the theme and acceptance criteria.
     2. Add living sources with \`assay source add <repo-or-dir> [alias]\`.
     3. Use \`assay source sync\` when the external source changes.
-    4. Write an analysis or start an iteration; do not stop at collecting files.
+    4. Write an analysis or create a bounded Task; do not stop at collecting files.
 
     ## Analysis to pattern
 
@@ -653,7 +604,7 @@ export function solveProblemReadme(): string {
     rules, scoring definition, data dictionaries, deadlines.
 
     Keep this directory faithful to the source. Restatements, interpretations,
-    and plans derived from the rules belong in an iteration or an analysis, so
+    and plans derived from the rules belong in a Task or an analysis, so
     that when the rules change a clean copy of the new statement is the only
     edit here.
   `);

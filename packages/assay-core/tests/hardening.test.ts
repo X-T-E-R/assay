@@ -18,7 +18,6 @@ import {
   captureIntent,
   checkFramework,
   closeAnalysis,
-  closeIteration,
   convertOverlayToStandalone,
   createAnalysis,
   initFramework,
@@ -308,23 +307,6 @@ describe("workspace path arguments stay inside the workspace", () => {
     expect(content).toContain("- [x] adopt");
   });
 
-  it("refuses `iteration close` on a directory above the workspace and leaves its plan untouched", async () => {
-    // `solve` enables the iteration capability, which is checked before the
-    // selector is resolved.
-    const root = await standaloneWorkspace("IterationEscape", "solve");
-    const outside = path.join(path.dirname(root), "evil-iteration");
-    await mkdir(outside, { recursive: true });
-    const plan = path.join(outside, "plan.md");
-    const original = "# Evil\n\n- Status: open\n\n## Result\n";
-    await writeFile(plan, original, "utf8");
-
-    await expect(
-      closeIteration({ root, selector: "../evil-iteration", result: "applied" }),
-    ).rejects.toThrow(/iteration selector escapes the workspace/);
-
-    expect(await readFile(plan, "utf8")).toBe(original);
-  });
-
   it("refuses `analysis new --for-reference` pointing above the workspace", async () => {
     const root = await standaloneWorkspace("ReferenceEscape");
     const outside = path.join(path.dirname(root), "outside-reference");
@@ -549,6 +531,76 @@ describe("convert carries the full workspace state to the new standalone root", 
     expect(await exists(path.join(target, ".assay", "adrs.json"))).toBe(false);
     expect(await readFile(retired, "utf8")).toBe("{malformed");
   });
+
+  it("does not read or copy a retired work directory", async () => {
+    const root = await overlayWorkspace("ConvertRetiredWork");
+    const retiredName = ["itera", "tions"].join("");
+    const retired = path.join(root, ".assay", retiredName, "history", "plan.md");
+    await mkdir(path.dirname(retired), { recursive: true });
+    await writeFile(retired, "{malformed", "utf8");
+
+    const target = path.join(path.dirname(root), "converted-retired-work");
+    await convertOverlayToStandalone({ root, target });
+
+    expect(await exists(path.join(target, retiredName))).toBe(false);
+    expect(await readFile(retired, "utf8")).toBe("{malformed");
+  });
+
+  it.each([
+    { label: "copy", move: false, keepOverlay: true },
+    { label: "move", move: true, keepOverlay: false },
+  ])(
+    "rejects a custom-declared retired tree before $label conversion can copy or remove it",
+    async (mode) => {
+      const root = await overlayWorkspace(`ConvertDeclaredRetired-${mode.label}`);
+      const archetype = `declared-retired-${mode.label}`;
+      const retiredName = ["itera", "tions"].join("");
+      const archetypeFile = path.join(root, ".assay", "archetypes", `${archetype}.yaml`);
+      await mkdir(path.dirname(archetypeFile), { recursive: true });
+      await writeFile(
+        archetypeFile,
+        [
+          "extends: base",
+          "mode: learning",
+          "modules: []",
+          "dirs:",
+          `  - .assay/work/../${retiredName}/history`,
+          "dirs_learning: []",
+          "dirs_absorption: []",
+          "templates: []",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      const manifest = await loadManifest(root);
+      expect(manifest).not.toBeNull();
+      if (!manifest) throw new Error("fixture manifest missing");
+      manifest.project.archetype = archetype;
+      await saveManifest(root, manifest);
+
+      const retired = path.join(root, ".assay", retiredName, "history", "plan.md");
+      await mkdir(path.dirname(retired), { recursive: true });
+      await writeFile(retired, "{malformed", "utf8");
+      const sourceManifest = await readFile(path.join(root, ".assay", "manifest.json"));
+      const sourceArchetype = await readFile(archetypeFile);
+      const target = path.join(path.dirname(root), `converted-declared-retired-${mode.label}`);
+
+      await expect(
+        convertOverlayToStandalone({
+          root,
+          target,
+          move: mode.move,
+          keepOverlay: mode.keepOverlay,
+        }),
+      ).rejects.toMatchObject({ code: "RETIRED_ARCHETYPE_PATH" });
+
+      expect(await exists(target)).toBe(false);
+      expect(await readFile(path.join(root, ".assay", "manifest.json"))).toEqual(sourceManifest);
+      expect(await readFile(archetypeFile)).toEqual(sourceArchetype);
+      expect(await readFile(retired, "utf8")).toBe("{malformed");
+    },
+    30_000,
+  );
 
   it("refuses --no-keep-overlay without --move instead of silently keeping the overlay", async () => {
     const root = await overlayWorkspace("ConvertKeepOverlay");

@@ -62,7 +62,7 @@ export function defaultManifest(
     managed_files: {},
     user_deleted: [],
     applied_migrations: [],
-    // Fresh workspaces always carry a v5 layout block. Standalone is the
+    // Fresh workspaces always carry a v6 layout block. Standalone is the
     // default; `assay attach` overrides this with an overlay layout.
     layout: defaultStandaloneLayout(),
   };

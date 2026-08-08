@@ -19,15 +19,15 @@ Archetype-specific working directories sit alongside this base.
 
 | Archetype | Adds |
 | --- | --- |
-| `solve` | `problem/`, `intake/`, `benchmarks/`, `attempts/`, `tools/`, `iterations/`, `iterations/templates/`, `objective.json`, and `systems/current.json`. |
-| `explore` | `approaches/`, `trials/`, `comparison.md`, `iterations/`, and `iterations/templates/`. |
+| `solve` | `problem/`, `intake/`, `benchmarks/`, `attempts/`, `tools/`, `objective.json`, and `systems/current.json`. |
+| `explore` | `approaches/`, `trials/`, and `comparison.md`. |
 
 ## Directory purposes
 
 An archetype states what each directory is for, next to the directory itself:
 
 ```yaml
-description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+description: Attack one goal that has a measurable success criterion, using bounded attempts until the score moves.
 
 dirs:
   - path: problem
@@ -47,9 +47,7 @@ without any code change:
 
 Directories are omitted from all three where they are not places to put work:
 anything under `.assay/`, and `<zone>/templates` folders that hold blank forms
-for their parent. An archetype that wants the parent listed declares the parent
-itself, which is why `solve` declares both `iterations` and
-`iterations/templates`.
+for their parent. An archetype that wants the parent listed declares the parent.
 
 Changing an archetype's directories or purposes leaves the `AGENTS.md` table
 stale until `assay update --agents` regenerates it; `assay check --advisories`
@@ -136,7 +134,6 @@ confirmed with `--purge --yes` after backup.
 | Module | Adds |
 | --- | --- |
 | `intent` | `intent/`, `intent/original/`, and `intent/requirements/`, each with a `README.md`. |
-| `iteration` | `iterations/` and `iterations/templates/` with `README.md` and `iteration-plan.md`. |
 
 
 
@@ -209,12 +206,11 @@ Use overlay when an existing product repo root should be the primary system. Ass
   systems/root.yaml
   references/
   analyses/
-  iterations/
   knowledge/
   tasks/
 ```
 
-Overlay does not create root-level `references/`, `analyses/`, `iterations/`, `knowledge/`, `tasks/`, or `systems/` folders. It does not modify tracked root files by default.
+Overlay does not create root-level `references/`, `analyses/`, `knowledge/`, `tasks/`, or `systems/` folders. It does not modify tracked root files by default.
 
 ## Runtime paths
 

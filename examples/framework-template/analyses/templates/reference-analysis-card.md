@@ -22,4 +22,4 @@
 
 - [ ] adopt
 - [ ] reject
-- [ ] experiment/iteration
+- [ ] experiment

@@ -1,40 +1,6 @@
 # Lifecycle commands
 
-The common Assay evidence loop is `evidence in → structured checks → decisions → knowledge growth`. Study-style work often materializes that as `references → analyses → systems → iterations → knowledge`. Every close-capable step writes a structured event to the JSONL ledger so the workflow stays auditable.
-
-## Why explicit close
-
-Earlier layouts let iterations and analyses be created freely but never closed. `knowledge/` stayed empty across many real projects: the analysis cards held the decisions, but the framework had no way to record "this work is closed" or what the result was. The current CLI makes close explicit. `assay check --advisories` can list open iterations when that reminder is useful.
-
-## Iterations
-
-Start an iteration:
-
-```bash
-assay iteration start "Adopt config-driven design"
-# creates: iterations/<date>-adopt-config-driven-design/plan.md  (Status: open)
-# event:   iteration.started
-```
-
-The plan template includes `Status: open` and a `## Result` section. Edit the plan during the iteration; do not edit the `Status:` line by hand — let `iteration close` set it.
-
-Close an iteration:
-
-```bash
-assay iteration close <selector> --result applied|rejected|retest [--note "..."]
-```
-
-What `close` does:
-
-1. Resolves the selector — either the full path (`iterations/<date>-<slug>`), the directory name, or a unique name prefix.
-2. Updates `plan.md`: replaces `Status: open` with `Status: closed`, fills the `## Result` block with `- <result> on <today>` and the optional note.
-3. Writes an `iteration.closed` event with `path`, `result`, and `note`.
-
-Choose the result carefully:
-
-- `applied` — the change landed in the active system and is being kept.
-- `rejected` — the hypothesis failed; the change was rolled back or never applied.
-- `retest` — inconclusive; the iteration will be reopened or re-run later. Use sparingly; prefer creating a follow-up iteration.
+The common Assay evidence loop is `evidence in → structured checks → decisions → knowledge growth`. Analysis, Knowledge, native Task, and Roadmap each keep their own authority; no lifecycle command propagates state between them.
 
 ## Analyses
 
@@ -46,61 +12,42 @@ assay analysis new "Review STS card-eval system"
 # event:   analysis.created
 ```
 
-
 Close an analysis:
 
 ```bash
 assay analysis close <path> --exit adopt|reject|experiment [--note "..."]
 ```
 
-What `close` does:
+`analysis close` reads the workspace-relative path, records the selected decision exit, appends an optional closing note, and emits `analysis.closed`. It trusts the explicit `--exit`; it does not infer prose quality or create another product entity. Use `assay check --advisories` first when unfinished-draft reminders are useful.
 
-1. Reads the analysis at `<path>` (relative to the workspace root).
-2. Replaces the matching unchecked checkbox with `[x]` (e.g. `- [x] adopt`).
-3. Appends an optional `> Closed on <date>: <note>` line.
-4. Writes an `analysis.closed` event with `path`, `exit`, and `note`.
+## Native Tasks
 
+Use `assay task create` for future bounded work that needs a durable identity across sessions or agents. A Task requires a complete Goal and Acceptance Criteria in its reader-owned `prd.md`; lifecycle commands never derive a Task from Analysis metadata or any retired work record.
 
-`analysis close` trusts the explicit `--exit`. It does not require non-empty
-headings or try to infer prose quality. Use `assay check --advisories` before
-closing when you want unfinished-draft reminders.
+Task and Roadmap remain independent. Task status, context, relations, assignments, and completion do not update a Roadmap, and Roadmap changes do not update a Task. Use explicit `roadmap link-task` and `unlink-task` only for canonical Roadmap membership.
 
 ## Knowledge
 
 Promote durable findings into reusable knowledge:
 
 ```bash
-assay knowledge add <type> "Title" \
-  [--from-analysis <path>] \
-  [--from-iteration <path>]
+assay knowledge add <type> "Title" [--from-analysis <path>]
 ```
 
-
-What `add` does:
-
-1. Generates `knowledge/<type>s/<date>-<slug>.md` with frontmatter (Type, Date, Status: accepted) and back-references to the originating analysis and/or iteration.
-2. Writes a `knowledge.added` event with `path`, `type`, `title`, `from_analysis`, `from_iteration`.
-3. Refuses to overwrite an existing entry with the same date/title.
-
-`assay status` reports the knowledge entry count separately from README stubs, so promotions are visible in workspace summaries.
+`knowledge add` creates `knowledge/<type>s/<date>-<slug>.md`, records an optional Analysis back-reference, emits `knowledge.added`, and refuses to overwrite an existing same-date/same-title entry. `assay status` reports the entry count separately from README stubs.
 
 ## Event vocabulary
 
-The structured events emitted by these commands:
-
 | Event | Emitted by | Key fields |
 | --- | --- | --- |
-| `iteration.started` | `iteration start` | `path`, `title` |
-| `iteration.closed` | `iteration close` | `path`, `result`, `note` |
 | `analysis.created` | `analysis new` | `path`, `title` |
 | `analysis.closed` | `analysis close` | `path`, `exit`, `note` |
-| `knowledge.added` | `knowledge add` | `path`, `type`, `title`, `from_analysis`, `from_iteration` |
+| `knowledge.added` | `knowledge add` | `path`, `type`, `title`, `from_analysis` |
 
-These events flow into `.assay/events/<YYYY-MM>.jsonl` and are intended to be machine-readable for future audits, dashboards, or migrations.
+These events flow into `.assay/events/<YYYY-MM>.jsonl` and are machine-readable for audits or dashboards.
 
 ## Anti-patterns
 
-- Do not hand-edit `Status: open` to `Status: closed` in `plan.md`. Use `iteration close` so the event ledger stays consistent.
-- Do not check decision-exit checkboxes by hand. Use `analysis close --exit ...`.
-- Do not create `knowledge/<type>/<file>.md` by hand. Use `knowledge add` so the back-references and event are recorded.
-- Do not leave iterations open across long pauses. If you need to pause, close with `--result retest` and create a follow-up iteration when work resumes.
+- Do not check Analysis decision-exit checkboxes by hand. Use `analysis close --exit ...`.
+- Do not create `knowledge/<type>/<file>.md` by hand. Use `knowledge add` so the back-reference and event are recorded.
+- Do not treat an Analysis exit, Task relation, Task finish, or Roadmap link as authority to change another entity's status.

@@ -18,21 +18,21 @@ A durable workflow system needs more than instructions. It needs files that can 
 That managed layer sits beside the visible workspace:
 
 ```text
-references/ -> analyses/ -> systems/ -> iterations/ -> knowledge/
+references/ -> analyses/ -> systems/ + knowledge/
 ```
 
 The visible folders hold user artifacts. The hidden `.assay/` layer holds lifecycle metadata. This split keeps daily work readable while still allowing the framework to evolve safely.
 
 ## Indexes Should Be Discovery Surfaces
 
-Large context files become hard to maintain and expensive for assistants to load. Assay favors small index files and scoped documents. A top-level README or index should tell readers what exists and when to open it; detailed reasoning belongs in specific analysis, decision, or iteration documents.
+Large context files become hard to maintain and expensive for assistants to load. Assay favors small index files and scoped documents. A top-level README or index should tell readers what exists and when to open it; detailed reasoning belongs in specific Analysis, Task, or knowledge documents.
 
 This is why the framework separates:
 
 - `references/` for external material;
 - `analyses/` for interpretation;
 - `systems/` for the active local implementation;
-- `iterations/` for planned changes and review;
+- `tasks/` for bounded outcomes that must survive context changes;
 - `knowledge/` for accepted reusable conclusions.
 
 ## Updates Need File Ownership

@@ -9,12 +9,10 @@ import {
   archiveSystem,
   checkFramework,
   closeAnalysis,
-  closeIteration,
   createAnalysis,
   getFrameworkStatus,
   initFramework,
   registerSystem,
-  startIteration,
   syncSource,
 } from "../src/index.js";
 
@@ -68,92 +66,6 @@ async function onlyObservation(root: string, alias: string): Promise<string> {
   if (!first) throw new Error(`no observation recorded for ${alias}`);
   return path.join(dir, first);
 }
-
-describe("iteration close writes the header status, not a lookalike line", () => {
-  it("closes the real status when a note above it mentions Status: open", async () => {
-    const root = await workspace("IterationDecoy", "solve");
-    const started = await startIteration({
-      root,
-      title: "Decoy Iteration",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    const planPath = path.join(root, started.planPath);
-    const original = await readFile(planPath, "utf8");
-    await writeFile(
-      planPath,
-      original.replace(
-        "## Hypothesis\n",
-        "## Hypothesis\n\n- Blocker note: Status: open (waiting on upstream)\n",
-      ),
-      "utf8",
-    );
-
-    await closeIteration({
-      root,
-      selector: started.path,
-      result: "applied",
-      now: new Date("2026-06-15T10:00:00"),
-    });
-
-    const content = await readFile(planPath, "utf8");
-    expect(content).toContain("- Status: closed");
-    expect(content).toContain("- Blocker note: Status: open (waiting on upstream)");
-    expect(await getFrameworkStatus({ root })).toMatchObject({ openIterations: 0 });
-    const status = await checkFramework({ root, includeAdvisories: true });
-    expect(status.rows.some((row) => row.message?.includes("iteration(s) not closed"))).toBe(false);
-  });
-
-  it("appends the result to the Result section even when a body line names it", async () => {
-    const root = await workspace("IterationResultDecoy", "solve");
-    const started = await startIteration({
-      root,
-      title: "Result Decoy",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    const planPath = path.join(root, started.planPath);
-    const original = await readFile(planPath, "utf8");
-    await writeFile(
-      planPath,
-      original.replace("## Scope\n", "## Scope\n\n- Outcome is recorded under ## Result\n"),
-      "utf8",
-    );
-
-    await closeIteration({
-      root,
-      selector: started.path,
-      result: "applied",
-      note: "verified",
-      now: new Date("2026-06-15T10:00:00"),
-    });
-
-    const content = await readFile(planPath, "utf8");
-    const resultSection = content.slice(content.lastIndexOf("## Result"));
-    expect(resultSection).toContain("applied on 2026-06-15 — verified");
-    expect(content.slice(0, content.lastIndexOf("## Result"))).not.toContain("applied on");
-  });
-
-  it("records the closed status even when the plan header never declared one", async () => {
-    const root = await workspace("IterationNoStatus", "solve");
-    const started = await startIteration({
-      root,
-      title: "No Status Header",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    const planPath = path.join(root, started.planPath);
-    const original = await readFile(planPath, "utf8");
-    await writeFile(planPath, original.replace("- Status: open\n", ""), "utf8");
-
-    await closeIteration({
-      root,
-      selector: started.path,
-      result: "applied",
-      now: new Date("2026-06-15T10:00:00"),
-    });
-
-    const content = await readFile(planPath, "utf8");
-    expect(content.slice(0, content.indexOf("## "))).toContain("- Status: closed");
-  });
-});
 
 describe("analysis close writes the header status and the real decision checkbox", () => {
   it("closes the real status when a header line above it looks like one", async () => {

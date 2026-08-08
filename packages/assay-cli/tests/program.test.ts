@@ -84,7 +84,7 @@ beforeEach(async () => {
 describe("assay Commander registration", () => {
   it("omits retired commands from help and rejects them without workspace writes", async () => {
     const help = createProgram().helpInformation();
-    for (const command of ["adr", "migrate-layout", "project"]) {
+    for (const command of ["adr", "migrate-layout", "project", "iteration"]) {
       expect(help).not.toMatch(new RegExp(`^\\s+${command}(?:\\s|$)`, "m"));
     }
 
@@ -94,6 +94,7 @@ describe("assay Commander registration", () => {
       ["adr", "list", "--root", root],
       ["migrate-layout", "--root", root],
       ["project", "migrate-authority", "--root", root],
+      ["iteration", "start", "retired", "--root", root],
     ]) {
       const result = await runCli(args);
       expect(result.exitCode).not.toBe(0);
@@ -108,6 +109,11 @@ describe("assay Commander registration", () => {
     expect(result.stdout).toContain("Usage: assay reference add [options] <source-dir> <name>");
     expect(result.stdout).toContain("--root <target-dir>");
     expect(result.stderr).toBe("");
+
+    const knowledge = await runCli(["knowledge", "add", "--help"]);
+    expect(knowledge.exitCode).toBe(0);
+    expect(knowledge.stdout).toContain("--from-analysis <path>");
+    expect(knowledge.stdout).not.toContain("--from-iteration");
   });
 
   it("exposes legacy hook plan/apply/restore help", async () => {
@@ -205,7 +211,7 @@ describe("assay CLI subprocess behavior", () => {
       "Archetype: solve - Attack one goal that has a measurable success criterion",
     );
     expect(status.stdout).toMatch(/- problem\/\s+\d+\s+Task statement, official rules/);
-    expect(status.stdout).toContain("Goal-attack loops");
+    expect(status.stdout).toContain("Sealed attempt packages");
     expect(status.stdout).not.toContain("analyses/references/");
     expect(status.stderr).toBe("");
 
@@ -488,7 +494,7 @@ describe("assay CLI subprocess behavior", () => {
     await writeCustomArchetype(path.join(projectRoot, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
       mode: "absorption",
-      modules: ["iteration"],
+      modules: ["intent"],
     });
 
     const project = await runCli([

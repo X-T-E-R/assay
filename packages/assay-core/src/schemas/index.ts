@@ -116,7 +116,7 @@ export const systemsRegistrySchema = z
   })
   .strict();
 
-// --- Workspace layout (layout v5) -------------------------------------------
+// --- Workspace layout (layout v6) -------------------------------------------
 
 export const workspaceLayoutModeSchema = z.enum(["standalone", "overlay"]);
 export const workspacePrivacySchema = z.enum(["tracked", "private", "private-git"]);
@@ -129,7 +129,6 @@ export const workspaceLayoutPathsSchema = z
     systems_registry: z.string().min(1),
     references: z.string().min(1),
     analyses: z.string().min(1),
-    iterations: z.string().min(1),
     knowledge: z.string().min(1),
     systems_contracts: z.string().min(1),
   })
@@ -137,7 +136,7 @@ export const workspaceLayoutPathsSchema = z
 
 export const workspaceLayoutSchema = z
   .object({
-    version: z.literal(5),
+    version: z.literal(6),
     mode: workspaceLayoutModeSchema,
     state_root: z.literal(".assay"),
     work_root: z.enum([".", ".assay"]),
@@ -153,7 +152,6 @@ export const workspaceLayoutSchema = z
       systems_registry: ".assay/systems-registry.json",
       references: "references",
       analyses: "analyses",
-      iterations: "iterations",
       knowledge: "knowledge",
       systems_contracts: "systems",
     } as const;
@@ -161,7 +159,6 @@ export const workspaceLayoutSchema = z
       ...standalone,
       references: ".assay/references",
       analyses: ".assay/analyses",
-      iterations: ".assay/iterations",
       knowledge: ".assay/knowledge",
       systems_contracts: ".assay/systems",
     } as const;
@@ -171,14 +168,14 @@ export const workspaceLayoutSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["work_root"],
-        message: `layout v5 ${layout.mode} work_root must be '${expectedWorkRoot}'`,
+        message: `layout v6 ${layout.mode} work_root must be '${expectedWorkRoot}'`,
       });
     }
     if (layout.mode === "standalone" && layout.privacy !== "tracked") {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["privacy"],
-        message: "layout v5 standalone privacy must be 'tracked'",
+        message: "layout v6 standalone privacy must be 'tracked'",
       });
     }
     for (const [key, value] of Object.entries(expected)) {
@@ -186,7 +183,7 @@ export const workspaceLayoutSchema = z
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["paths", key],
-          message: `layout v5 ${layout.mode} path '${key}' must be '${value}'`,
+          message: `layout v6 ${layout.mode} path '${key}' must be '${value}'`,
         });
       }
     }
@@ -197,7 +194,7 @@ export const frameworkManifestSchema = z
     __schema: z.literal(2),
     framework_version: z.string().min(1),
     minimum_assay_version: z.string().min(1),
-    layout_version: z.literal(5),
+    layout_version: z.literal(6),
     created_at: z.string().min(1),
     updated_at: z.string().min(1),
     project: frameworkProjectSchema,

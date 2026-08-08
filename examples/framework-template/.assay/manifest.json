@@ -1,15 +1,14 @@
 {
   "__schema": 2,
   "applied_migrations": [],
-  "created_at": "2026-08-08T07:42:22+08:00",
-  "framework_version": "0.7.0",
+  "created_at": "2026-08-08T10:39:22+08:00",
+  "framework_version": "0.8.0",
   "layout": {
     "mode": "standalone",
     "paths": {
       "analyses": "analyses",
       "backups": ".assay/backups",
       "events": ".assay/events",
-      "iterations": "iterations",
       "knowledge": "knowledge",
       "manifest": ".assay/manifest.json",
       "references": "references",
@@ -18,154 +17,154 @@
     },
     "privacy": "tracked",
     "state_root": ".assay",
-    "version": 5,
+    "version": 6,
     "work_root": "."
   },
-  "layout_version": 5,
+  "layout_version": 6,
   "managed_files": {
     ".assay/README.md": {
       "executable": false,
-      "hash": "67480f3052a2c5607e2278d6e5f9ad303edbaffd88396fd21f35613ba2939132",
-      "installed_version": "0.7.0",
+      "hash": "35b9d113d833fd545252d293ad6339b2d28a5b98dc233bc127d68a9141ccc872",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "framework.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     ".assay/VERSION": {
       "executable": false,
-      "hash": "967d9afb101346667166f2e76e81910bc190488d7d41d50ca0072e9d92f00e32",
-      "installed_version": "0.7.0",
+      "hash": "a66780da23103beaf12432b418508966b31a2a3a787f9468a5b6cdaa8667c1ef",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "framework.version",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     ".assay/backups/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "framework.backups.gitkeep",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     ".assay/migrations/README.md": {
       "executable": false,
       "hash": "f15464f357cfacdc9da4bc9ca369c78429814cb45eaa9ba9e08ee55d5b38311c",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "framework.migrations.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     ".gitignore": {
       "executable": false,
       "hash": "a2805ee7f944374e1e29d8e518828d58afa11b3f616e94eedf15d1c038dd4ed1",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "root.gitignore",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "README.md": {
       "executable": false,
       "hash": "f5c6b72f72a4312f82604e137e2cff031e09d69d030cf4c6782b823175ddd820",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "root.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "analyses/README.md": {
       "executable": false,
       "hash": "45ab954c3fac786c1078617e71a71a1da0840a83886be391b02c58c4879d8f26",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "analyses.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "analyses/gaps/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "analyses.gaps.gitkeep",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "analyses/patterns/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "analyses.patterns.gitkeep",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "analyses/references/.gitkeep": {
       "executable": false,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "analyses.references.gitkeep",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "analyses/templates/gap-analysis.md": {
       "executable": false,
       "hash": "2ad913da03f45627a8dbe3b037146f3c0b5f0f13b10ccaf63bc5d75f84025cfd",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "analysis.template.gap",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "analyses/templates/pattern-card.md": {
       "executable": false,
-      "hash": "71dc69ce9b7c6aae99b0ae6f828e0dab4d8971003f4d051718dcce196a00c5c3",
-      "installed_version": "0.7.0",
+      "hash": "b35b7c626469ecd99e7ac6d82e948827c113312b23186989fda3672263e8533c",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "analysis.template.pattern",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "analyses/templates/reference-analysis-card.md": {
       "executable": false,
-      "hash": "ab0e3baa107d4ae796ca359f5f92e22a120cdbd1b5b93f2267f0ee9a2e973aca",
-      "installed_version": "0.7.0",
+      "hash": "acd904105ab425ca2093c2859a2a16da3f19e09ab068e7f4e11d0f7e061d6a79",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "analysis.template.reference",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "knowledge/README.md": {
       "executable": false,
       "hash": "bce19cbcee4007901559a6384c5d03e7562d1c843d2c064e16a65c0f4fe49f59",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "knowledge.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "references/README.md": {
       "executable": false,
       "hash": "1865aaef3c58e3b75c656d936e01ccd74cac173ecb591d738007217b75e3ecc6",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "references.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "references/frozen/README.md": {
       "executable": false,
       "hash": "72fbc102d1f870c31db0146cd0241a76f3629d866da05f15312c28e7d4e805fa",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "references.frozen.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     },
     "systems/README.md": {
       "executable": false,
       "hash": "d38e6bbded4f7e1da770357041bf5529619f0941c273809b97e171865bb6bd48",
-      "installed_version": "0.7.0",
+      "installed_version": "0.8.0",
       "protected": false,
       "template_id": "systems.readme",
-      "updated_at": "2026-08-08T07:42:22+08:00"
+      "updated_at": "2026-08-08T10:39:22+08:00"
     }
   },
-  "minimum_assay_version": "0.7.0",
+  "minimum_assay_version": "0.8.0",
   "project": {
     "archetype": "study",
     "mode": "learning",
     "name": "Assay"
   },
-  "updated_at": "2026-08-08T07:42:22+08:00",
+  "updated_at": "2026-08-08T10:39:22+08:00",
   "user_deleted": []
 }

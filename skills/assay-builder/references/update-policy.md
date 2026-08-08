@@ -28,7 +28,7 @@ The following are always treated as user-owned and are never auto-overwritten:
 
 - Frozen references under `references/frozen/`
 - Analysis cards under `analyses/`
-- Iteration plans under `iterations/`
+- Native Task contracts and handoffs under `tasks/`
 - Knowledge documents under `knowledge/`
 - Data files under `data/`
 - System contract files at `systems/<name>/system.yaml` (managed metadata only; never auto-overwritten without `--force`)

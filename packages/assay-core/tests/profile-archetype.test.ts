@@ -137,7 +137,7 @@ describe("archetype loader", () => {
   });
 
   it("exposes only current optional capability modules", () => {
-    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["intent", "iteration"]);
+    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["intent"]);
   });
 
   it("loads project-local archetypes before user-global and built-in archetypes", async () => {
@@ -150,7 +150,7 @@ describe("archetype loader", () => {
     await writeCustomArchetype(path.join(root, ".assay", "archetypes", "foo.yaml"), {
       dirs: ["project-zone"],
       mode: "absorption",
-      modules: ["iteration"],
+      modules: ["intent"],
     });
 
     const archetype = await loadArchetype("foo", { root, userArchetypesDir });
@@ -158,9 +158,102 @@ describe("archetype loader", () => {
 
     expect(archetype.name).toBe("foo");
     expect(archetype.mode).toBe("absorption");
-    expect(archetype.modules).toEqual(["iteration"]);
+    expect(archetype.modules).toEqual(["intent"]);
     expect(dirs).toEqual(expect.arrayContaining(["systems", "knowledge", "project-zone"]));
     expect(dirs).not.toContain("user-zone");
+  });
+
+  it("fails closed when a custom archetype declares the retired module", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    await writeCustomArchetype(path.join(userArchetypesDir, "retired.yaml"), {
+      dirs: ["work"],
+      modules: [["itera", "tion"].join("")],
+    });
+
+    await expect(loadArchetype("retired", { userArchetypesDir })).rejects.toThrow(
+      /unsupported capability module 'iteration'.*supported modules: intent/,
+    );
+  });
+
+  it.each(["dirs", "dirs_learning", "dirs_absorption", "templates"] as const)(
+    "rejects normalized retired workspace paths declared through %s",
+    async (field) => {
+      const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+      const retired = ["itera", "tions"].join("");
+      const aliases = [
+        retired,
+        `${retired}/history`,
+        `./${retired}`,
+        `.\\${retired}`,
+        `work/../${retired}/history`,
+        `${retired}\\history`,
+        `.assay/${retired}`,
+        `.assay/${retired}/history`,
+        `.assay/../${retired}/history`,
+        `./.assay//${retired}`,
+        `/.assay/${retired}/history`,
+        `.assay\\${retired}\\history`,
+        `.assay/work/../${retired}/history`,
+      ];
+
+      for (const [index, declaredPath] of aliases.entries()) {
+        const name = `retired-path-${field}-${index}`;
+        const file = path.join(userArchetypesDir, `${name}.yaml`);
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(
+          file,
+          [
+            "extends: base",
+            "mode: learning",
+            "modules: []",
+            "dirs:",
+            `  - ${field === "dirs" ? declaredPath : "work"}`,
+            ...(field === "dirs_learning"
+              ? ["dirs_learning:", `  - ${declaredPath}`]
+              : ["dirs_learning: []"]),
+            ...(field === "dirs_absorption"
+              ? ["dirs_absorption:", `  - ${declaredPath}`]
+              : ["dirs_absorption: []"]),
+            ...(field === "templates"
+              ? [
+                  "templates:",
+                  `  - path: ${declaredPath}`,
+                  "    templateId: custom.retired.readme",
+                  '    content: "retired"',
+                ]
+              : ["templates: []"]),
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+
+        await expect(loadArchetype(name, { userArchetypesDir })).rejects.toMatchObject({
+          code: "RETIRED_ARCHETYPE_PATH",
+          details: expect.objectContaining({
+            archetype: name,
+            field,
+            declared_path: declaredPath,
+          }),
+        });
+      }
+    },
+  );
+
+  it("keeps similarly named general-purpose directories available to custom archetypes", async () => {
+    const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
+    const retired = ["itera", "tions"].join("");
+    await writeCustomArchetype(path.join(userArchetypesDir, "general-paths.yaml"), {
+      dirs: [`notes/${retired}`, `${retired}-archive`, `.assay/${retired}-archive`],
+    });
+
+    const archetype = await loadArchetype("general-paths", { userArchetypesDir });
+    expect(dirsForArchetype(archetype, archetype.mode)).toEqual(
+      expect.arrayContaining([
+        `notes/${retired}`,
+        `${retired}-archive`,
+        `.assay/${retired}-archive`,
+      ]),
+    );
   });
 
   it("loads user-global archetypes before falling back to built-ins", async () => {
@@ -179,8 +272,6 @@ describe("archetype loader", () => {
     expect(dirsForArchetype(builtIn, builtIn.mode)).toEqual([
       "approaches",
       "trials",
-      "iterations",
-      "iterations/templates",
       ".assay/backups",
       ".assay/migrations",
       "project",
@@ -381,7 +472,6 @@ describe("archetype directory purposes", () => {
       "benchmarks",
       "attempts",
       "tools",
-      "iterations",
       "project",
       "systems",
       "knowledge",
@@ -414,26 +504,19 @@ describe("archetype data shapes", () => {
     expect(hasPath(dirs, "references/intake")).toBe(false);
   });
 
-  it("solve owns solve input/output dirs and enables iteration by default", async () => {
+  it("solve owns bounded input and attempt directories without optional modules", async () => {
     const solve = await loadArchetype("solve");
     const dirs = dirsForArchetype(solve, solve.mode);
 
     expect(solve.mode).toBe("absorption");
-    expect(solve.modules).toEqual(["iteration"]);
+    expect(solve.modules).toEqual([]);
     expect(dirs).toEqual(
-      expect.arrayContaining([
-        "problem",
-        "intake",
-        "attempts",
-        "benchmarks",
-        "tools",
-        "iterations/templates",
-      ]),
+      expect.arrayContaining(["problem", "intake", "attempts", "benchmarks", "tools"]),
     );
     expect(dirs.some((dir) => dir.startsWith("systems/") && dir !== "systems")).toBe(false);
   });
 
-  it("explore owns approach trials and enables iteration by default", async () => {
+  it("explore owns approach trials without optional modules", async () => {
     const explore = await loadArchetype("explore");
     const dirs = dirsForArchetype(explore, explore.mode);
     const paths = (await desiredTemplates("Demo", explore.mode, "explore")).map(
@@ -441,24 +524,10 @@ describe("archetype data shapes", () => {
     );
 
     expect(explore.mode).toBe("absorption");
-    expect(explore.modules).toEqual(["iteration"]);
-    expect(dirs).toEqual(
-      expect.arrayContaining([
-        "systems",
-        "knowledge",
-        "approaches",
-        "trials",
-        "iterations/templates",
-      ]),
-    );
+    expect(explore.modules).toEqual([]);
+    expect(dirs).toEqual(expect.arrayContaining(["systems", "knowledge", "approaches", "trials"]));
     expect(paths).toEqual(
-      expect.arrayContaining([
-        "approaches/README.md",
-        "trials/README.md",
-        "comparison.md",
-        "iterations/README.md",
-        "iterations/templates/iteration-plan.md",
-      ]),
+      expect.arrayContaining(["approaches/README.md", "trials/README.md", "comparison.md"]),
     );
     expect(hasPath(dirs, "problem")).toBe(false);
     expect(hasPath(dirs, "candidates")).toBe(false);

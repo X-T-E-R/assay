@@ -27,25 +27,24 @@ export type WorkspaceArea =
   | "systemsRegistry"
   | "references"
   | "analyses"
-  | "iterations"
   | "knowledge"
   | "systemsContracts";
 
 /**
  * Resolve the layout block for a current manifest. The raw manifest envelope
- * gate rejects every pre-v5 workspace before this function is reached.
+ * gate rejects every pre-v6 workspace before this function is reached.
  */
 export function resolveWorkspaceLayout(manifest: FrameworkManifest | null): WorkspaceLayout | null {
   return manifest?.layout ?? null;
 }
 
 /**
- * Standalone layout for a freshly initialized v5 workspace. State lives in
+ * Standalone layout for a freshly initialized v6 workspace. State lives in
  * `.assay/`, work folders live at the workspace root.
  */
 export function defaultStandaloneLayout(): WorkspaceLayout {
   return {
-    version: 5,
+    version: 6,
     mode: "standalone",
     state_root: ".assay",
     work_root: ".",
@@ -60,7 +59,7 @@ export function defaultStandaloneLayout(): WorkspaceLayout {
  */
 export function defaultOverlayLayout(privacy: WorkspacePrivacy): WorkspaceLayout {
   return {
-    version: 5,
+    version: 6,
     mode: "overlay",
     state_root: ".assay",
     work_root: ".assay",
@@ -87,8 +86,6 @@ export function workspacePath(root: string, layout: WorkspaceLayout, area: Works
       return path.join(root, layout.paths.references);
     case "analyses":
       return path.join(root, layout.paths.analyses);
-    case "iterations":
-      return path.join(root, layout.paths.iterations);
     case "knowledge":
       return path.join(root, layout.paths.knowledge);
     case "systemsContracts":
@@ -145,7 +142,6 @@ export function intentSubpath(layout: WorkspaceLayout, ...segments: readonly str
 const WORK_AREA_BY_SEGMENT: Readonly<Record<string, WorkspaceArea>> = {
   references: "references",
   analyses: "analyses",
-  iterations: "iterations",
   knowledge: "knowledge",
   systems: "systemsContracts",
 };
@@ -191,7 +187,7 @@ function toRelativePosix(value: string): string {
 }
 
 /**
- * Relative path map for standalone layout v5. State under `.assay/`, work
+ * Relative path map for standalone layout v6. State under `.assay/`, work
  * folders at root.
  */
 export function standalonePaths() {
@@ -202,14 +198,13 @@ export function standalonePaths() {
     systems_registry: SYSTEMS_REGISTRY_FILE,
     references: "references",
     analyses: "analyses",
-    iterations: "iterations",
     knowledge: "knowledge",
     systems_contracts: "systems",
   };
 }
 
 /**
- * Relative path map for overlay layout v5. Everything Assay-owned lives
+ * Relative path map for overlay layout v6. Everything Assay-owned lives
  * under `.assay/`.
  */
 export function overlayPaths() {
@@ -220,7 +215,6 @@ export function overlayPaths() {
     systems_registry: SYSTEMS_REGISTRY_FILE,
     references: `${MANAGED_DIR}/references`,
     analyses: `${MANAGED_DIR}/analyses`,
-    iterations: `${MANAGED_DIR}/iterations`,
     knowledge: `${MANAGED_DIR}/knowledge`,
     systems_contracts: `${MANAGED_DIR}/systems`,
   };

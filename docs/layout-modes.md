@@ -6,7 +6,7 @@ Assay fits the way your code already lives. It supports two layout modes, both b
 
 | Mode | Root meaning | Work folders | Primary system | Default Git behavior |
 | --- | --- | --- | --- | --- |
-| `standalone` | The root is an Assay workbench. | `references/`, `analyses/`, `iterations/`, `knowledge/`, `tasks/`, `systems/` at root; state in `.assay/`. | Registered under `systems/` or an external independent path. | Outer workbench Git is optional. |
+| `standalone` | The root is an Assay workbench. | `references/`, `analyses/`, `knowledge/`, `tasks/`, `systems/` at root; state in `.assay/`. | Registered under `systems/` or an external independent path. | Outer workbench Git is optional. |
 | `overlay` | The root is an existing product repo. | All Assay-owned work folders live under `.assay/`. | `path: "."`, `vcs: "independent-git"`, contract in `.assay/systems/root.yaml`. | Product Git ignores `.assay/` by default. |
 
 Do not call overlay "monorepo mode". `overlay` and `attach` describe what happens: Assay attaches private evidence and decisions to a repo whose root remains the system.
@@ -18,7 +18,7 @@ The manifest carries a `layout` block so runtime code asks "where is `references
 ```json
 {
   "layout": {
-    "version": 5,
+    "version": 6,
     "mode": "standalone",
     "state_root": ".assay",
     "work_root": ".",
@@ -30,7 +30,6 @@ The manifest carries a `layout` block so runtime code asks "where is `references
       "systems_registry": ".assay/systems-registry.json",
       "references": "references",
       "analyses": "analyses",
-      "iterations": "iterations",
       "knowledge": "knowledge",
       "systems_contracts": "systems"
     }
@@ -38,7 +37,7 @@ The manifest carries a `layout` block so runtime code asks "where is `references
 }
 ```
 
-In overlay mode, `references`, `analyses`, `iterations`, `knowledge`, native
+In overlay mode, `references`, `analyses`, `knowledge`, native
 `tasks`, native `project`, and `systems_contracts` all resolve under
 `.assay/`. Native Task storage follows `work_root` directly, so it does not need a
 separate entry in `layout.paths`.
@@ -57,7 +56,6 @@ assay-workbench/
     archetypes/
   references/
   analyses/
-  iterations/
   knowledge/
   tasks/
   systems/
@@ -84,7 +82,6 @@ product-repo/
       root.yaml
     references/
     analyses/
-    iterations/
     knowledge/
     tasks/
 ```
@@ -109,7 +106,6 @@ references/**/history.md
 references/**/materials/
 references/**/observations/
 analyses/
-iterations/
 knowledge/
 tasks/
 systems/**/system.yaml
@@ -201,13 +197,12 @@ It should:
 1. Create `../product-assay` as a standalone workspace.
 2. Copy `.assay/references` to `../product-assay/references`.
 3. Copy `.assay/analyses` to `../product-assay/analyses`.
-4. Copy `.assay/iterations` to `../product-assay/iterations`.
-5. Copy `.assay/knowledge` to `../product-assay/knowledge`.
-6. Copy `.assay/tasks` to `../product-assay/tasks` without merging or overwriting a non-empty target.
-7. Copy `.assay/project` to `../product-assay/project` without changing bytes or merging a non-empty target.
-8. Carry `.assay/task-contexts.json` with the rest of Assay state under `../product-assay/.assay`.
-9. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
-10. Leave the product repo and its `.git/` untouched.
+4. Copy `.assay/knowledge` to `../product-assay/knowledge`.
+5. Copy `.assay/tasks` to `../product-assay/tasks` without merging or overwriting a non-empty target.
+6. Copy `.assay/project` to `../product-assay/project` without changing bytes or merging a non-empty target.
+7. Carry `.assay/task-contexts.json` with the rest of Assay state under `../product-assay/.assay`.
+8. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
+9. Leave the product repo and its `.git/` untouched.
 
 In-place conversion is allowed only with an explicit destructive flag, because it would have to move product root files into `systems/<name>/` or otherwise change the meaning of the product Git repository.
 

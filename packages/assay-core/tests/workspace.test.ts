@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -20,7 +21,6 @@ import {
   captureEvent,
   checkFramework,
   closeAnalysis,
-  closeIteration,
   createAnalysis,
   desiredRuntimeTemplates,
   dirsForArchetype,
@@ -35,7 +35,6 @@ import {
   readInstalledArchetype,
   registerSystem,
   saveSystemsRegistry,
-  startIteration,
   syncSource,
 } from "../src/index.js";
 
@@ -65,6 +64,53 @@ async function productRepo(name: string): Promise<string> {
   return root;
 }
 
+async function treeHash(root: string): Promise<string> {
+  const hash = createHash("sha256");
+  async function visit(directory: string): Promise<void> {
+    for (const entry of (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      const target = path.join(directory, entry.name);
+      hash.update(path.relative(root, target).replaceAll("\\", "/"));
+      if (entry.isDirectory()) await visit(target);
+      else hash.update(await readFile(target));
+    }
+  }
+  await visit(root);
+  return hash.digest("hex");
+}
+
+async function writeLocalArchetype(
+  root: string,
+  name: string,
+  options: { readonly dirPath?: string; readonly templatePath?: string },
+): Promise<void> {
+  const file = path.join(root, ".assay", "archetypes", `${name}.yaml`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    [
+      "extends: base",
+      "mode: learning",
+      "modules: []",
+      "dirs:",
+      `  - ${options.dirPath ?? "work"}`,
+      "dirs_learning: []",
+      "dirs_absorption: []",
+      ...(options.templatePath
+        ? [
+            "templates:",
+            `  - path: ${options.templatePath}`,
+            "    templateId: custom.retired.readme",
+            '    content: "retired"',
+          ]
+        : ["templates: []"]),
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
 async function fillAnalysisSections(
   analysisPath: string,
   sections: {
@@ -88,13 +134,71 @@ async function fillAnalysisSections(
     content = content.replace("## Reject\n\n", `## Reject\n\n${sections.reject}\n\n`);
   }
   if (sections.next) {
-    content = content.replace("## Next iteration\n\n", `## Next iteration\n\n${sections.next}\n\n`);
+    content = content.replace("## Next step\n\n", `## Next step\n\n${sections.next}\n\n`);
   }
   await writeFile(analysisPath, content, "utf8");
 }
 
 afterEach(async () => {
   await tempDirs.cleanup();
+});
+
+describe("retired custom archetype paths", () => {
+  it("rejects standalone init before its first workspace write", async () => {
+    const root = path.join(await tempDir(), "retired-custom-init");
+    const archetype = "retired-init";
+    const retired = ["itera", "tions"].join("");
+    await writeLocalArchetype(root, archetype, { dirPath: `work/../${retired}/history` });
+    const before = await treeHash(root);
+
+    await expect(initFramework({ target: root, name: "Retired", archetype })).rejects.toMatchObject(
+      { code: "RETIRED_ARCHETYPE_PATH" },
+    );
+
+    expect(await treeHash(root)).toBe(before);
+    expect(await exists(path.join(root, MANIFEST_FILE))).toBe(false);
+  });
+
+  it("rejects overlay attach before changing either product or overlay state", async () => {
+    const root = await productRepo("retired-custom-attach");
+    const archetype = "retired-attach";
+    const retired = ["itera", "tions"].join("");
+    await writeLocalArchetype(root, archetype, {
+      templatePath: `.assay\\work\\..\\${retired}\\README.md`,
+    });
+    const before = await treeHash(root);
+
+    await expect(
+      attachExistingRepo({ root, name: "Retired", archetype, noTrack: true }),
+    ).rejects.toMatchObject({ code: "RETIRED_ARCHETYPE_PATH" });
+
+    expect(await treeHash(root)).toBe(before);
+    expect(await exists(path.join(root, MANIFEST_FILE))).toBe(false);
+  });
+
+  it("degrades status and check without turning a rejected path into a zone", async () => {
+    const root = path.join(await tempDir(), "retired-custom-status");
+    const archetype = "retired-status";
+    const retired = ["itera", "tions"].join("");
+    await writeLocalArchetype(root, archetype, { dirPath: "work" });
+    await initFramework({ target: root, name: "Retired status", archetype });
+    await writeLocalArchetype(root, archetype, { dirPath: `.assay/${retired}/history` });
+    await mkdir(path.join(root, retired, "manual"), { recursive: true });
+
+    const status = await getFrameworkStatus({ root });
+    const check = await checkFramework({ root, includeAdvisories: true });
+
+    expect(status.archetypeNotice).toContain("retired archetype path");
+    expect(status.zones.some((zone) => zone.path.includes(retired))).toBe(false);
+    expect(check.rows).toContainEqual(
+      expect.objectContaining({
+        path: MANIFEST_FILE,
+        status: "warning",
+        message: expect.stringContaining("retired archetype path"),
+      }),
+    );
+    expect(check.rows.some((row) => row.path.includes(retired) && row.status === "ok")).toBe(false);
+  });
 });
 
 describe("desiredRuntimeTemplates", () => {
@@ -222,7 +326,6 @@ describe("checkFramework and getFrameworkStatus", () => {
       "benchmarks",
       "attempts",
       "tools",
-      "iterations",
       "project",
       "systems",
       "knowledge",
@@ -253,26 +356,24 @@ describe("checkFramework and getFrameworkStatus", () => {
     expect(study.zones.every((zone) => zone.purpose !== "")).toBe(true);
   });
 
-  it("still reports a work area that holds content the archetype never declared", async () => {
-    const root = path.join(await tempDir(), "legacy-iterations");
-    await initFramework({ target: root, name: "Legacy" });
+  it("treats a retired work directory as generic undeclared content", async () => {
+    const root = path.join(await tempDir(), "retired-work-area");
+    await initFramework({ target: root, name: "Current" });
+    const retiredName = ["itera", "tions"].join("");
+    await mkdir(path.join(root, retiredName, "unreadable-record"), { recursive: true });
+    await writeFile(path.join(root, retiredName, "unreadable-record", "plan.md"), "{", "utf8");
 
     expect(
-      (await getFrameworkStatus({ root })).zones.some((zone) => zone.path === "iterations"),
+      (await getFrameworkStatus({ root })).zones.some((zone) => zone.path === retiredName),
     ).toBe(false);
-
-    await mkdir(path.join(root, "iterations", "2026-07-01-topic"), { recursive: true });
-    await writeFile(
-      path.join(root, "iterations", "2026-07-01-topic", "plan.md"),
-      "# Topic\n\n- Status: open\n",
-      "utf8",
+    const result = await checkFramework({ root, includeAdvisories: true });
+    expect(result.rows).toContainEqual(
+      expect.objectContaining({
+        path: retiredName,
+        status: "warning",
+        message: expect.stringContaining("is not declared by archetype study"),
+      }),
     );
-
-    const iterations = (await getFrameworkStatus({ root })).zones.find(
-      (zone) => zone.path === "iterations",
-    );
-    expect(iterations?.files).toBe(1);
-    expect(iterations?.purpose).not.toBe("");
   });
 });
 
@@ -414,29 +515,6 @@ describe("checkFramework semantic validation", () => {
     ).toBe(true);
   });
 
-  it("reports open iterations only when advisories are requested", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", archetype: "solve" });
-    await startIteration({ root, title: "Open Iteration" });
-
-    const structural = await checkFramework({ root });
-    expect(structural.rows.some((row) => row.message?.includes("not closed"))).toBe(false);
-    expect(structural.systems?.openIterations).toBe(1);
-
-    const result = await checkFramework({ root, includeAdvisories: true });
-
-    expect(result.ok).toBe(true);
-    expect(
-      result.rows.some(
-        (row) =>
-          row.path === "iterations/" &&
-          row.status === "warning" &&
-          row.message?.includes("not closed"),
-      ),
-    ).toBe(true);
-    expect(result.systems?.openIterations).toBe(1);
-  });
-
   it("reports error when a registered active system is missing on disk", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
@@ -576,7 +654,7 @@ describe("checkFramework semantic validation", () => {
 });
 
 describe("getFrameworkStatus systems section", () => {
-  it("includes systems, openIterations, and knowledgeEntries", async () => {
+  it("includes systems and knowledgeEntries", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo", archetype: "solve" });
     await mkdir(path.join(root, "systems", "demo-core"), { recursive: true });
@@ -587,7 +665,6 @@ describe("getFrameworkStatus systems section", () => {
       vcs: "independent-git",
       version: "0.2.0",
     });
-    await startIteration({ root, title: "Open Work" });
 
     const status = await getFrameworkStatus({ root });
 
@@ -599,7 +676,6 @@ describe("getFrameworkStatus systems section", () => {
       vcs: "independent-git",
       version: "0.2.0",
     });
-    expect(status.openIterations).toBe(1);
     expect(status.knowledgeEntries).toBe(0);
   });
 
@@ -1074,7 +1150,7 @@ describe("workspace operations", () => {
     expect(sourceYaml).toContain("absorb_path: intake/candidate-source");
   });
 
-  it("solve archetype scaffolds problem/ + intake/benchmarks/attempts + tools/iterations", async () => {
+  it("solve archetype scaffolds problem/ + intake/benchmarks/attempts + tools", async () => {
     const root = path.join(await tempDir(), "solve-archetype");
     await initFramework({ target: root, name: "ConProj", archetype: "solve" });
 
@@ -1088,9 +1164,7 @@ describe("workspace operations", () => {
     expect(await exists(path.join(root, "benchmarks"))).toBe(true);
     expect(await exists(path.join(root, "attempts"))).toBe(true);
 
-    // Iteration and tooling support are part of solve workspaces.
-    expect(await exists(path.join(root, "iterations"))).toBe(true);
-    expect(await exists(path.join(root, "iterations", "templates"))).toBe(true);
+    expect(await exists(path.join(root, ["itera", "tions"].join("")))).toBe(false);
     expect(await exists(path.join(root, "tools"))).toBe(true);
 
     // Solve does not inherit study analyses or frozen-reference outlets.
@@ -1158,14 +1232,7 @@ describe("workspace operations", () => {
     const root = path.join(await tempDir(), "explore-archetype");
     await initFramework({ target: root, name: "Explore Project", archetype: "explore" });
 
-    for (const directory of [
-      "systems",
-      "knowledge",
-      "approaches",
-      "trials",
-      "iterations",
-      path.join("iterations", "templates"),
-    ]) {
+    for (const directory of ["systems", "knowledge", "approaches", "trials"]) {
       expect(await exists(path.join(root, directory))).toBe(true);
     }
     expect(await exists(path.join(root, "comparison.md"))).toBe(true);
@@ -1192,52 +1259,15 @@ describe("workspace operations", () => {
     expect((await checkFramework({ root })).ok).toBe(true);
   });
 
-  it("creates deterministic analysis and iteration artifacts for a supplied date", async () => {
+  it("creates a deterministic analysis artifact for a supplied date", async () => {
     const root = path.join(await tempDir(), "demo");
-    const iterationRoot = path.join(await tempDir(), "demo-iteration");
     const now = new Date("2026-06-14T10:00:00");
     await initFramework({ target: root, name: "Demo" });
-    await initFramework({ target: iterationRoot, name: "Demo Iteration", archetype: "solve" });
 
     const analysis = await createAnalysis({ root, title: "Review Source", now });
-    const iteration = await startIteration({ root: iterationRoot, title: "Try Pattern", now });
 
     expect(analysis.path).toBe("analyses/references/2026-06-14-review-source.md");
     expect(await readFile(analysis.absolutePath, "utf8")).toContain("# Review Source");
-    expect(iteration.path).toBe("iterations/2026-06-14-try-pattern");
-    expect(iteration.planPath).toBe("iterations/2026-06-14-try-pattern/plan.md");
-    expect(await readFile(path.join(iterationRoot, iteration.planPath), "utf8")).toContain(
-      "# Try Pattern",
-    );
-  });
-
-  it("gates iteration operations by archetype capability modules", async () => {
-    const studyRoot = path.join(await tempDir(), "study-iteration-disabled");
-    const bareRoot = path.join(await tempDir(), "bare-iteration-disabled");
-    const solveRoot = path.join(await tempDir(), "solve-iteration-enabled");
-    const exploreRoot = path.join(await tempDir(), "explore-iteration-enabled");
-    await initFramework({ target: studyRoot, name: "Study" });
-    await writeBareArchetype(bareRoot);
-    await initFramework({ target: bareRoot, name: "Bare", archetype: BARE_ARCHETYPE });
-    await initFramework({ target: solveRoot, name: "Solve", archetype: "solve" });
-    await initFramework({ target: exploreRoot, name: "Explore", archetype: "explore" });
-
-    await expect(startIteration({ root: studyRoot, title: "Try Pattern" })).rejects.toThrow(
-      /capability not enabled in archetype study: iteration/,
-    );
-    await expect(startIteration({ root: bareRoot, title: "Try Pattern" })).rejects.toThrow(
-      `capability not enabled in archetype ${BARE_ARCHETYPE}: iteration`,
-    );
-
-    const started = await startIteration({ root: solveRoot, title: "Try Pattern" });
-    const exploreIteration = await startIteration({ root: exploreRoot, title: "Try Pattern" });
-    await expect(
-      closeIteration({ root: studyRoot, selector: started.path, result: "rejected" }),
-    ).rejects.toThrow(/capability not enabled in archetype study: iteration/);
-    await expect(
-      closeIteration({ root: solveRoot, selector: started.path, result: "applied" }),
-    ).resolves.toMatchObject({ path: started.path });
-    expect(exploreIteration.path).toContain("iterations/");
   });
 
   it("keeps event scaffolding disabled while event capture remains core behavior", async () => {
@@ -1305,46 +1335,6 @@ describe("workspace operations", () => {
       event: "reference.absorbed",
       name: "Source",
     });
-  });
-});
-
-describe("closeIteration", () => {
-  it("closes an open iteration and writes an event", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", archetype: "solve" });
-    const started = await startIteration({
-      root,
-      title: "Test Pattern",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    const result = await closeIteration({
-      root,
-      selector: started.path,
-      result: "applied",
-      note: "works as expected",
-      now: new Date("2026-06-15T10:00:00"),
-    });
-
-    expect(result.path).toBe(started.path);
-
-    const planContent = await readFile(path.join(root, started.planPath), "utf8");
-    expect(planContent).toContain("Status: closed");
-    expect(planContent).toContain("applied on 2026-06-15");
-    expect(planContent).toContain("works as expected");
-
-    // Verify the open-iteration count drops to 0
-    const status = await getFrameworkStatus({ root });
-    expect(status.openIterations).toBe(0);
-  });
-
-  it("throws NotFound for unknown iteration selector", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo", archetype: "solve" });
-
-    await expect(
-      closeIteration({ root, selector: "nonexistent", result: "rejected" }),
-    ).rejects.toThrow();
   });
 });
 
@@ -1527,7 +1517,6 @@ describe("addKnowledge", () => {
       type: "pattern",
       title: "Config-Driven Design",
       fromAnalysis: "analyses/references/2026-06-14-review-source.md",
-      fromIteration: "iterations/2026-06-14-try-pattern",
       now: new Date("2026-06-15T10:00:00"),
     });
 
@@ -1536,7 +1525,6 @@ describe("addKnowledge", () => {
     expect(content).toContain("# Config-Driven Design");
     expect(content).toContain("Type: pattern");
     expect(content).toContain("from analysis: analyses/references/2026-06-14-review-source.md");
-    expect(content).toContain("from iteration: iterations/2026-06-14-try-pattern");
 
     // Status should reflect the new knowledge entry
     const status = await getFrameworkStatus({ root });

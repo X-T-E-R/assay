@@ -225,13 +225,13 @@ describe("Assay AGENTS.md managed block", () => {
 
     expect(content).toContain("## Workspace layout (archetype: solve)");
     expect(content).toContain(
-      "Attack one goal that has a measurable success criterion, iterating until the score moves.",
+      "Attack one goal that has a measurable success criterion, using bounded attempts until the score moves.",
     );
     expect(content).toContain("| Directory | What goes here |");
     expect(content).toContain(
       "| `problem/` | Task statement, official rules, scoring definition |",
     );
-    expect(content).toContain("| `iterations/` | Goal-attack loops |");
+    expect(content).not.toContain("| `iterations/` |");
     // Study's directories are not solve's.
     expect(content).not.toContain("analyses/references/");
     // Scaffolding folders are not places to put work.

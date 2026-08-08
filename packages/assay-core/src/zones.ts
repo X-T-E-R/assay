@@ -34,7 +34,7 @@ export interface WorkspaceZone {
  *   which is runtime state rather than a place to put work;
  * - `<zone>/templates`, which holds blank forms for its parent zone. An
  *   archetype that wants the parent listed declares the parent itself, which is
- *   why `solve` declares `iterations` next to `iterations/templates`.
+ *   why an archetype may declare both a parent directory and a nested work area.
  */
 export function archetypeZones(
   archetype: Pick<Archetype, "dirs" | "dirsLearning" | "dirsAbsorption">,

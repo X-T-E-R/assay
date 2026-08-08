@@ -13,6 +13,6 @@
 
 ## Anti-applicability
 
-## Minimum local iteration
+## Minimum local validation
 
 ## Exit criteria

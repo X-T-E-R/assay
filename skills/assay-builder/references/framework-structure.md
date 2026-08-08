@@ -16,7 +16,6 @@ Every current Assay workspace has a shared base, then the selected archetype add
 ├── references/       # native external evidence; eager in study, lazy elsewhere
 ├── analyses/         # native analyses; eager in study, lazy elsewhere
 ├── problem/          # solve/absorption-mode source materials, when enabled
-├── iterations/       # solve/explore iteration plans, when enabled
 ├── project/           # required native Project envelope, charter, and Roadmap items
 └── approaches/       # explore alternatives, when enabled
 ```
@@ -30,7 +29,7 @@ Custom archetypes are YAML files resolved in order: project-local `.assay/archet
 An archetype should also say what it is for and what each directory holds:
 
 ```yaml
-description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+description: Attack one goal that has a measurable success criterion, using bounded attempts until the score moves.
 
 dirs:
   - path: problem
@@ -73,7 +72,6 @@ reminders are useful:
 | absorb objective inputs | `problem/`, `intake/` |
 | explore local approaches | `approaches/`, `trials/`, `comparison.md` |
 | build local systems | `systems/` |
-| iterate local systems | `iterations/` |
 | keep one bounded outcome identifiable across contexts | `tasks/` |
 | promote accepted findings | `knowledge/` |
 | record the adopted charter, roadmap, specifications, and selected extensions | `project/` |

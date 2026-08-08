@@ -35,16 +35,6 @@ async function workspace(name: string, archetype?: string): Promise<string> {
  * distinction, so each case asserts the prefix, not just a non-zero exit.
  */
 describe("assay error messages distinguish user input from internal faults", () => {
-  it("prefixes a capability that the chosen archetype does not enable with Error", async () => {
-    const root = await workspace("PrefixCapability");
-
-    const result = await cliRunner.runCli(["iteration", "start", "Try Pattern", "--root", root]);
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Error: capability not enabled in archetype study: iteration");
-    expect(result.stderr).not.toContain("Runtime error");
-  });
-
   it("prefixes an unknown archetype with Error", async () => {
     const root = path.join(await tempDirs.createTempDir(), "PrefixArchetype");
 
@@ -70,7 +60,7 @@ describe("assay error messages distinguish user input from internal faults", () 
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: Workspace cutover required");
-    expect(result.stderr).toContain("0.7.0+s2+l5");
+    expect(result.stderr).toContain("0.8.0+s2+l6");
     expect(result.stderr).toContain("assay-cutover:");
   });
 });

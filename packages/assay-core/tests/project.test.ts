@@ -80,6 +80,9 @@ describe("native Project scaffold", () => {
       expect(await readdir(path.join(root, "project", "roadmap"))).toEqual(["README.md"]);
       for (const absent of ["facts", "policy", "norms", "decisions", "relay", "extensions"])
         expect(await exists(path.join(root, "project", absent))).toBe(false);
+      const retiredName = ["itera", "tions"].join("");
+      expect((await loadManifest(root))?.layout.paths).not.toHaveProperty(retiredName);
+      expect(await exists(path.join(root, retiredName))).toBe(false);
       expect((await checkFramework({ root })).ok).toBe(true);
     },
     60_000,
@@ -294,6 +297,10 @@ describe("native Project scaffold", () => {
         "roadmap",
       ]);
       expect(await exists(path.join(root, "project"))).toBe(false);
+      const retiredName = ["itera", "tions"].join("");
+      expect((await loadManifest(root))?.layout.paths).not.toHaveProperty(retiredName);
+      expect(await exists(path.join(root, ".assay", retiredName))).toBe(false);
+      expect(await exists(path.join(root, retiredName))).toBe(false);
       if (archetype === "study") {
         expect(await exists(path.join(root, ".assay", "references"))).toBe(true);
         expect(await exists(path.join(root, ".assay", "analyses"))).toBe(true);

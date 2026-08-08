@@ -4,8 +4,7 @@
 
 extends: base
 mode: absorption
-modules:
-  - iteration
+modules: []
 
 description: Incubate several local approaches in parallel and converge on one using trial evidence.
 
@@ -14,10 +13,6 @@ dirs:
     purpose: Parallel candidate approaches, one premise each
   - path: trials
     purpose: Trial notes covering setup, observed behavior, and cost
-  - path: iterations
-    purpose: Convergence loops
-  - path: iterations/templates
-    purpose: Blank iteration plans
 
 dirs_learning: []
 dirs_absorption: []
@@ -26,5 +21,3 @@ templates:
   - { path: "approaches/README.md", templateId: "explore.approaches.readme" }
   - { path: "trials/README.md", templateId: "explore.trials.readme" }
   - { path: "comparison.md", templateId: "explore.comparison" }
-  - { path: "iterations/README.md", templateId: "iterations.readme" }
-  - { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" }

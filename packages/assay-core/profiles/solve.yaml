@@ -1,13 +1,12 @@
 # Solve archetype: external material is absorbed into project inputs and
-# iterative attempt work. It owns a neutral objective model and enables
-# iteration by default, without prebuilding a systems core.
+# bounded attempt work. It owns a neutral objective model without prebuilding
+# a systems core.
 
 extends: base
 mode: absorption
-modules:
-  - iteration
+modules: []
 
-description: Attack one goal that has a measurable success criterion, iterating until the score moves.
+description: Attack one goal that has a measurable success criterion, using bounded attempts until the score moves.
 
 dirs:
   - path: problem
@@ -20,10 +19,6 @@ dirs:
     purpose: Sealed attempt packages
   - path: tools
     purpose: Packaging, scoring, and validation scripts
-  - path: iterations
-    purpose: Goal-attack loops
-  - path: iterations/templates
-    purpose: Blank iteration plans
 
 dirs_learning: []
 dirs_absorption: []
@@ -37,5 +32,3 @@ templates:
   - { path: "benchmarks/README.md", templateId: "solve.benchmarks.readme" }
   - { path: "attempts/README.md", templateId: "solve.attempts.readme" }
   - { path: "tools/README.md", templateId: "solve.tools.readme" }
-  - { path: "iterations/README.md", templateId: "iterations.readme" }
-  - { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" }

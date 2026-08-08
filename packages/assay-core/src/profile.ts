@@ -94,7 +94,7 @@ export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): reado
 export type ProfileTemplateEntry = ArchetypeTemplateEntry;
 export type Profile = Archetype;
 
-export const SUPPORTED_CAPABILITY_MODULES = ["intent", "iteration"] as const;
+export const SUPPORTED_CAPABILITY_MODULES = ["intent"] as const;
 export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
 
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
@@ -125,16 +125,6 @@ export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>
       { path: "intent/README.md", templateId: "intent.readme" },
       { path: "intent/original/README.md", templateId: "intent.original.readme" },
       { path: "intent/requirements/README.md", templateId: "intent.requirements.readme" },
-    ],
-  },
-  iteration: {
-    dirs: [
-      { path: "iterations", purpose: "Controlled changes to your own systems, one folder each" },
-      { path: "iterations/templates", purpose: "Blank iteration plans" },
-    ],
-    templates: [
-      { path: "iterations/README.md", templateId: "iterations.readme" },
-      { path: "iterations/templates/iteration-plan.md", templateId: "iterations.template.plan" },
     ],
   },
 };
@@ -462,7 +452,9 @@ function parseDirectoryList(
           code: "IO_ERROR",
         });
       }
-      return { path: item.trim(), purpose: "" };
+      const directoryPath = item.trim();
+      assertCurrentArchetypePath(directoryPath, field, archetypeName);
+      return { path: directoryPath, purpose: "" };
     }
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new FrameworkError(`invalid ${field} entry in archetype ${archetypeName}`, {
@@ -484,8 +476,10 @@ function parseDirectoryList(
         code: "IO_ERROR",
       });
     }
+    const directoryPath = record.path.trim();
+    assertCurrentArchetypePath(directoryPath, field, archetypeName);
     return {
-      path: record.path.trim(),
+      path: directoryPath,
       purpose: collapseWhitespace(typeof record.purpose === "string" ? record.purpose : ""),
     };
   });
@@ -520,21 +514,64 @@ function parseTemplateList(value: unknown, archetypeName: string): ParsedTemplat
         code: "IO_ERROR",
       });
     }
+    const templatePath = record.path.trim();
+    assertCurrentArchetypePath(templatePath, "templates", archetypeName);
     const content = parseOptionalTemplateContent(record.content, "content", archetypeName);
     const file = parseOptionalString(record.file, "file", archetypeName);
     if (content !== null && file !== null) {
       throw new FrameworkError(
-        `template entry '${record.path.trim()}' in archetype ${archetypeName} sets both content and file; use one`,
+        `template entry '${templatePath}' in archetype ${archetypeName} sets both content and file; use one`,
         { code: "IO_ERROR" },
       );
     }
     return {
-      path: record.path.trim(),
+      path: templatePath,
       templateId: record.templateId.trim(),
       ...(content !== null ? { content } : {}),
       ...(file !== null ? { file } : {}),
     };
   });
+}
+
+/**
+ * Iteration storage is retired authority in layout v6. A custom archetype must
+ * not recover it under either layout spelling, including lexical aliases that
+ * resolve to the same workspace-relative path. Keep the check at YAML parsing
+ * so init, attach, status, check, update, and convert all fail before scaffold
+ * paths or template content are used.
+ */
+function assertCurrentArchetypePath(
+  declaredPath: string,
+  field: string,
+  archetypeName: string,
+): void {
+  const normalizedPath = normalizeArchetypeScaffoldPath(declaredPath);
+  const comparable = normalizedPath.toLowerCase();
+  if (
+    comparable !== "iterations" &&
+    !comparable.startsWith("iterations/") &&
+    comparable !== `${MANAGED_DIR}/iterations` &&
+    !comparable.startsWith(`${MANAGED_DIR}/iterations/`)
+  ) {
+    return;
+  }
+  throw new FrameworkError(
+    `retired archetype path '${declaredPath}' in ${field} of archetype ${archetypeName} resolves to '${normalizedPath}'`,
+    {
+      code: "RETIRED_ARCHETYPE_PATH",
+      details: {
+        archetype: archetypeName,
+        field,
+        declared_path: declaredPath,
+        normalized_path: normalizedPath,
+      },
+    },
+  );
+}
+
+function normalizeArchetypeScaffoldPath(value: string): string {
+  const posix = value.replaceAll("\\", "/").replace(/^\/+/, "");
+  return path.posix.normalize(posix);
 }
 
 function parseOptionalTemplateContent(

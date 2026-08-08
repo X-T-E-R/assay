@@ -8,7 +8,6 @@ import {
   type DonorDecisionOutcome,
   type DonorTakeMode,
   type IntentPromotionTarget,
-  type IterationResult,
   type KnowledgeType,
   SOURCE_CAPTURE_MODES,
   SOURCE_CHANGE_CLASSES,
@@ -41,7 +40,6 @@ import {
   claimTrellisWorker,
   cleanupTrellisLegacyMigration,
   closeAnalysis,
-  closeIteration,
   contextTrellisMemory,
   convertOverlayToStandalone,
   createAnalysis,
@@ -118,7 +116,6 @@ import {
   showTrellisJournal,
   showTrellisMemory,
   showTrellisTask,
-  startIteration,
   startTrellisSession,
   switchSource,
   syncSource,
@@ -369,8 +366,6 @@ function capabilityAddNextLine(module: string): string {
   switch (module) {
     case "intent":
       return 'Next: `assay intent capture --text "<what the product is for>"`.';
-    case "iteration":
-      return 'Next: `assay iteration start "<what you are changing>"`.';
     default:
       return "Next: `assay capability list` shows what this workspace now has.";
   }
@@ -2394,57 +2389,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "stdout",
         commandOptions.exit === "adopt"
           ? `Next: \`assay knowledge add pattern "<title>" --from-analysis ${result.path}\` to keep what survived.`
-          : commandOptions.exit === "experiment"
-            ? 'Next: `assay iteration start "<what you are trying>"`.'
-            : "Next: `assay status` shows what is still open in this workspace.",
-      );
-    });
-
-  const iteration = program.command("iteration").description("Iteration operations");
-  iteration
-    .command("start")
-    .description("Start an iteration against your own systems")
-    .argument("<title>", "iteration title")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (title, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await startIteration({ root, title });
-      writeLine(output, "stdout", `Started iteration: ${result.path}`);
-      writeLine(output, "stdout", `Plan: ${result.planPath}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-      writeLine(
-        output,
-        "stdout",
-        `Next: fill ${result.planPath}, then \`assay iteration close ${result.path} --result applied|rejected|retest\`.`,
-      );
-    });
-
-  iteration
-    .command("close")
-    .description("Close an iteration with a result")
-    .argument("<selector>", "iteration path or directory name prefix")
-    .addOption(
-      new Option("--result <result>", "iteration outcome")
-        .choices(["applied", "rejected", "retest"])
-        .makeOptionMandatory(),
-    )
-    .option("--note <note>", "closing note")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (selector, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await closeIteration({
-        root,
-        selector,
-        result: commandOptions.result as IterationResult,
-        ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
-      });
-      writeLine(output, "stdout", `Closed iteration: ${result.path}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-      writeLine(
-        output,
-        "stdout",
-        commandOptions.result === "applied"
-          ? `Next: \`assay knowledge add pattern "<title>" --from-iteration ${result.path}\` if this produced something reusable.`
           : "Next: `assay status` shows what is still open in this workspace.",
       );
     });
@@ -2760,7 +2704,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .argument("<type>", "knowledge type: pattern, guide, troubleshooting")
     .argument("<title>", "knowledge entry title")
     .option("--from-analysis <path>", "originating analysis path")
-    .option("--from-iteration <path>", "originating iteration path")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (type, title, commandOptions) => {
       const validTypes = ["pattern", "guide", "troubleshooting"];
@@ -2777,9 +2720,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.fromAnalysis === undefined
           ? {}
           : { fromAnalysis: commandOptions.fromAnalysis }),
-        ...(commandOptions.fromIteration === undefined
-          ? {}
-          : { fromIteration: commandOptions.fromIteration }),
       });
       writeLine(output, "stdout", `Added knowledge: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);

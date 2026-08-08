@@ -2,7 +2,13 @@ import type { Stats } from "node:fs";
 import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE, VERSION_FILE } from "./constants.js";
+import {
+  CURRENT_VERSION,
+  LAYOUT_VERSION,
+  MANAGED_DIR,
+  MANIFEST_FILE,
+  VERSION_FILE,
+} from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import {
@@ -46,7 +52,7 @@ export interface ConvertOverlayResult {
 }
 
 /** Work areas hoisted out of `.assay/` when detaching an overlay. */
-const OVERLAY_WORK_AREAS = ["references", "analyses", "iterations", "knowledge"] as const;
+const OVERLAY_WORK_AREAS = ["references", "analyses", "knowledge"] as const;
 
 /**
  * Work folders that live under the work root without a `layout.paths` key, so
@@ -64,7 +70,6 @@ const OVERLAY_WORK_DIRECTORIES = ["intent", "project", "tasks"] as const;
 const RELOCATED_PATH_KEYS = [
   "references",
   "analyses",
-  "iterations",
   "knowledge",
   "systems_contracts",
 ] as const satisfies readonly (keyof WorkspaceLayout["paths"])[];
@@ -105,8 +110,13 @@ export async function convertOverlayToStandalone(
   await assertNoAncestorWorkspaceAuthority(sourceRoot);
   await assertNoAncestorWorkspaceAuthority(targetRoot);
   // Fail old/invalid envelopes without creating even a transient conversion
-  // boundary. The manifest is reloaded after the boundary for authority.
-  await loadManifest(sourceRoot);
+  // boundary. Custom archetypes are parsed here too: a retired scaffold path
+  // must fail before conversion coordination can create locks or target state.
+  // Both are reloaded after the boundary for authority.
+  const preflightManifest = await loadManifest(sourceRoot);
+  if (preflightManifest) {
+    await loadArchetype(preflightManifest.project.archetype, { root: sourceRoot });
+  }
   const result = await withWorkspaceConversionCoordination(
     sourceRoot,
     async () => {
@@ -298,7 +308,7 @@ async function convertOverlayToStandaloneLocked(
   const targetManifest: FrameworkManifest = {
     ...sourceManifest,
     layout: targetLayout,
-    layout_version: 5,
+    layout_version: LAYOUT_VERSION,
     managed_files: rewriteManagedFilePaths(
       sourceManifest.managed_files,
       sourceLayout,

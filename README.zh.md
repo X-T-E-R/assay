@@ -18,7 +18,7 @@ Assay 把来源研究、实验和 AI 辅助构建变成你的仓库能记住的�
 ```text
 来源 / 实验 / 目标
         -> 结构化分析 + 检查
-        -> 知识、系统、下一轮迭代
+        -> 知识、系统和有边界的 Task
 ```
 
 它不是笔记应用，不是 agent 运行时，也不是 prompt 集合。它是"这个项目有点意思"变成"我们抄了这个模式、否了那个说法、并且以后能解释为什么"的地方。
@@ -29,7 +29,7 @@ Assay 适配你代码现有的存在方式。
 
 | 模式 | 什么时候用 | Assay 写在哪里 | Git 策略 |
 | --- | --- | --- | --- |
-| `standalone` | 你想要一个独立的研究 / 评估 / 攻关工作区。 | `.assay/` 存 Assay 状态，`tasks/`、`references/`、`analyses/`、`iterations/`、`knowledge/`、`systems/` 在工作区根目录。 | 工作区 Git 可选。独立系统保留自己的 Git。 |
+| `standalone` | 你想要一个独立的研究 / 评估 / 攻关工作区。 | `.assay/` 存 Assay 状态，`tasks/`、`references/`、`analyses/`、`knowledge/`、`systems/` 在工作区根目录。 | 工作区 Git 可选。独立系统保留自己的 Git。 |
 | `overlay` | 你已经有产品仓库，想让它的根目录作为主系统。 | 一个私有的 `.assay/` 文件夹，包含 Assay 状态和工作目录。产品文件不动。 | 产品 Git 默认忽略 `.assay/`；Assay 状态可选地在 `.assay/` 里建自己的 Git。 |
 
 ## 选择要构建的工作区
@@ -39,8 +39,8 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | 想做的事 | 起步 archetype | Assay 给你 |
 | --- | --- | --- |
 | 学习外部项目且不丢失来源 | `study` | 活体来源、参考分析、模式笔记、决策出口 |
-| 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、迭代 |
-| 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
+| 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、tools |
+| 探索多个可能方向 | `explore` | approaches、trials、对比笔记 |
 
 
 ## 让同一个结果跨上下文继续
@@ -67,7 +67,7 @@ none。Assay 不按 active 数量、创建时间或标题推断。文件合同�
 
 | 模块 | 打开什么 | 启用方式 |
 | --- | --- | --- |
-| `iteration` | 对自有系统的受控改动，可开启并按结果关闭 | `assay capability add iteration` |
+| `intent` | 原样产品意图及其显式提升的 requirement | `assay capability add intent` |
 
 `assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。`assay capability add intent` 仍作为兼容入口保留；`assay reconcile --apply` 会接管已有文件并补写插件回执，不移动或改写 intent 记录。
 
@@ -136,7 +136,7 @@ assay check
 
 overlay 模式下，产品仓库还是产品仓库。Assay 把仓库根目录注册为主系统，自己的工作放在 `.assay/` 里。产品 Git 忽略 `.assay/`，所以 `git status` 保持干净。
 
-`assay check` 默认只检查工作区结构和持久化记录完整性。需要查看未关闭迭代、未完成草稿、待处理队列、迁移归档或来源大版本变化等提醒时，显式运行 `assay check --advisories`。这些提醒不会把普通工作状态变成失败。
+`assay check` 默认只检查工作区结构和持久化记录完整性。需要查看未完成草稿、待处理队列、迁移归档或来源大版本变化等提醒时，显式运行 `assay check --advisories`。这些提醒不会把普通工作状态变成失败。
 
 如果以后想把 overlay 拆成独立工作台，不用动产品仓库就能 detach：
 

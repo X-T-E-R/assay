@@ -56,7 +56,6 @@ import {
   isCapabilityModule,
   loadArchetype,
   readInstalledArchetype,
-  requireCapability,
   requireCapabilityModule,
 } from "./profile.js";
 import {
@@ -221,7 +220,6 @@ export interface CheckFrameworkResult {
   readonly systems?: {
     readonly primary: string | null;
     readonly total: number;
-    readonly openIterations: number;
   };
 }
 
@@ -296,7 +294,6 @@ export interface FrameworkStatusResult {
   readonly upstream?: UpstreamStatus;
   /** Sources whose latest change grade suggests recording a decision. */
   readonly donors?: FrameworkStatusDonors;
-  readonly openIterations?: number;
   readonly knowledgeEntries?: number;
   /** Records in a workspace-root `runs.jsonl`; omitted when there is no file. */
   readonly runRecords?: number;
@@ -355,20 +352,6 @@ export interface CreateAnalysisResult {
   readonly eventFile: string;
 }
 
-export interface StartIterationOptions {
-  readonly root: string;
-  readonly title: string;
-  readonly now?: Date;
-}
-
-export interface StartIterationResult {
-  readonly root: string;
-  readonly path: string;
-  readonly planPath: string;
-  readonly absolutePath: string;
-  readonly eventFile: string;
-}
-
 export interface CaptureEventOptions {
   readonly root: string;
   readonly kind: string;
@@ -378,22 +361,6 @@ export interface CaptureEventOptions {
 
 export interface CaptureEventResult {
   readonly root: string;
-  readonly eventFile: string;
-}
-
-export type IterationResult = "applied" | "rejected" | "retest";
-
-export interface CloseIterationOptions {
-  readonly root: string;
-  readonly selector: string;
-  readonly result: IterationResult;
-  readonly note?: string;
-  readonly now?: Date;
-}
-
-export interface CloseIterationResult {
-  readonly root: string;
-  readonly path: string;
   readonly eventFile: string;
 }
 
@@ -433,7 +400,6 @@ export interface AddKnowledgeOptions {
   readonly type: KnowledgeType;
   readonly title: string;
   readonly fromAnalysis?: string;
-  readonly fromIteration?: string;
   readonly now?: Date;
 }
 
@@ -515,7 +481,6 @@ function isWorkspaceArea(value: string): value is WorkspaceArea {
     value === "systemsRegistry" ||
     value === "references" ||
     value === "analyses" ||
-    value === "iterations" ||
     value === "knowledge" ||
     value === "systemsContracts"
   );
@@ -598,35 +563,6 @@ async function countKnowledgeEntries(root: string, layout: WorkspaceLayout): Pro
     const basename = path.basename(file);
     return basename !== "README.md";
   }).length;
-}
-
-/**
- * An iteration counts as open when its plan header declares `Status: open`.
- * Reading and writing use the same header anchor, so `status` and
- * `iteration close` cannot disagree about which line holds the state.
- */
-async function countOpenIterations(root: string, layout: WorkspaceLayout): Promise<number> {
-  const iterationsDir = path.join(root, workspaceRelativePath(layout, "iterations"));
-  if (!(await exists(iterationsDir))) {
-    return 0;
-  }
-
-  let count = 0;
-  const entries = await readdir(iterationsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const planPath = path.join(iterationsDir, entry.name, "plan.md");
-    if (!(await exists(planPath))) continue;
-    try {
-      const content = await readFile(planPath, "utf8");
-      if (readHeaderField(content, "Status")?.toLowerCase() === "open") {
-        count += 1;
-      }
-    } catch {
-      // skip unreadable plans
-    }
-  }
-  return count;
 }
 
 async function writeTemplateFile(
@@ -984,7 +920,7 @@ export async function checkFramework(
   ];
 
   // If a workspace declares its archetype, augment checks with that archetype's
-  // top-level dirs (intake/, problem/, references/, analyses/, iterations/,
+  // top-level dirs (intake/, problem/, references/, analyses/,
   // benchmarks/, attempts/...). Default to a permissive check when the
   // manifest/archetype cannot be read.
   const archetypeDegradations: CheckRow[] = [];
@@ -1131,7 +1067,6 @@ export async function checkFramework(
   // Semantic check 2: systems registry consistency
   let primaryName: string | null = null;
   let systemCount = 0;
-  let openIterations = 0;
   try {
     const registry = await loadSystemsRegistry(root);
     if (registry) {
@@ -1214,21 +1149,7 @@ export async function checkFramework(
     });
   }
 
-  // Semantic check 3: open iterations
-  try {
-    openIterations = await countOpenIterations(root, layout);
-    if (includeAdvisories && openIterations > 0) {
-      rows.push({
-        path: `${workspaceRelativePath(layout, "iterations")}/`,
-        status: "warning",
-        message: `${openIterations} iteration(s) not closed (Status: open)`,
-      });
-    }
-  } catch {
-    // iterations directory may not exist; skip
-  }
-
-  // Semantic check 4: knowledge directory-name consistency
+  // Semantic check 3: knowledge directory-name consistency
   // The framework owns the base knowledge subdirectory names (patterns,
   // guides, troubleshooting). A legacy bug appended "s" to every
   // knowledge type, producing a parallel "knowledge/troubleshootings/"
@@ -1563,8 +1484,8 @@ export async function checkFramework(
           },
         }
       : {}),
-    ...(systemCount > 0 || primaryName !== null || openIterations > 0
-      ? { systems: { primary: primaryName, total: systemCount, openIterations } }
+    ...(systemCount > 0 || primaryName !== null
+      ? { systems: { primary: primaryName, total: systemCount } }
       : {}),
   };
 }
@@ -1982,15 +1903,12 @@ function countPendingQueueEntries(parsed: unknown): number {
 
 /**
  * Work areas every layout defines, with the purpose to show when one of them
- * holds content the archetype never declared. A workspace whose archetype
- * predates a directory still has real work in it — study workspaces created
- * before `iteration` became a capability module are the concrete case — and
- * status must not hide that.
+ * holds content the archetype never declared. Status must not hide content in
+ * a current layout-owned work area merely because the archetype omits it.
  */
 const WORK_AREA_ZONE_PURPOSES: ReadonlyArray<readonly [WorkspaceArea, string]> = [
   ["references", "External systems captured as evidence"],
   ["analyses", "Conversion layer from references to decisions"],
-  ["iterations", "Controlled changes to your own systems, one folder each"],
   ["knowledge", "Accepted, reusable knowledge"],
   ["systemsContracts", "Registered systems and local implementations"],
 ];
@@ -2125,7 +2043,6 @@ export async function getFrameworkStatus(
 
   // Systems section from registry
   let systems: readonly FrameworkStatusSystem[] | undefined;
-  let openIterations: number | undefined;
   try {
     const registry = await loadSystemsRegistry(root);
     if (registry) {
@@ -2149,12 +2066,6 @@ export async function getFrameworkStatus(
     }
   } catch {
     // registry missing or invalid; status omits systems section
-  }
-
-  try {
-    openIterations = await countOpenIterations(root, layout);
-  } catch {
-    // iterations dir may not exist
   }
 
   let livingSources: FrameworkStatusLivingSources | undefined;
@@ -2222,7 +2133,6 @@ export async function getFrameworkStatus(
       ...(livingSources ? { livingSources } : {}),
       ...(upstream ? { upstream } : {}),
       ...(donors ? { donors } : {}),
-      ...(openIterations !== undefined ? { openIterations } : {}),
       knowledgeEntries: knowledgeCount,
       ...(runRecords !== undefined ? { runRecords } : {}),
     };
@@ -2248,7 +2158,6 @@ export async function getFrameworkStatus(
     ...(livingSources ? { livingSources } : {}),
     ...(upstream ? { upstream } : {}),
     ...(donors ? { donors } : {}),
-    ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
     ...(runRecords !== undefined ? { runRecords } : {}),
   };
@@ -2812,7 +2721,7 @@ export async function createAnalysis(
     options.forReference && (refFreezePath || refName)
       ? `- Reference: ${refName}\n- Source: ${refSource}\n- Freeze path: ${refFreezePath}\n`
       : "";
-  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n${referenceBlock}${sourceBlock}\n## Reference\n\n${refName || ""}\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n`;
+  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n${referenceBlock}${sourceBlock}\n## Reference\n\n${refName || ""}\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next step\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n`;
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, content, "utf8");
   const eventFile = await appendEvent(
@@ -2836,44 +2745,6 @@ export async function createAnalysis(
   };
 }
 
-export async function startIteration(
-  options: StartIterationOptions,
-): Promise<StartIterationResult> {
-  const root = path.resolve(options.root);
-  const manifest = requireManifest(await loadManifest(root), root);
-  const layout = layoutForManifest(manifest);
-  await requireCapability(root, "iteration");
-  const now = options.now ?? new Date();
-  const date = dateStamp(now);
-  const relativePath = workspaceSubpath(layout, "iterations", `${date}-${slugify(options.title)}`);
-  const absolutePath = path.join(root, relativePath);
-
-  if (await exists(absolutePath)) {
-    throw new FrameworkAlreadyExistsError(`iteration already exists: ${relativePath}`);
-  }
-
-  await mkdir(absolutePath, { recursive: true });
-  const planPath = path.join(absolutePath, "plan.md");
-  await writeFile(
-    planPath,
-    `# ${options.title}\n\n- Date: ${date}\n- Status: open\n\n## Hypothesis\n\n## Scope\n\n## Verification\n\n## Rollback\n\n## Result\n`,
-    "utf8",
-  );
-  const eventFile = await appendEvent(
-    root,
-    { event: "iteration.started", path: relativePath, title: options.title },
-    now,
-  );
-
-  return {
-    root,
-    path: relativePath,
-    planPath: `${relativePath}/plan.md`,
-    absolutePath,
-    eventFile: relativeDisplayPath(eventFile, root),
-  };
-}
-
 export async function captureEvent(options: CaptureEventOptions): Promise<CaptureEventResult> {
   const root = path.resolve(options.root);
   requireManifest(await loadManifest(root), root);
@@ -2884,74 +2755,6 @@ export async function captureEvent(options: CaptureEventOptions): Promise<Captur
   );
 
   return { root, eventFile: relativeDisplayPath(eventFile, root) };
-}
-
-export async function closeIteration(
-  options: CloseIterationOptions,
-): Promise<CloseIterationResult> {
-  const root = path.resolve(options.root);
-  const manifest = requireManifest(await loadManifest(root), root);
-  const layout = layoutForManifest(manifest);
-  await requireCapability(root, "iteration");
-  const now = options.now ?? new Date();
-  const date = dateStamp(now);
-
-  // Resolve iteration directory from selector (path or date-slug prefix)
-  const iterationsRelative = workspaceRelativePath(layout, "iterations");
-  const iterationsDir = path.join(root, iterationsRelative);
-  let iterPath: string | null = null;
-  const selector = resolveContainedPath(root, options.selector, "iteration selector");
-  const selectorNormalized = selector.relativePath;
-
-  // Try as direct path
-  const directPath = selector.absolutePath;
-  if (await exists(directPath)) {
-    iterPath = selectorNormalized;
-  } else {
-    // Search by prefix match
-    if (await exists(iterationsDir)) {
-      const entries = await readdir(iterationsDir, { withFileTypes: true });
-      const matches = entries
-        .filter((e) => e.isDirectory() && e.name.startsWith(options.selector))
-        .map((e) => e.name);
-      if (matches.length === 1 && matches[0]) {
-        iterPath = `${iterationsRelative}/${matches[0]}`;
-      } else if (matches.length > 1) {
-        throw new FrameworkNotFoundError(
-          `iteration selector '${options.selector}' is ambiguous (${matches.join(", ")})`,
-        );
-      }
-    }
-  }
-
-  if (!iterPath) {
-    throw new FrameworkNotFoundError(`iteration not found: ${options.selector}`);
-  }
-
-  const planPath = path.join(root, iterPath, "plan.md");
-  if (!(await exists(planPath))) {
-    throw new FrameworkNotFoundError(`iteration plan not found: ${iterPath}/plan.md`);
-  }
-
-  // Update plan.md: set Status to closed, add Result
-  let content = await readFile(planPath, "utf8");
-  const resultLine = `- ${options.result} on ${date}${options.note ? ` — ${options.note}` : ""}`;
-  content = setHeaderField(content, "Status", "closed", `iteration ${iterPath}/plan.md`);
-  content = appendToSection(content, "Result", resultLine);
-  await writeFile(planPath, content, "utf8");
-
-  const eventFile = await appendEvent(
-    root,
-    {
-      event: "iteration.closed",
-      path: iterPath,
-      result: options.result,
-      note: options.note ?? null,
-    },
-    now,
-  );
-
-  return { root, path: iterPath, eventFile: relativeDisplayPath(eventFile, root) };
 }
 
 export async function closeAnalysis(options: CloseAnalysisOptions): Promise<CloseAnalysisResult> {
@@ -3125,9 +2928,6 @@ export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKno
   if (options.fromAnalysis) {
     refs.push(`- from analysis: ${options.fromAnalysis}`);
   }
-  if (options.fromIteration) {
-    refs.push(`- from iteration: ${options.fromIteration}`);
-  }
   const refBlock = refs.length > 0 ? `\n${refs.join("\n")}\n` : "\n";
 
   const content = `# ${options.title}\n\n- Type: ${options.type}\n- Date: ${date}\n- Status: accepted${refBlock}\n## Summary\n\n## Detail\n`;
@@ -3142,7 +2942,6 @@ export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKno
       type: options.type,
       title: options.title,
       from_analysis: options.fromAnalysis ?? null,
-      from_iteration: options.fromIteration ?? null,
     },
     now,
   );

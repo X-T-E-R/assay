@@ -100,76 +100,10 @@ async function fillAnalysisSections(
     content = content.replace("## Reject\n\n", `## Reject\n\n${sections.reject}\n\n`);
   }
   if (sections.next) {
-    content = content.replace("## Next iteration\n\n", `## Next iteration\n\n${sections.next}\n\n`);
+    content = content.replace("## Next step\n\n", `## Next step\n\n${sections.next}\n\n`);
   }
   await writeFile(absolutePath, content, "utf8");
 }
-
-describe("assay iteration close CLI", () => {
-  it("closes an iteration with --result", async () => {
-    const root = await initWorkspace("IterClose", "solve");
-    const start = await runCli(["iteration", "start", "Test Pattern", "--root", root]);
-    expect(start.exitCode).toBe(0);
-    // Extract the created iteration path from stdout
-    const match = start.stdout.match(/iterations\/[^\s]+/);
-    expect(match).not.toBeNull();
-    const iterPath = match?.[0] ?? "";
-
-    const close = await runCli([
-      "iteration",
-      "close",
-      iterPath,
-      "--root",
-      root,
-      "--result",
-      "applied",
-      "--note",
-      "verified",
-    ]);
-
-    expect(close.exitCode).toBe(0);
-    expect(close.stdout).toContain("Closed iteration:");
-    expect(close.stdout).toContain("Event:");
-  });
-
-  it("rejects invalid --result values", async () => {
-    const root = await initWorkspace("IterCloseInvalid", "solve");
-    await runCli(["iteration", "start", "X", "--root", root]);
-
-    const close = await runCli(["iteration", "close", "x", "--root", root, "--result", "bogus"]);
-
-    expect(close.exitCode).not.toBe(0);
-  });
-
-  it("starts iterations only when the archetype enables the iteration capability", async () => {
-    const studyRoot = await initWorkspace("IterStudy");
-    const bareRoot = await initWorkspace("IterBare", BARE_ARCHETYPE);
-    const solveRoot = await initWorkspace("IterSolve", "solve");
-    const exploreRoot = await initWorkspace("IterExplore", "explore");
-
-    const study = await runCli(["iteration", "start", "Try Pattern", "--root", studyRoot]);
-    expect(study.exitCode).toBe(1);
-    expect(study.stdout).toBe("");
-    expect(study.stderr).toContain("capability not enabled in archetype study: iteration");
-
-    const bare = await runCli(["iteration", "start", "Try Pattern", "--root", bareRoot]);
-    expect(bare.exitCode).toBe(1);
-    expect(bare.stdout).toBe("");
-    expect(bare.stderr).toContain(
-      `capability not enabled in archetype ${BARE_ARCHETYPE}: iteration`,
-    );
-
-    const solve = await runCli(["iteration", "start", "Try Pattern", "--root", solveRoot]);
-    expect(solve.exitCode).toBe(0);
-    expect(solve.stderr).toBe("");
-    expect(solve.stdout).toContain("Started iteration: iterations/");
-
-    const explore = await runCli(["iteration", "start", "Try Pattern", "--root", exploreRoot]);
-    expect(explore.exitCode).toBe(0);
-    expect(explore.stderr).toBe("");
-    expect(explore.stdout).toContain("Started iteration: iterations/");
-  }, 30_000);
-});
 
 describe("assay event capture CLI", () => {
   it("captures events for every archetype without scaffolding event templates", async () => {
@@ -645,33 +579,23 @@ describe("Next: hints on high-adoption write commands", () => {
     expect(closed.exitCode, closed.stderr).toBe(0);
     expect(closed.stdout).toContain("Next: `assay knowledge add pattern");
     expect(closed.stdout).toContain(`--from-analysis ${analysisPath}`);
-  });
 
-  it("carries an iteration from start through close", async () => {
-    const root = await initWorkspace("NextIteration", "solve");
-
-    const started = await runCli(["iteration", "start", "Try Pattern", "--root", root]);
-    expect(started.exitCode, started.stderr).toBe(0);
-    expect(started.stdout).toContain("Next: fill iterations/");
-    expect(started.stdout).toContain("assay iteration close iterations/");
-
-    const iterationPath = started.stdout.match(/Started iteration: (\S+)/)?.[1];
-    if (!iterationPath) {
-      throw new Error(`iteration path not found in output:\n${started.stdout}`);
-    }
-
-    const closed = await runCli([
-      "iteration",
+    const experiment = await runCli(["analysis", "new", "Try Another Way", "--root", root]);
+    const experimentPath = experiment.stdout.match(/analyses\/references\/[^\s]+\.md/)?.[0];
+    if (!experimentPath)
+      throw new Error(`analysis path not found in output:\n${experiment.stdout}`);
+    const experimented = await runCli([
+      "analysis",
       "close",
-      iterationPath,
-      "--result",
-      "applied",
+      experimentPath,
+      "--exit",
+      "experiment",
       "--root",
       root,
     ]);
-    expect(closed.exitCode, closed.stderr).toBe(0);
-    expect(closed.stdout).toContain("Next: `assay knowledge add pattern");
-    expect(closed.stdout).toContain(`--from-iteration ${iterationPath}`);
+    expect(experimented.exitCode, experimented.stderr).toBe(0);
+    expect(experimented.stdout).toContain("Next: `assay status`");
+    expect(experimented.stdout).not.toContain("assay iteration");
   });
 
   it("names what to do after registering a system and adding knowledge", async () => {

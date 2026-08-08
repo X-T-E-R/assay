@@ -3,7 +3,13 @@ import path from "node:path";
 import { execa } from "execa";
 import { stringify as stringifyYaml } from "yaml";
 
-import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE, VERSION_FILE } from "./constants.js";
+import {
+  CURRENT_VERSION,
+  LAYOUT_VERSION,
+  MANAGED_DIR,
+  MANIFEST_FILE,
+  VERSION_FILE,
+} from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { defaultOverlayLayout, workspacePath, workspaceTemplateRelativePath } from "./layout.js";
@@ -171,7 +177,7 @@ export async function attachExistingRepo(
     mode: archetype.mode,
   });
   manifest.layout = layout;
-  manifest.layout_version = 5;
+  manifest.layout_version = LAYOUT_VERSION;
   await saveManifest(root, manifest);
   await ensureNativeProject(root, layout, project);
 
