@@ -136,8 +136,8 @@ describe("archetype loader", () => {
     );
   });
 
-  it("does not expose events as an optional capability module", () => {
-    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["adr", "intent", "iteration"]);
+  it("exposes only current optional capability modules", () => {
+    expect(SUPPORTED_CAPABILITY_MODULES).toEqual(["intent", "iteration"]);
   });
 
   it("loads project-local archetypes before user-global and built-in archetypes", async () => {
@@ -396,12 +396,11 @@ describe("archetype data shapes", () => {
     const study = await loadArchetype("study");
     const dirs = dirsForArchetype(study, study.mode);
 
-    expect(study.modules).toEqual(["adr"]);
+    expect(study.modules).toEqual([]);
     expect(dirs).toEqual(
       expect.arrayContaining([
         "systems",
         "knowledge",
-        "knowledge/decisions",
         "analyses/references",
         "analyses/gaps",
         "analyses/patterns",
@@ -647,7 +646,6 @@ describe("archetype templates", () => {
 
     expect(paths).toContain("systems/README.md");
     expect(paths).toContain("references/frozen/README.md");
-    expect(paths).toContain("knowledge/decisions/ADR-TEMPLATE.md");
     expect(paths).not.toContain(frameworkConfigPath);
     expect(paths.some((path) => path.includes("{core}") || path.includes("demo-core"))).toBe(false);
     expect(templateIds).not.toContain(configTemplateId);

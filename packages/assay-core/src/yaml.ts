@@ -2,7 +2,7 @@
  * Scalar rendering for the frontmatter Assay writes by hand.
  *
  * Records whose body must stay byte-identical to what was hashed (intent
- * captures, promoted requirements, ADR markdown) build their frontmatter as
+ * captures and promoted requirements) build their frontmatter as
  * text instead of running it through a YAML serializer. That makes escaping a
  * correctness boundary rather than a formatting detail: a value carrying a
  * newline would close the frontmatter block early, and the record would parse

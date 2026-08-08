@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError } from "./errors.js";
-import { loadLegacyManifest, loadManifest } from "./manifest.js";
+import { loadManifest } from "./manifest.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { loadSystemsRegistry } from "./systems-registry.js";
 
@@ -422,27 +422,8 @@ async function refreshProjectRecordStatus(record: AssayProjectRecord): Promise<A
   };
 }
 
-/**
- * Read a workspace's manifest for registry purposes, accepting the legacy
- * `.framework/` location. The registry answers "is Assay still installed
- * here", and a v3 workspace that has not been migrated yet answers yes; reading
- * only `.assay/manifest.json` reported every one of them as missing.
- */
 async function safeLoadManifest(projectPath: string): Promise<FrameworkManifest | null> {
-  try {
-    const manifest = await loadManifest(projectPath);
-    if (manifest) {
-      return manifest;
-    }
-  } catch {
-    // A manifest that fails validation is reported by `check`; fall through to
-    // the legacy location before concluding the workspace is gone.
-  }
-  try {
-    return await loadLegacyManifest(projectPath);
-  } catch {
-    return null;
-  }
+  return loadManifest(projectPath);
 }
 
 async function safeLoadSystemsRegistry(

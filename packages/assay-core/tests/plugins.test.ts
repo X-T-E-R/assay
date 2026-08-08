@@ -18,6 +18,8 @@ import {
   checkFramework,
   checkPlugins,
   convertOverlayToStandalone,
+  createTrellisTask,
+  getCurrentTrellisTask,
   initFramework,
   isCapabilityEnabled,
   listCapabilities,
@@ -27,6 +29,7 @@ import {
   nowIso,
   reconcilePlugins,
   saveManifest,
+  setConvertRoadmapProbeForTests,
 } from "../src/index.js";
 
 const tempDirs = createTempDirectoryFixture("assay-core-plugins");
@@ -36,6 +39,7 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
+  setConvertRoadmapProbeForTests(undefined);
   await tempDirs.cleanup();
 });
 
@@ -75,6 +79,52 @@ async function eventBytes(root: string): Promise<string> {
 }
 
 describe("assay.intent plugin", () => {
+  it("fail-closes Trellis and plugin mutations during copy conversion", async () => {
+    const root = await overlayWorkspace("PluginConversionBoundary");
+    await addPlugin({ root, plugin: "assay.trellis" });
+    const before = await createTrellisTask({
+      root,
+      title: "Before conversion",
+      sessionId: "before",
+    });
+    const target = path.join(await tempDirs.createTempDir(), "converted-boundary");
+    let reached!: () => void;
+    let release!: () => void;
+    const atBoundary = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const continueConversion = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setConvertRoadmapProbeForTests(async () => {
+      reached();
+      await continueConversion;
+    });
+
+    const conversion = convertOverlayToStandalone({ root, target, move: false, keepOverlay: true });
+    await atBoundary;
+    try {
+      await expect(
+        createTrellisTask({ root, title: "Blocked", sessionId: "blocked" }),
+      ).rejects.toThrow(/workspace conversion/);
+      await expect(addPlugin({ root, plugin: "assay.intent" })).rejects.toThrow(
+        /workspace conversion/,
+      );
+    } finally {
+      release();
+    }
+    await conversion;
+
+    expect((await getCurrentTrellisTask({ root: target, sessionId: "before" })).task?.id).toBe(
+      before.task?.id,
+    );
+    expect(await exists(path.join(target, ".assay", "trellis", ".lock"))).toBe(false);
+    expect(await exists(path.join(target, ".assay", "coordination"))).toBe(false);
+    await expect(addPlugin({ root: target, plugin: "assay.intent" })).resolves.toMatchObject({
+      plugin: "assay.intent",
+    });
+  });
+
   it("does not grant a contributed capability from declaration alone", async () => {
     const root = await standaloneWorkspace("DeclaredOnlyIntent");
     const manifest = await loadManifest(root);

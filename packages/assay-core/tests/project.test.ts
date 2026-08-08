@@ -19,7 +19,6 @@ import {
   initFramework,
   loadManifest,
   loadNativeProject,
-  migrateProjectAuthority,
   realizeRoadmap,
   recordManagedFile,
   resolveWorkspaceLayout,
@@ -374,117 +373,6 @@ describe("native Project scaffold", () => {
   }, 60_000);
 });
 
-describe("legacy project-authority migration", () => {
-  async function legacyWorkspace(name: string): Promise<string> {
-    const root = path.join(await tempDirs.createTempDir(), name);
-    await initFramework({ target: root, name, archetype: "solve" });
-    await rm(path.join(root, "project"), { recursive: true });
-    const legacy = path.join(root, "project-authority");
-    await mkdir(path.join(legacy, "policy"), { recursive: true });
-    await writeFile(path.join(legacy, "README.md"), "# Managed legacy placeholder\n", "utf8");
-    await writeFile(
-      path.join(legacy, "policy", "README.md"),
-      "# Managed policy placeholder\n",
-      "utf8",
-    );
-    await writeFile(path.join(legacy, "policy", "rules.md"), "# Keep these bytes\n", "utf8");
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    manifest.project.capabilities = ["project-authority"];
-    recordManagedFile(manifest, {
-      path: "project-authority/README.md",
-      templateId: "project.authority.readme",
-      content: "# Managed legacy placeholder\n",
-    });
-    recordManagedFile(manifest, {
-      path: "project-authority/policy/README.md",
-      templateId: "project.authority.policy.readme",
-      content: "# Managed policy placeholder\n",
-    });
-    manifest.user_deleted = [
-      "project-authority/README.md",
-      "project-authority/policy/deleted.md",
-      "unrelated.md",
-    ];
-    await saveManifest(root, manifest);
-    return root;
-  }
-
-  it("previews without writes, applies transactionally, and preserves the source", async () => {
-    const root = await legacyWorkspace("legacy");
-    const updatePreview = await applyUpdate({ root, dryRun: true });
-    expect(updatePreview.report.notes.join("\n")).toContain("migrate-authority --dry-run");
-    const updated = await applyUpdate({ root });
-    expect(updated.report.notes.join("\n")).toContain("legacy project-authority preserved");
-    expect(await exists(path.join(root, "project"))).toBe(false);
-
-    const preview = await migrateProjectAuthority({ root });
-    expect(preview.entries).toEqual(["policy"]);
-    expect(await exists(path.join(root, "project"))).toBe(false);
-
-    const applied = await migrateProjectAuthority({ root, apply: true });
-    expect(applied.eventFile).toBeTruthy();
-    expect(await readFile(path.join(root, "project", "policy", "rules.md"), "utf8")).toBe(
-      "# Keep these bytes\n",
-    );
-    expect(await readFile(path.join(root, "project-authority", "policy", "rules.md"), "utf8")).toBe(
-      "# Keep these bytes\n",
-    );
-    expect((await loadManifest(root))?.project.capabilities).toBeUndefined();
-    const migratedManifest = await loadManifest(root);
-    expect(Object.keys(migratedManifest?.managed_files ?? {})).toContain(
-      "project/policy/README.md",
-    );
-    expect(
-      Object.keys(migratedManifest?.managed_files ?? {}).some((entry) =>
-        entry.startsWith("project-authority/"),
-      ),
-    ).toBe(false);
-    expect(migratedManifest?.managed_files["project/README.md"]).toBeUndefined();
-    expect(migratedManifest?.user_deleted).toEqual(["project/policy/deleted.md", "unrelated.md"]);
-    expect(
-      await readFile(path.join(root, "project-authority", "policy", "README.md"), "utf8"),
-    ).toBe("# Managed policy placeholder\n");
-    expect((await checkFramework({ root })).ok).toBe(true);
-  });
-
-  it("fails before writes for a non-empty target or unknown source entry", async () => {
-    const conflict = await legacyWorkspace("conflict");
-    await mkdir(path.join(conflict, "project"), { recursive: true });
-    await writeFile(path.join(conflict, "project", "user.md"), "keep", "utf8");
-    await expect(migrateProjectAuthority({ root: conflict, apply: true })).rejects.toThrow(
-      /target already contains content/,
-    );
-    expect(await readFile(path.join(conflict, "project", "user.md"), "utf8")).toBe("keep");
-
-    const unknown = await legacyWorkspace("unknown");
-    await writeFile(path.join(unknown, "project-authority", "mystery.txt"), "keep", "utf8");
-    await expect(migrateProjectAuthority({ root: unknown, apply: true })).rejects.toThrow(
-      /unknown entry/,
-    );
-    expect(await exists(path.join(unknown, "project"))).toBe(false);
-    expect(await readFile(path.join(unknown, "project-authority", "mystery.txt"), "utf8")).toBe(
-      "keep",
-    );
-  });
-
-  it("rejects a redirected legacy source before writing the native Project", async () => {
-    const root = await legacyWorkspace("junction");
-    const source = path.join(root, "project-authority");
-    const actual = path.join(root, "legacy-authority-actual");
-    await rename(source, actual);
-    await symlink(actual, source, process.platform === "win32" ? "junction" : "dir");
-
-    await expect(migrateProjectAuthority({ root, apply: true })).rejects.toThrow(
-      /real directory|symlink|junction|reparse point/,
-    );
-    expect(await exists(path.join(root, "project"))).toBe(false);
-    expect(await readFile(path.join(actual, "policy", "rules.md"), "utf8")).toBe(
-      "# Keep these bytes\n",
-    );
-  });
-});
-
 describe("Project conversion", () => {
   it("preserves Project identity while hoisting an overlay", async () => {
     const root = await productRepo("convert-source");
@@ -497,7 +385,7 @@ describe("Project conversion", () => {
     expect(check.ok, JSON.stringify(check.rows, null, 2)).toBe(true);
   }, 60_000);
 
-  it("serializes create, update, and archive across a copy conversion", async () => {
+  it("fail-closes create, update, and archive across a copy conversion", async () => {
     const root = await productRepo("convert-roadmap-source");
     await attachExistingRepo({
       root,
@@ -525,34 +413,27 @@ describe("Project conversion", () => {
     });
     const converting = convertOverlayToStandalone({ root, target });
     await entered;
-    const settled = { create: false, update: false, archive: false };
-    const creating = createRoadmap({ root, title: "Concurrent" }).finally(() => {
-      settled.create = true;
-    });
-    const updating = updateRoadmap({ root, id: editable.item.id, title: "Updated" }).finally(() => {
-      settled.update = true;
-    });
-    const archiving = archiveRoadmap({ root, id: archivable.item.id }).finally(() => {
-      settled.archive = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(settled).toEqual({ create: false, update: false, archive: false });
+    await Promise.all([
+      expect(createRoadmap({ root, title: "Concurrent" })).rejects.toMatchObject({
+        code: "ROADMAP_CONFLICT",
+      }),
+      expect(updateRoadmap({ root, id: editable.item.id, title: "Updated" })).rejects.toMatchObject(
+        { code: "ROADMAP_CONFLICT" },
+      ),
+      expect(archiveRoadmap({ root, id: archivable.item.id })).rejects.toMatchObject({
+        code: "ROADMAP_CONFLICT",
+      }),
+    ]);
     releaseResolve?.();
     await converting;
-    const created = await creating;
-    await Promise.all([updating, archiving]);
 
-    expect((await showRoadmap({ root, id: editable.item.id })).item.title).toBe("Updated");
-    expect((await showRoadmap({ root, id: archivable.item.id })).archived).toBe(true);
-    expect((await showRoadmap({ root, id: created.item.id })).item.title).toBe("Concurrent");
+    expect((await showRoadmap({ root, id: editable.item.id })).item.title).toBe("Editable");
+    expect((await showRoadmap({ root, id: archivable.item.id })).archived).toBe(false);
     expect((await showRoadmap({ root: target, id: editable.item.id })).item.title).toBe("Editable");
     expect((await showRoadmap({ root: target, id: archivable.item.id })).archived).toBe(false);
-    await expect(showRoadmap({ root: target, id: created.item.id })).rejects.toMatchObject({
-      code: "ROADMAP_NOT_FOUND",
-    });
   }, 60_000);
 
-  it("fails a queued Roadmap create after a move instead of recreating Project", async () => {
+  it("fails a Roadmap create at the move boundary instead of recreating Project", async () => {
     const root = await productRepo("convert-roadmap-move-source");
     await attachExistingRepo({ root, name: "Move Roadmap", archetype: "explore", noTrack: true });
     await createRoadmap({ root, title: "Moved" });
@@ -571,15 +452,11 @@ describe("Project conversion", () => {
     });
     const converting = convertOverlayToStandalone({ root, target, move: true });
     await entered;
-    let createSettled = false;
-    const creating = createRoadmap({ root, title: "Must not appear" }).finally(() => {
-      createSettled = true;
+    await expect(createRoadmap({ root, title: "Must not appear" })).rejects.toMatchObject({
+      code: "ROADMAP_CONFLICT",
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(createSettled).toBe(false);
     releaseResolve?.();
     await converting;
-    await expect(creating).rejects.toMatchObject({ code: "ROADMAP_PROJECT_INVALID" });
     expect(await exists(path.join(root, ".assay", "project"))).toBe(false);
     expect((await showRoadmap({ root: target, id: "roadmap-0001-moved" })).item.title).toBe(
       "Moved",

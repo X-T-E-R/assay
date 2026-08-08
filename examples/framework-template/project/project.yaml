@@ -1,5 +1,5 @@
 __schema: 1
-id: project-example-project
+id: project-assay
 name: Assay
 authority:
   mode: native

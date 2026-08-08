@@ -24,7 +24,6 @@ What happens:
 3. A standard Assay scaffold is created.
 4. An adoption manifest is written to `.old/<timestamp>/.adoption-manifest.json`.
 
-If the target already has a `.assay/manifest.json`, the CLI refuses to adopt — use `update` or `migrate-layout` instead. If it has a legacy manifest shape with no `systems-registry.json`, run `migrate-layout --dry-run` first to plan the registry/contract upgrade.
 
 ## Post-adoption steps
 
@@ -38,7 +37,6 @@ After adoption, follow these steps in order:
 
 4. **Move old artifacts** into the appropriate new locations after the direction is confirmed. Do not default to copying. Do not assume every artifact belongs in one fixed directory. `check --advisories` can list a lingering `.old/` while migration is still in progress.
 
-5. **Register the active system** with `assay system register`. If the system was a separate git repository before adoption (or will be), declare `--vcs independent-git` and add the system path to root `.gitignore` while exempting `system.yaml`. Use `--primary` for the active system; archived predecessors can be registered later or via `migrate-layout`.
 
 6. **Close the adoption analysis** with `assay analysis close <path> --exit adopt|reject` so the decision is recorded in the event ledger.
 

@@ -16,13 +16,10 @@ import {
   applyUpdate,
   attachExistingRepo,
   checkFramework,
-  createAdr,
   effectiveCapabilities,
   initFramework,
   isCapabilityEnabled,
-  listAdrs,
   listCapabilities,
-  loadAdrIndex,
   loadArchetype,
   loadManifest,
   requireCapability,
@@ -93,48 +90,35 @@ describe("effectiveCapabilities", () => {
   it("unions archetype modules with manifest capabilities and drops unknown names", async () => {
     const study = await loadArchetype("study");
 
-    expect(effectiveCapabilities(study, undefined)).toEqual(["adr"]);
-    expect(effectiveCapabilities(study, ["iteration"])).toEqual(["adr", "iteration"]);
-    expect(effectiveCapabilities(study, ["adr"])).toEqual(["adr"]);
-    expect(effectiveCapabilities(study, ["telepathy"])).toEqual(["adr"]);
+    expect(effectiveCapabilities(study, undefined)).toEqual([]);
+    expect(effectiveCapabilities(study, ["iteration"])).toEqual(["iteration"]);
+    expect(effectiveCapabilities(study, ["intent"])).toEqual(["intent"]);
+    expect(effectiveCapabilities(study, ["telepathy"])).toEqual([]);
     expect(effectiveCapabilities(null, ["iteration"])).toEqual(["iteration"]);
   });
 });
 
 describe("addCapability", () => {
   it("scaffolds a module the archetype lacks and keeps the workspace checkable", async () => {
-    const root = await standaloneWorkspace("AddAdr", BARE_ARCHETYPE);
+    const root = await standaloneWorkspace("AddIteration", BARE_ARCHETYPE);
 
-    expect(await isCapabilityEnabled(root, "adr")).toBe(false);
-    await expect(createAdr(root, { title: "Too Early" })).rejects.toThrow(
-      `capability not enabled in archetype ${BARE_ARCHETYPE}: adr`,
+    expect(await isCapabilityEnabled(root, "iteration")).toBe(false);
+    await expect(startIteration({ root, title: "Too Early" })).rejects.toThrow(
+      `capability not enabled in archetype ${BARE_ARCHETYPE}: iteration`,
     );
 
-    const result = await addCapability({ root, module: "adr" });
-
+    const result = await addCapability({ root, module: "iteration" });
     expect(result.alreadyEnabled).toBe(false);
     expect(result.source).toBe("added");
-    expect(result.capabilities).toEqual(["adr"]);
-    expect(await exists(path.join(root, "knowledge", "decisions", "README.md"))).toBe(true);
-    expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
-    expect(await loadAdrIndex(root)).not.toBeNull();
-
-    const manifest = await loadManifest(root);
-    expect(manifest?.project.capabilities).toEqual(["adr"]);
-    expect(Object.keys(manifest?.managed_files ?? {})).toContain(
-      "knowledge/decisions/ADR-TEMPLATE.md",
+    expect(result.capabilities).toEqual(["iteration"]);
+    expect(await exists(path.join(root, "iterations", "templates", "iteration-plan.md"))).toBe(
+      true,
     );
-
-    expect(await isCapabilityEnabled(root, "adr")).toBe(true);
-    const adr = await createAdr(root, { title: "First Decision" });
-    expect(adr.adr.path).toBe("knowledge/decisions/ADR-0001-first-decision.md");
-    expect((await listAdrs(root)).adrs).toHaveLength(1);
-
-    const check = await checkFramework({ root });
-    expect(check.ok).toBe(true);
-    expect(
-      check.rows.some((row) => row.path === "knowledge/decisions" && row.status === "ok"),
-    ).toBe(true);
+    expect((await loadManifest(root))?.project.capabilities).toEqual(["iteration"]);
+    await expect(startIteration({ root, title: "First Loop" })).resolves.toMatchObject({
+      path: expect.stringMatching(/^iterations\//),
+    });
+    expect((await checkFramework({ root })).ok).toBe(true);
   });
 
   it("writes a capability.added event", async () => {
@@ -172,9 +156,9 @@ describe("addCapability", () => {
   });
 
   it("reports an archetype-provided module as already enabled without recording it", async () => {
-    const root = await standaloneWorkspace("ArchetypeProvided", "study");
+    const root = await standaloneWorkspace("ArchetypeProvided", "solve");
 
-    const result = await addCapability({ root, module: "adr" });
+    const result = await addCapability({ root, module: "iteration" });
 
     expect(result.alreadyEnabled).toBe(true);
     expect(result.source).toBe("archetype");
@@ -186,33 +170,23 @@ describe("addCapability", () => {
 
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(FrameworkError);
     await expect(addCapability({ root, module: "telepathy" })).rejects.toThrow(
-      /supported modules: adr, intent, iteration/,
+      /supported modules: intent, iteration/,
     );
     expect((await loadManifest(root))?.project.capabilities).toBeUndefined();
   });
 
   it("scaffolds an overlay workspace under .assay and never the product repo root", async () => {
     const root = await overlayWorkspace("OverlayCapability");
-
-    await addCapability({ root, module: "adr" });
-
-    expect(await exists(path.join(root, ".assay", "knowledge", "decisions", "README.md"))).toBe(
-      true,
-    );
-    expect(await exists(path.join(root, "knowledge"))).toBe(false);
+    await addCapability({ root, module: "iteration" });
+    expect(
+      await exists(path.join(root, ".assay", "iterations", "templates", "iteration-plan.md")),
+    ).toBe(true);
+    expect(await exists(path.join(root, "iterations"))).toBe(false);
     expect((await git(root, ["status", "--short"])).trim()).toBe("");
-
-    const manifest = await loadManifest(root);
-    expect(Object.keys(manifest?.managed_files ?? {})).toContain(
-      ".assay/knowledge/decisions/README.md",
-    );
-
-    const adr = await createAdr(root, { title: "Overlay Decision" });
-    expect(adr.adr.path).toBe(".assay/knowledge/decisions/ADR-0001-overlay-decision.md");
     expect((await checkFramework({ root })).ok).toBe(true);
   });
 
-  it("enables iteration on an archetype that only ships adr", async () => {
+  it("enables iteration on the study archetype", async () => {
     const root = await standaloneWorkspace("AddIteration", "study");
 
     await expect(startIteration({ root, title: "Too Early" })).rejects.toThrow(
@@ -275,7 +249,7 @@ describe("manifests without a capabilities field", () => {
     if (!manifest) throw new Error("manifest missing");
     expect(manifest.project.capabilities).toBeUndefined();
 
-    expect(await isCapabilityEnabled(root, "adr")).toBe(true);
+    expect(await isCapabilityEnabled(root, "intent")).toBe(false);
     expect(await isCapabilityEnabled(root, "iteration")).toBe(false);
     expect((await checkFramework({ root })).ok).toBe(true);
     expect((await analyzeUpdate({ root })).changes.new).toEqual([]);
@@ -288,7 +262,7 @@ describe("manifests without a capabilities field", () => {
     manifest.project.capabilities = ["telepathy"];
     await saveManifest(root, manifest);
 
-    expect(await isCapabilityEnabled(root, "adr")).toBe(false);
+    expect(await isCapabilityEnabled(root, "intent")).toBe(false);
     expect((await checkFramework({ root })).ok).toBe(true);
 
     const listed = await listCapabilities({ root });
@@ -311,7 +285,6 @@ describe("listCapabilities", () => {
     expect(result.project).toBe("ListCapabilities");
     expect(result.archetype).toBe("study");
     expect(result.capabilities).toEqual([
-      { module: "adr", enabled: true, source: "archetype", supported: true },
       { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: true, source: "added", supported: true },
     ]);
@@ -323,7 +296,6 @@ describe("listCapabilities", () => {
     const result = await listCapabilities({ root });
 
     expect(result.capabilities).toEqual([
-      { module: "adr", enabled: false, source: null, supported: true },
       { module: "intent", enabled: false, source: null, supported: true },
       { module: "iteration", enabled: false, source: null, supported: true },
     ]);

@@ -10,6 +10,7 @@ import { MANAGED_DIR } from "../constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "../errors.js";
 import { loadManifest } from "../manifest.js";
 import { stringifySortedJson } from "../serialization.js";
+import { withWorkspaceMutationCoordination } from "../tasks/task-storage.js";
 import {
   type DonorAdoptionDefinition,
   type DonorDecision,
@@ -62,13 +63,13 @@ function expectedRecordId(prefix: string, value: unknown): string {
 /**
  * Root directory for donor state: always `<root>/.assay/donors`.
  *
- * Donor records are Assay-owned state, like the event log, ADR index, and
+ * Donor records are Assay-owned state, like the event log and systems registry,
  * systems registry, all of which address `.assay/` through the shared
  * constants rather than the layout path map. Every v4 layout — standalone and
  * overlay alike — puts state under `.assay/`, so using the constant costs
  * nothing and removes a whole failure mode: a manifest with a stale or
  * mis-derived `state_root` can no longer split donor records off from the rest
- * of the workspace state, where `migrate-layout` would leave them behind and
+ * of the workspace state, where a partial copy would leave them behind and
  * `donor list` would report `(none)`.
  */
 export async function donorWorkspaceRoot(root: string): Promise<string> {
@@ -326,26 +327,28 @@ export async function withAdoptionLock<T>(
   adoptionId: string,
   operation: (directory: string) => Promise<T>,
 ): Promise<T> {
-  const directory = await adoptionRoot(root, adoptionId);
-  await mkdir(directory, { recursive: true });
-  const lockFile = path.join(directory, ".lock");
-  const payload: AdoptionLockPayload = {
-    pid: process.pid,
-    host: hostname(),
-    boot: bootToken(),
-    owner: randomUUID(),
-    acquired_at: new Date().toISOString(),
-  };
-  const handle = await acquireAdoptionLock(lockFile, adoptionId);
+  return withWorkspaceMutationCoordination(root, async () => {
+    const directory = await adoptionRoot(root, adoptionId);
+    await mkdir(directory, { recursive: true });
+    const lockFile = path.join(directory, ".lock");
+    const payload: AdoptionLockPayload = {
+      pid: process.pid,
+      host: hostname(),
+      boot: bootToken(),
+      owner: randomUUID(),
+      acquired_at: new Date().toISOString(),
+    };
+    const handle = await acquireAdoptionLock(lockFile, adoptionId);
 
-  try {
-    await handle.writeFile(stringifySortedJson(payload), "utf8");
-    await handle.sync();
-    return await operation(directory);
-  } finally {
-    await handle.close();
-    await releaseOwnedLock(lockFile, payload.owner);
-  }
+    try {
+      await handle.writeFile(stringifySortedJson(payload), "utf8");
+      await handle.sync();
+      return await operation(directory);
+    } finally {
+      await handle.close();
+      await releaseOwnedLock(lockFile, payload.owner);
+    }
+  });
 }
 
 /**

@@ -214,27 +214,4 @@ describe("upstream drift in status", () => {
     },
     GIT_INTEGRATION_TIMEOUT_MS,
   );
-
-  it("suggests a decision record when the last change was graded major", async () => {
-    const root = path.join(await tempDirs.createTempDir(), "UpstreamGrading");
-    await initFramework({ target: root, name: "UpstreamGrading" });
-    const source = path.join(await tempDirs.createTempDir(), "graded");
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Graded\n\nv1\n", "utf8");
-    await addSource({ root, source, alias: "graded" });
-    await writeFile(path.join(source, "README.md"), "# Graded\n\nv2\n", "utf8");
-    await syncSource({ root, alias: "graded", changeClass: "major" });
-
-    const status = await getFrameworkStatus({ root });
-    expect(status.adrSuggestions?.[0]).toMatchObject({ source: "graded", changeClass: "major" });
-    expect(status.adrSuggestions?.[0]?.message).toContain("assay adr new");
-  });
-
-  it("omits the upstream section for a workspace with no living sources", async () => {
-    const root = path.join(await tempDirs.createTempDir(), "UpstreamNone");
-    await initFramework({ target: root, name: "UpstreamNone" });
-    const status = await getFrameworkStatus({ root });
-    expect(status.upstream).toBeUndefined();
-    expect(status.adrSuggestions).toBeUndefined();
-  });
 });

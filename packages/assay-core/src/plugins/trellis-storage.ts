@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import { FrameworkError } from "../errors.js";
 import { stringifySortedJson } from "../serialization.js";
+import { withWorkspaceMutationCoordination } from "../tasks/task-storage.js";
 
 export const TRELLIS_LOCK_STALE_MS = 30_000;
 
@@ -1013,7 +1014,9 @@ export async function withTrellisLock<T>(
   action: () => Promise<T>,
   options: { staleMs?: number } = {},
 ): Promise<T> {
-  return withPidFileLock(rootValue, ".assay/trellis/.lock", action, options);
+  return withWorkspaceMutationCoordination(rootValue, () =>
+    withPidFileLock(rootValue, ".assay/trellis/.lock", action, options),
+  );
 }
 
 export async function withPidFileLock<T>(

@@ -13,13 +13,10 @@ import {
   inspectAdoptionLock,
   inspectDonorAdoption,
   listDonorAdoptions,
-  loadManifest,
-  migrateLayout,
   recordDonorEvidence,
   registerDonorAdoption,
   registerSystem,
   releaseAdoptionLock,
-  saveManifest,
 } from "../src/index.js";
 
 const tempDirs = createTempDirectoryFixture("assay-donor-persistence");
@@ -91,15 +88,6 @@ async function registeredFixture(name: string): Promise<DonorFixture> {
   return fixture;
 }
 
-/** Rewrite the manifest as a pre-layout-v4 workspace: no layout block. */
-async function downgradeManifestToV3(root: string): Promise<void> {
-  const manifest = await loadManifest(root);
-  if (!manifest) throw new Error("manifest missing");
-  manifest.layout_version = 3;
-  Reflect.deleteProperty(manifest, "layout");
-  await saveManifest(root, manifest);
-}
-
 const donorsDir = (root: string, ...segments: readonly string[]): string =>
   path.join(root, ".assay", "donors", ...segments);
 
@@ -155,41 +143,6 @@ async function createDirectoryLink(target: string, linkPath: string): Promise<bo
 }
 
 describe("donor state does not drift from the rest of the workspace state", () => {
-  it("writes donor records under .assay when a manifest read from .assay claims layout 3", async () => {
-    const fixture = await createFixture("LegacyLayoutDonor");
-    await downgradeManifestToV3(fixture.root);
-
-    await registerDonorAdoption({ root: fixture.root, definition: definition(fixture) });
-
-    expect(await exists(donorsDir(fixture.root, "upstream-product", "state.json"))).toBe(true);
-    // `.framework/` is where a real v3 workspace kept state, but this manifest
-    // was read from `.assay/`, so every other state consumer is using `.assay/`.
-    expect(await exists(path.join(fixture.root, ".framework"))).toBe(false);
-  });
-
-  it("keeps donor records visible to list and check across migrate-layout", async () => {
-    const fixture = await createFixture("LegacyLayoutMigration");
-    await downgradeManifestToV3(fixture.root);
-    await registerDonorAdoption({ root: fixture.root, definition: definition(fixture) });
-
-    await migrateLayout({ root: fixture.root, apply: true, now: new Date("2026-07-26T09:00:00") });
-
-    const listed = await listDonorAdoptions({ root: fixture.root });
-    expect(listed.adoptions.map((entry) => entry.id)).toEqual(["upstream-product"]);
-    const check = await checkFramework({ root: fixture.root });
-    expect(
-      check.rows.some(
-        (row) =>
-          row.path === ".assay/donors/upstream-product/state.json" &&
-          row.status === "ok" &&
-          row.message?.includes("donor state and committed records are valid"),
-      ),
-      JSON.stringify(check.rows, null, 2),
-    ).toBe(true);
-  });
-});
-
-describe("interrupted donor record writes stay recoverable", () => {
   it("reports a truncated inspection against its own file and leaves state.json valid", async () => {
     const fixture = await registeredFixture("TruncatedInspection");
     const inspected = await inspectDonorAdoption({

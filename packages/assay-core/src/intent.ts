@@ -3,7 +3,6 @@ import path from "node:path";
 
 import { parse as parseYaml } from "yaml";
 
-import { createAdr, loadAdrIndex } from "./adrs.js";
 import { MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
@@ -27,7 +26,7 @@ const CAPTURE_ID_PATTERN = /^\d{8}-[0-9a-f]{12}$/;
 /** Selector charset. Rejects path separators before the value reaches the filesystem. */
 const CAPTURE_SELECTOR_PATTERN = /^[0-9a-f-]+$/;
 
-export type IntentPromotionTarget = "requirement" | "decision";
+export type IntentPromotionTarget = "requirement";
 
 export interface CaptureIntentOptions {
   readonly root: string;
@@ -87,11 +86,9 @@ export interface PromoteIntentResult {
   readonly root: string;
   readonly capture: IntentCapture;
   readonly to: IntentPromotionTarget;
-  /** Workspace-relative path of the requirement or ADR that was written. */
+  /** Workspace-relative path of the requirement that was written. */
   readonly path: string;
   readonly title: string;
-  /** Set only for `--to decision`. */
-  readonly adrId?: string;
   readonly eventFile: string;
 }
 
@@ -105,8 +102,6 @@ export type IntentIntegrity = "ok" | "modified" | "unreadable";
 export interface IntentListEntry extends IntentCapture {
   /** Workspace-relative requirement paths that declare `derives_from: <id>`. */
   readonly requirements: readonly string[];
-  /** ADR ids that declare `related_intent: <id>`. */
-  readonly decisions: readonly string[];
   readonly integrity: IntentIntegrity;
   /** Set when `integrity` is not `ok`: what is wrong and how to resolve it. */
   readonly integrityMessage?: string;
@@ -637,35 +632,6 @@ export async function promoteIntent(options: PromoteIntentOptions): Promise<Prom
   const capture = await findCapture(root, manifest, options.capture);
   const title = options.title?.trim() || `Intent ${capture.id}`;
 
-  if (options.to === "decision") {
-    const result = await createAdr(
-      root,
-      { title, relatedIntent: capture.id, system: capture.system },
-      { now },
-    );
-    const eventFile = await appendEvent(
-      root,
-      {
-        event: "intent.promoted",
-        id: capture.id,
-        to: "decision",
-        path: result.adr.path,
-        adr: result.adr.id,
-        system: capture.system,
-      },
-      now,
-    );
-    return {
-      root,
-      capture,
-      to: "decision",
-      path: result.adr.path,
-      title,
-      adrId: result.adr.id,
-      eventFile: relativeDisplayPath(eventFile, root),
-    };
-  }
-
   const relativePath = intentPath(
     manifest,
     REQUIREMENTS_DIR,
@@ -739,22 +705,6 @@ async function requirementsByCapture(
   return byCapture;
 }
 
-/** ADR ids grouped by the capture id each one answers. */
-async function decisionsByCapture(root: string): Promise<Map<string, string[]>> {
-  const byCapture = new Map<string, string[]>();
-  let index: Awaited<ReturnType<typeof loadAdrIndex>> = null;
-  try {
-    index = await loadAdrIndex(root);
-  } catch {
-    return byCapture;
-  }
-  for (const adr of Object.values(index?.adrs ?? {})) {
-    if (adr.related_intent === undefined) continue;
-    byCapture.set(adr.related_intent, [...(byCapture.get(adr.related_intent) ?? []), adr.id]);
-  }
-  return byCapture;
-}
-
 /**
  * The named system plus every system reachable through `supersedes`. A capture
  * names the system that was current when it was recorded, so answering "what
@@ -793,7 +743,6 @@ export async function listIntent(options: ListIntentOptions): Promise<ListIntent
 
   const originalRoot = intentPath(manifest, ORIGINAL_DIR);
   const requirements = await requirementsByCapture(root, manifest);
-  const decisions = await decisionsByCapture(root);
 
   const captures: IntentListEntry[] = [];
   for (const id of await listCaptureIds(root, originalRoot)) {
@@ -810,7 +759,6 @@ export async function listIntent(options: ListIntentOptions): Promise<ListIntent
     captures.push({
       ...capture,
       requirements: requirements.get(id) ?? [],
-      decisions: decisions.get(id) ?? [],
       integrity: inspection.integrity,
       ...(inspection.integrity === "ok" ? {} : { integrityMessage: inspection.message }),
     });

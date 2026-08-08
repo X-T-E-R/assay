@@ -12,14 +12,12 @@ Run it as a standalone workbench, or attach it privately to the repo you already
 
 Your agent can inspect twenty repositories in an afternoon. Without a workbench, the useful parts disappear into chat scrollback: what mattered, what failed, what was adopted, and why the next agent should not start over.
 
-Assay is a CLI workbench for turning evidence into better systems. It keeps sources, experiments, analyses, ADRs, and reusable knowledge in plain files so decisions survive context resets.
 
 The loop is simple:
 
 ```text
 sources / experiments / goals
         -> structured analysis + checks
-        -> adopt / reject / experiment / ADR
         -> knowledge, systems, and the next iteration
 ```
 
@@ -44,7 +42,6 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 | Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, iterations |
 | Explore several possible directions | `explore` | approaches, trials, comparison notes, iteration paths |
 
-The three built-ins cover the three shapes work actually takes: study outside examples, solve a measurable target, or explore when the target shape is still open. A workspace that needs a different structure declares its own archetype YAML under `.assay/archetypes/` or `~/.assay/archetypes/`; see `docs/workspace-layout.md`. The command surface stays small: `task`, `roadmap`, `spec`, `source`, `analysis`, `donor`, `intent`, `iteration`, `adr`, `knowledge`, `system`, and `check`.
 
 ## Keep one outcome intact across context resets
 
@@ -72,15 +69,12 @@ Capability modules are optional features. An archetype enables some at init; the
 
 | Module | Turns on | Enable it with |
 | --- | --- | --- |
-| `adr` | Numbered architecture decisions with status and supersede chains | `assay capability add adr` |
-| `intent` | Verbatim capture of what was asked for, promoted into requirements or ADRs | `assay plugin add assay.intent` |
 | `iteration` | Planned changes to your own systems, opened and closed with a result | `assay capability add iteration` |
 
 `assay capability list` shows which modules a workspace has and how it got them. Adding a module scaffolds its directories and templates, records it in the manifest, and is safe to re-run. `assay capability add intent` remains a compatible legacy entrance; `assay reconcile --apply` adopts its existing files into the plugin receipt without moving or rewriting intent records.
 
 Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Project ids use `project-<slug>`. `README.md` explains authority boundaries. Roadmap items live under `roadmap/<roadmap-id>/`, with closed machine state in `item.yaml` and reader-owned outcome prose in `outcome.md`; the root `roadmap/README.md` is explanatory, not a dynamic index. Native Specs are lazy under `specs/<spec-id>/{spec.yaml,specification.md}` and explicitly promote current constraints from Analysis or Task without changing their source. Project-selected `relay/` and `extensions/` remain lazy. References, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority. See [Roadmap items](docs/roadmap.md) and [Native specifications](docs/spec.md).
 
-Intent is the most recently introduced of the three capability modules, and the one most often missing from a repo: months later the code is still there but the reason for it is not. `assay intent capture` stores the original wording, content-addressed and append-only, scoped to a registered system, so a requirement or an ADR can point back at the words it came from.
 
 ## Add workspace plugins without another setup lifecycle
 
@@ -88,8 +82,9 @@ Plugins extend an existing Assay workspace; they do not replace `init`,
 `attach`, or the evidence workbench itself. `assay.intent` contributes the
 additive `intent` capability. `assay.trellis` is the legacy in-package
 operational surface. Its dynamic state lives under `.assay/trellis/`; native
-Assay Task, ADR, and intent workflows remain active. New Tasks do not absorb,
-rewrite, or automatically migrate legacy Trellis state.
+Project, Task, Roadmap, Spec, intent, and knowledge authorities remain
+separate. Installing the runtime does not rewrite or automatically migrate
+legacy Trellis state.
 
 ```bash
 # Create or attach, then install intent in the same command.
@@ -194,7 +189,6 @@ cd assay
 node scripts/install.mjs
 ```
 
-Then ask your agent to use the Assay Builder skill when a task needs source study, evidence capture, ADRs, iterations, or reusable knowledge. The useful mental model is simple: do not just "look at examples"; open a source, analyze it, close the decision, and promote durable findings.
 
 See `skills/assay-builder/references/cli-setup.md` for setup flags and invocation details.
 
@@ -202,13 +196,11 @@ See `skills/assay-builder/references/cli-setup.md` for setup flags and invocatio
 
 Assay separates system code from Assay memory.
 
-In `standalone` mode, the workspace Git is optional. Use it when analyses, ADRs, observations, and knowledge need review or team history. Keep independent systems in their own Git repositories; the workbench records contracts and decisions, not their source history.
 
 In `overlay` mode, Assay should not enter your product repo by default. `assay attach --privacy private` writes `/.assay/` to the repo-local `.git/info/exclude` and leaves tracked project files alone. If you want versioned Assay memory without polluting product commits, use `--privacy private-git` to initialize a separate Git repository inside `.assay/`.
 
 ## What Assay deliberately does not do
 
-Assay does not run a model for you, hide your files in a database, or ask you to trust a magic agent loop. Your work remains plain files. The value is the structure: sources stay traceable, analyses can carry observations, and important choices can become ADRs or reusable knowledge instead of folklore. Explicit commands record decisions without trying to mechanically judge whether the prose is good enough.
 
 ## Learn more
 

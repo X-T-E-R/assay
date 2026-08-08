@@ -1,6 +1,5 @@
 export const CORE_PACKAGE_NAME = "assay-core";
 
-export * from "./adrs.js";
 export * from "./agents.js";
 export * from "./adoption.js";
 export * from "./attach.js";
@@ -9,7 +8,6 @@ export * from "./convert.js";
 export * from "./donors/index.js";
 export * from "./errors.js";
 export * from "./events.js";
-export * from "./governance.js";
 export * from "./hashing.js";
 export * from "./intent.js";
 export * from "./layout.js";
@@ -33,4 +31,9 @@ export * from "./update.js";
 export * from "./upstream.js";
 export * from "./workspace.js";
 export * from "./task.js";
+export {
+  setWorkspaceMutationProbeForTests,
+  withWorkspaceConversionCoordination,
+  withWorkspaceMutationCoordination,
+} from "./tasks/task-storage.js";
 export * from "./zones.js";

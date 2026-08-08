@@ -100,43 +100,6 @@ describe("assay status upstream", () => {
     },
     UPSTREAM_CLI_TIMEOUT_MS,
   );
-
-  it(
-    "suggests a decision record for a major-graded sync in both sync and status output",
-    async () => {
-      const root = await createInitializedCliWorkspace({
-        tempDirs,
-        runner: cliRunner,
-        directoryName: "StatusAdrSuggestion",
-      });
-      const source = path.join(await tempDirs.createTempDir(), "graded");
-      await mkdir(source, { recursive: true });
-      await writeFile(path.join(source, "README.md"), "# Graded\n\nv1\n", "utf8");
-      expect(
-        (await cliRunner.runCli(["source", "add", source, "graded", "--root", root])).exitCode,
-      ).toBe(0);
-
-      await writeFile(path.join(source, "README.md"), "# Graded\n\nv2\n", "utf8");
-      const sync = await cliRunner.runCli([
-        "source",
-        "sync",
-        "graded",
-        "--root",
-        root,
-        "--class",
-        "major",
-      ]);
-      expect(sync.exitCode).toBe(0);
-      expect(sync.stdout).toContain("Advisory: graded 'major'");
-      expect(sync.stdout).toContain('assay adr new "<decision>"');
-
-      const status = await cliRunner.runCli(["status", "--root", root]);
-      expect(status.exitCode).toBe(0);
-      expect(status.stdout).toContain("Decision records");
-      expect(status.stdout).toContain("source 'graded' last changed at grade 'major'");
-    },
-    UPSTREAM_CLI_TIMEOUT_MS,
-  );
 });
 
 describe("assay reference backfill", () => {

@@ -1,7 +1,6 @@
 import path from "node:path";
 
 import {
-  ADRS_FILE,
   BACKUPS_DIR,
   EVENTS_DIR,
   MANAGED_DIR,
@@ -26,7 +25,6 @@ export type WorkspaceArea =
   | "events"
   | "backups"
   | "systemsRegistry"
-  | "adrsIndex"
   | "references"
   | "analyses"
   | "iterations"
@@ -34,37 +32,20 @@ export type WorkspaceArea =
   | "systemsContracts";
 
 /**
- * Resolve the layout block for a manifest. Layout v3 manifests carry no
- * `layout` field; this returns a standalone fallback whose work folders sit at
- * the workspace root, so legacy workspaces keep working until
- * `migrate-layout` upgrades them to v4.
- *
- * The fallback's state root is `.assay`, because that is the only location
- * {@link loadManifest} reads a manifest from — never `layout_version`. A
- * manifest loaded from `.assay/manifest.json` describes a workspace whose state
- * already lives in `.assay/`, however stale its recorded version is; inferring
- * `.framework/` from `layout_version < 4` sends state writes to a directory the
- * rest of the workspace does not use. A genuine `.framework/` workspace cannot
- * reach this function: `loadManifest` returns null for it, and commands ask for
- * `migrate-layout` instead.
+ * Resolve the layout block for a current manifest. The raw manifest envelope
+ * gate rejects every pre-v5 workspace before this function is reached.
  */
 export function resolveWorkspaceLayout(manifest: FrameworkManifest | null): WorkspaceLayout | null {
-  if (manifest?.layout) {
-    return manifest.layout;
-  }
-  if (!manifest) {
-    return null;
-  }
-  return legacyStandaloneLayout(MANAGED_DIR);
+  return manifest?.layout ?? null;
 }
 
 /**
- * Standalone layout for a freshly initialized v4 workspace. State lives in
+ * Standalone layout for a freshly initialized v5 workspace. State lives in
  * `.assay/`, work folders live at the workspace root.
  */
 export function defaultStandaloneLayout(): WorkspaceLayout {
   return {
-    version: 4,
+    version: 5,
     mode: "standalone",
     state_root: ".assay",
     work_root: ".",
@@ -79,7 +60,7 @@ export function defaultStandaloneLayout(): WorkspaceLayout {
  */
 export function defaultOverlayLayout(privacy: WorkspacePrivacy): WorkspaceLayout {
   return {
-    version: 4,
+    version: 5,
     mode: "overlay",
     state_root: ".assay",
     work_root: ".assay",
@@ -102,8 +83,6 @@ export function workspacePath(root: string, layout: WorkspaceLayout, area: Works
       return path.join(root, layout.paths.backups);
     case "systemsRegistry":
       return path.join(root, layout.paths.systems_registry);
-    case "adrsIndex":
-      return path.join(root, layout.paths.adrs_index);
     case "references":
       return path.join(root, layout.paths.references);
     case "analyses":
@@ -212,7 +191,7 @@ function toRelativePosix(value: string): string {
 }
 
 /**
- * Relative path map for standalone layout v4. State under `.assay/`, work
+ * Relative path map for standalone layout v5. State under `.assay/`, work
  * folders at root.
  */
 export function standalonePaths() {
@@ -221,7 +200,6 @@ export function standalonePaths() {
     events: EVENTS_DIR,
     backups: BACKUPS_DIR,
     systems_registry: SYSTEMS_REGISTRY_FILE,
-    adrs_index: ADRS_FILE,
     references: "references",
     analyses: "analyses",
     iterations: "iterations",
@@ -231,7 +209,7 @@ export function standalonePaths() {
 }
 
 /**
- * Relative path map for overlay layout v4. Everything Assay-owned lives
+ * Relative path map for overlay layout v5. Everything Assay-owned lives
  * under `.assay/`.
  */
 export function overlayPaths() {
@@ -240,42 +218,11 @@ export function overlayPaths() {
     events: EVENTS_DIR,
     backups: BACKUPS_DIR,
     systems_registry: SYSTEMS_REGISTRY_FILE,
-    adrs_index: ADRS_FILE,
     references: `${MANAGED_DIR}/references`,
     analyses: `${MANAGED_DIR}/analyses`,
     iterations: `${MANAGED_DIR}/iterations`,
     knowledge: `${MANAGED_DIR}/knowledge`,
     systems_contracts: `${MANAGED_DIR}/systems`,
-  };
-}
-
-/**
- * Standalone layout for a manifest with no `layout` block, pointing at the
- * state directory the manifest was read from. Used only as a read fallback for
- * manifests that have not yet been migrated to layout 4.
- *
- * Layout v3 wrote work folders at the workspace root, which is also what
- * {@link defaultStandaloneLayout} does, so `stateRoot` is the only difference.
- */
-function legacyStandaloneLayout(stateRoot: WorkspaceLayout["state_root"]): WorkspaceLayout {
-  return {
-    version: 4,
-    mode: "standalone",
-    state_root: stateRoot,
-    work_root: ".",
-    privacy: "tracked",
-    paths: {
-      manifest: `${stateRoot}/manifest.json`,
-      events: `${stateRoot}/events`,
-      backups: `${stateRoot}/backups`,
-      systems_registry: `${stateRoot}/systems-registry.json`,
-      adrs_index: `${stateRoot}/adrs.json`,
-      references: "references",
-      analyses: "analyses",
-      iterations: "iterations",
-      knowledge: "knowledge",
-      systems_contracts: "systems",
-    },
   };
 }
 

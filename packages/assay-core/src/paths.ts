@@ -1,20 +1,20 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import { LEGACY_MANAGED_DIR, MANAGED_DIR } from "./constants.js";
-import { FrameworkError } from "./errors.js";
+import { MANAGED_DIR } from "./constants.js";
+import {
+  FrameworkAlreadyExistsError,
+  FrameworkError,
+  WorkspaceCutoverRequiredError,
+} from "./errors.js";
+import { loadManifest } from "./manifest.js";
 import { toPosixPath } from "./serialization.js";
 
-// `.assay` (v4+) is the primary marker; `.framework` is kept as a legacy
-// fallback so v3 workspaces are still discovered until they are migrated.
-const ROOT_MARKERS = [
-  MANAGED_DIR,
-  LEGACY_MANAGED_DIR,
-  "references",
-  "analyses",
-  "systems",
-  "iterations",
-] as const;
+// `.framework` is a locator-only marker. It lets commands started below a
+// retired workspace reach `loadManifest`, whose raw envelope probe returns the
+// stable cutover error; no legacy path is parsed or treated as active state.
+const AUTHORITY_MARKERS = [`${MANAGED_DIR}/manifest.json`, ".framework/manifest.json"] as const;
+const WEAK_ROOT_MARKERS = ["references", "analyses", "systems", "iterations"] as const;
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -129,8 +129,18 @@ export async function discoverFrameworkRoot(start: string): Promise<string> {
     parent = path.dirname(current);
   }
 
+  // Authority markers win across the entire ancestor chain. A nested weak
+  // folder such as `systems/` must never hide an enclosing Assay workspace.
   for (const candidate of candidates) {
-    for (const marker of ROOT_MARKERS) {
+    for (const marker of AUTHORITY_MARKERS) {
+      if (await pathExists(path.join(candidate, marker))) {
+        return candidate;
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    for (const marker of WEAK_ROOT_MARKERS) {
       if (await pathExists(path.join(candidate, marker))) {
         return candidate;
       }
@@ -138,4 +148,29 @@ export async function discoverFrameworkRoot(start: string): Promise<string> {
   }
 
   return path.resolve(start);
+}
+
+/**
+ * Creation/conversion entry points must not establish a second workspace
+ * below an existing authority. Retired `.framework` ancestors are surfaced
+ * through the same raw-envelope cutover error as direct workspace access.
+ */
+export async function assertNoAncestorWorkspaceAuthority(target: string): Promise<void> {
+  const resolvedTarget = path.resolve(target);
+  let candidate = path.dirname(resolvedTarget);
+  while (candidate !== path.dirname(candidate)) {
+    if (await pathExists(path.join(candidate, MANAGED_DIR, "manifest.json"))) {
+      const manifest = await loadManifest(candidate);
+      if (manifest) {
+        throw new FrameworkAlreadyExistsError(
+          `Target is nested under an existing Assay workspace: ${candidate}`,
+        );
+      }
+    }
+    if (await pathExists(path.join(candidate, ".framework", "manifest.json"))) {
+      await loadManifest(candidate);
+      throw new WorkspaceCutoverRequiredError(".framework:unknown+sunknown+lunknown");
+    }
+    candidate = path.dirname(candidate);
+  }
 }

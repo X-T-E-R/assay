@@ -5,6 +5,7 @@ import { PLUGINS_STATE_FILE } from "../constants.js";
 import { InvalidManifestError } from "../errors.js";
 import { type PluginsState, pluginsStateSchema } from "../schemas/index.js";
 import { stringifySortedJson } from "../serialization.js";
+import { withWorkspaceMutationCoordination } from "../tasks/task-storage.js";
 import { nowIso } from "../time.js";
 
 export function pluginsStatePath(root: string): string {
@@ -45,12 +46,14 @@ export async function savePluginsState(
   state: PluginsState,
   now = new Date(),
 ): Promise<PluginsState> {
-  const file = pluginsStatePath(root);
-  const next = pluginsStateSchema.parse({
-    ...state,
-    updated_at: nowIso(now),
+  return withWorkspaceMutationCoordination(root, async () => {
+    const file = pluginsStatePath(root);
+    const next = pluginsStateSchema.parse({
+      ...state,
+      updated_at: nowIso(now),
+    });
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, stringifySortedJson(next), "utf8");
+    return next;
   });
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, stringifySortedJson(next), "utf8");
-  return next;
 }

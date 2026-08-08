@@ -4,6 +4,7 @@ export type FrameworkErrorCode =
   | "INVALID_EVENT"
   | "INVALID_OPERATION_REPORT"
   | "INVALID_UPDATE_PLAN"
+  | "WORKSPACE_CUTOVER_REQUIRED"
   | "INVALID_DONOR"
   | "DONOR_POLICY_BLOCKED"
   | "DONOR_STALE"
@@ -39,6 +40,26 @@ export class InvalidManifestError extends FrameworkError {
     super(message, { ...options, code: "INVALID_MANIFEST" });
     this.name = "InvalidManifestError";
     this.path = path;
+  }
+}
+
+export class WorkspaceCutoverRequiredError extends FrameworkError {
+  readonly observed: string;
+  readonly required = "0.7.0+s2+l5";
+  readonly locator: string;
+
+  constructor(observed: string) {
+    const locator = `assay-cutover:${observed}->0.7.0+s2+l5`;
+    super(
+      `Workspace cutover required: observed ${observed}; required 0.7.0+s2+l5; locator ${locator}`,
+      {
+        code: "WORKSPACE_CUTOVER_REQUIRED",
+        details: { observed, required: "0.7.0+s2+l5", locator },
+      },
+    );
+    this.name = "WorkspaceCutoverRequiredError";
+    this.observed = observed;
+    this.locator = locator;
   }
 }
 

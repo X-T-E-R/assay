@@ -23,4 +23,3 @@
 - [ ] adopt
 - [ ] reject
 - [ ] experiment/iteration
-- [ ] ADR

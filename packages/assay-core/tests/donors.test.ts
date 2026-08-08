@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   addSource,
+  attachExistingRepo,
   checkFramework,
+  convertOverlayToStandalone,
   decideDonorAdoption,
   getDonorAdoption,
   getDonorHistory,
@@ -19,6 +21,7 @@ import {
   recordDonorRollback,
   registerDonorAdoption,
   registerSystem,
+  setConvertRoadmapProbeForTests,
   syncSource,
   updateDonorAdoption,
   updateSystem,
@@ -34,6 +37,7 @@ async function tempDir(): Promise<string> {
 }
 
 afterEach(async () => {
+  setConvertRoadmapProbeForTests(undefined);
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -161,6 +165,109 @@ function definition(
 }
 
 describe("donor adoption lifecycle", () => {
+  it("fail-closes a donor decision after a move boundary and preserves a usable target snapshot", async () => {
+    const root = path.join(await tempDir(), "root");
+    await mkdir(path.join(root, "integrations"), { recursive: true });
+    await writeFile(path.join(root, "package.json"), '{"name":"root"}\n', "utf8");
+    await writeFile(path.join(root, "integrations", "alpha.txt"), "target-v1\n", "utf8");
+    for (const args of [
+      ["init"],
+      ["config", "user.email", "assay@example.test"],
+      ["config", "user.name", "Assay Test"],
+      ["add", "."],
+      ["commit", "-m", "initial"],
+    ]) {
+      const result = await execa("git", args, { cwd: root, reject: false });
+      expect(result.exitCode, result.stderr).toBe(0);
+    }
+    await attachExistingRepo({ root, name: "Root", privacy: "private", noTrack: true });
+    const sourceRoot = path.join(await tempDir(), "upstream");
+    await mkdir(path.join(sourceRoot, "src"), { recursive: true });
+    await writeFile(path.join(sourceRoot, "src", "alpha.txt"), "source-v1\n", "utf8");
+    const source = await addSource({ root, source: sourceRoot, alias: "upstream" });
+    await registerDonorAdoption({
+      root,
+      definition: {
+        schema: "assay.donor-adoption/v1",
+        id: "upstream-root",
+        title: "Concurrent donor",
+        source: { alias: "upstream", observation: source.observation.observation_id },
+        targets: [{ id: "product", system: "root", adapter: "local-system/v1" }],
+        mappings: [
+          {
+            id: "alpha",
+            kind: "source-code",
+            mode: "adapt",
+            source: { path: "src/alpha.txt", match: "exact" },
+            target: { target_id: "product", path: "integrations/alpha.txt", match: "exact" },
+            evidence: [],
+          },
+        ],
+        evidence: [],
+      },
+    });
+    const inspected = await inspectDonorAdoption({
+      root,
+      adoptionId: "upstream-root",
+      targetId: "product",
+    });
+    await writeFile(
+      path.join(root, ".assay", "donors", "upstream-root", ".lock"),
+      '{"stale":true}\n',
+      "utf8",
+    );
+    const target = path.join(await tempDir(), "converted");
+    let reached!: () => void;
+    let release!: () => void;
+    const atBoundary = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const continueConversion = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setConvertRoadmapProbeForTests(async () => {
+      reached();
+      await continueConversion;
+    });
+
+    const conversion = convertOverlayToStandalone({
+      root,
+      target,
+      move: true,
+      keepOverlay: false,
+    });
+    await atBoundary;
+    try {
+      await expect(
+        decideDonorAdoption({
+          root,
+          adoptionId: "upstream-root",
+          targetId: "product",
+          outcome: "reject",
+          inspectionId: inspected.inspection.id,
+        }),
+      ).rejects.toThrow(/workspace conversion/);
+    } finally {
+      release();
+    }
+    await conversion;
+
+    expect(
+      (await getDonorHistory({ root: target, adoptionId: "upstream-root" })).decisions,
+    ).toEqual([]);
+    await expect(
+      stat(path.join(target, ".assay", "donors", "upstream-root", ".lock")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const completed = await decideDonorAdoption({
+      root: target,
+      adoptionId: "upstream-root",
+      targetId: "product",
+      outcome: "reject",
+      inspectionId: inspected.inspection.id,
+    });
+    expect(completed.decision.outcome).toBe("reject");
+  });
+
   it("registers a reviewable definition and keeps global check structural", async () => {
     const fixture = await createFixture("DonorRegister");
     await rm(path.join(fixture.targetRoot, "integrations", "alpha.txt"));

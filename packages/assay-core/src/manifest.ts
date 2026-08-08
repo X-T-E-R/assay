@@ -1,14 +1,8 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import {
-  BACKUPS_DIR,
-  CURRENT_VERSION,
-  LAYOUT_VERSION,
-  LEGACY_MANIFEST_FILE,
-  MANIFEST_FILE,
-} from "./constants.js";
-import { InvalidManifestError } from "./errors.js";
+import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
+import { InvalidManifestError, WorkspaceCutoverRequiredError } from "./errors.js";
 import { computeHash } from "./hashing.js";
 import { defaultStandaloneLayout } from "./layout.js";
 import {
@@ -48,10 +42,6 @@ export function manifestPath(root: string): string {
   return path.join(root, MANIFEST_FILE);
 }
 
-export function legacyManifestPath(root: string): string {
-  return path.join(root, LEGACY_MANIFEST_FILE);
-}
-
 export function defaultManifest(
   project: string,
   manifestOptions: DefaultManifestOptions = {},
@@ -72,7 +62,7 @@ export function defaultManifest(
     managed_files: {},
     user_deleted: [],
     applied_migrations: [],
-    // Fresh workspaces always carry a v4 layout block. Standalone is the
+    // Fresh workspaces always carry a v5 layout block. Standalone is the
     // default; `assay attach` overrides this with an overlay layout.
     layout: defaultStandaloneLayout(),
   };
@@ -88,6 +78,45 @@ function parseManifest(data: unknown, manifestFile: string): FrameworkManifest {
   }
   assertSupportedAssayVersion(result.data.minimum_assay_version);
   return result.data;
+}
+
+function tuplePart(value: unknown, prefix = ""): string {
+  if (typeof value === "string" || typeof value === "number") return `${prefix}${value}`;
+  return `${prefix}unknown`;
+}
+
+function observedTuple(data: unknown, location = ""): string {
+  const record =
+    data && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : {};
+  const tuple = `${tuplePart(record.framework_version)}+${tuplePart(record.__schema, "s")}+${tuplePart(record.layout_version, "l")}`;
+  return location ? `${location}:${tuple}` : tuple;
+}
+
+function assertCurrentEnvelope(data: unknown, location = ""): void {
+  const record =
+    data && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : null;
+  if (
+    record?.framework_version !== CURRENT_VERSION ||
+    record?.minimum_assay_version !== CURRENT_VERSION ||
+    record?.__schema !== 2 ||
+    record?.layout_version !== LAYOUT_VERSION
+  ) {
+    throw new WorkspaceCutoverRequiredError(observedTuple(data, location));
+  }
+}
+
+async function exists(file: string): Promise<boolean> {
+  try {
+    await stat(file);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function loadManifestFromFile(file: string): Promise<FrameworkManifest | null> {
@@ -107,59 +136,37 @@ async function loadManifestFromFile(file: string): Promise<FrameworkManifest | n
   } catch (error) {
     throw new InvalidManifestError(file, "Framework manifest is not valid JSON.", { cause: error });
   }
-
+  assertCurrentEnvelope(data);
   return parseManifest(data, file);
 }
 
 export async function loadManifest(root: string): Promise<FrameworkManifest | null> {
-  return loadManifestFromFile(manifestPath(root));
-}
+  const current = manifestPath(root);
+  if (await exists(current)) return loadManifestFromFile(current);
 
-/**
- * Migration-only reader for legacy v3 workspaces. Normal runtime code must
- * continue to call {@link loadManifest}, which reads only `.assay/manifest.json`.
- */
-export async function loadLegacyManifest(root: string): Promise<FrameworkManifest | null> {
-  return loadManifestFromFile(legacyManifestPath(root));
+  const legacy = path.join(root, ".framework", "manifest.json");
+  if (!(await exists(legacy))) return null;
+  let data: unknown = null;
+  try {
+    data = JSON.parse(await readFile(legacy, "utf8"));
+  } catch {
+    // The cutover tool owns legacy parsing and recovery. Core only identifies
+    // the old authority location and refuses to proceed.
+  }
+  throw new WorkspaceCutoverRequiredError(observedTuple(data, ".framework"));
 }
 
 export async function saveManifest(
   root: string,
   manifest: FrameworkManifest,
 ): Promise<FrameworkManifest> {
+  assertCurrentEnvelope(manifest);
   const file = manifestPath(root);
   manifest.updated_at = nowIso();
   const nextManifest = frameworkManifestSchema.parse(manifest);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, stringifySortedJson(nextManifest), "utf8");
   return nextManifest;
-}
-
-function backupStamp(date: Date): string {
-  return date
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}Z$/, "Z");
-}
-
-/**
- * Preserve the exact pre-upgrade manifest before a schema-1 workspace gains
- * provider bindings. The caller still owns the subsequent manifest write.
- */
-export async function backupManifestForSchemaUpgrade(root: string, now: Date): Promise<string> {
-  const relative = `${BACKUPS_DIR}/${backupStamp(now)}/manifest.json`;
-  const destination = path.join(root, relative);
-  await mkdir(path.dirname(destination), { recursive: true });
-  await copyFile(manifestPath(root), destination);
-  return relative;
-}
-
-export function upgradeManifestForProviderBindings(manifest: FrameworkManifest): boolean {
-  if (manifest.__schema === 2) return false;
-  manifest.__schema = 2;
-  manifest.framework_version = CURRENT_VERSION;
-  manifest.minimum_assay_version = CURRENT_VERSION;
-  return true;
 }
 
 export function recordManagedFile(

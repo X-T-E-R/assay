@@ -18,7 +18,6 @@ import {
   convertOverlayToStandalone,
   getFrameworkStatus,
   initFramework,
-  listAdrs,
   listIntent,
   loadManifest,
   loadSystemsRegistry,
@@ -392,31 +391,6 @@ describe("intent promote", () => {
         to: "requirement",
       }),
     );
-  });
-
-  it("creates an ADR linked back to the capture and the system", async () => {
-    const root = await intentWorkspace("PromoteDecision");
-    await addCapability({ root, module: "adr" });
-    const captured = await captureIntent({ root, text: INTENT_TEXT });
-
-    const promoted = await promoteIntent({
-      root,
-      capture: captured.capture.id,
-      to: "decision",
-      title: "Stream CSV exports",
-    });
-
-    expect(promoted.adrId).toBe("ADR-0001-stream-csv-exports");
-    const adr = (await listAdrs(root)).adrs[0];
-    expect(adr?.related_intent).toBe(captured.capture.id);
-    expect(adr?.system).toBe("app");
-    const markdown = await readFile(path.join(root, promoted.path), "utf8");
-    expect(markdown).toContain(`related_intent: "${captured.capture.id}"`);
-    expect(markdown).toContain('system: "app"');
-
-    const listed = await listIntent({ root });
-    expect(listed.captures[0]?.decisions).toEqual(["ADR-0001-stream-csv-exports"]);
-    expect((await checkFramework({ root })).ok).toBe(true);
   });
 
   it("resolves a unique capture id prefix and rejects an ambiguous one", async () => {

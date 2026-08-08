@@ -188,23 +188,17 @@ describe("project registry records", () => {
     );
   });
 
-  it("refreshes missing and uninstalled status without crashing on unreadable manifests", async () => {
+  it("fails closed instead of hiding an unreadable manifest", async () => {
     const root = path.join(await tempDir(), "demo");
     const registryRoot = path.join(await tempDir(), "registry");
     await initFramework({ target: root, name: "Missing Demo" });
     const record = await registerProject(root, "init", { registryRoot });
 
     await writeFile(path.join(root, MANIFEST_FILE), "{not json", "utf8");
-    expect((await listProjectRecords({ registryRoot }))[0]).toMatchObject({
-      id: record.id,
-      status: "missing",
-    });
-
-    await markProjectUninstalled(root, { registryRoot });
-    expect((await listProjectRecords({ registryRoot }))[0]).toMatchObject({
-      id: record.id,
-      status: "uninstalled",
-    });
+    await expect(listProjectRecords({ registryRoot })).rejects.toThrow(
+      "Framework manifest is not valid JSON",
+    );
+    expect(record.status).toBe("active");
   });
 });
 
@@ -260,16 +254,14 @@ describe("project registry scan and cleanup", () => {
     expect(await readFile(path.join(root, "README.md"), "utf8")).toContain("# Unreadable Demo");
   });
 
-  it("keeps a legacy .framework workspace listed as active", async () => {
+  it("requires external cutover for a .framework workspace", async () => {
     const root = path.join(await tempDir(), "legacy");
     const registryRoot = path.join(await tempDir(), "registry");
     await initFramework({ target: root, name: "Legacy Demo" });
     await rename(path.join(root, ".assay"), path.join(root, ".framework"));
-    const record = await registerProject(root, "scan", { registryRoot });
-
-    expect(record.status).toBe("active");
-    await expect(pruneProjects({ registryRoot })).resolves.toEqual([]);
-    expect(await exists(projectRecordPath(record.id, { registryRoot }))).toBe(true);
+    await expect(registerProject(root, "scan", { registryRoot })).rejects.toMatchObject({
+      code: "WORKSPACE_CUTOVER_REQUIRED",
+    });
   });
 
   it("prunes a record the workspace explicitly uninstalled", async () => {

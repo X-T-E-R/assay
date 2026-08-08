@@ -5,10 +5,9 @@
 
 extends: base
 mode: learning
-modules:
-  - adr
+modules: []
 
-description: Absorb external systems as the main product, converting what survives analysis into decisions.
+description: Absorb external systems as the main product, converting what survives analysis into reusable knowledge.
 
 dirs:
   - path: analyses/references
@@ -19,8 +18,6 @@ dirs:
     purpose: Candidate reusable patterns awaiting validation
   - path: analyses/templates
     purpose: Blank analysis forms
-  - path: knowledge/decisions
-    purpose: Accepted decisions and ADRs
 
 dirs_learning:
   - path: references/frozen
@@ -38,5 +35,3 @@ templates:
   - { path: "analyses/templates/reference-analysis-card.md", templateId: "analysis.template.reference" }
   - { path: "analyses/templates/gap-analysis.md", templateId: "analysis.template.gap" }
   - { path: "analyses/templates/pattern-card.md", templateId: "analysis.template.pattern" }
-  - { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" }
-  - { path: "knowledge/decisions/ADR-TEMPLATE.md", templateId: "knowledge.decisions.adr_template" }

@@ -3,8 +3,6 @@ import type { FrameworkManifest, PluginDeclaration, PluginsState } from "../sche
 
 export const INTENT_PLUGIN_ID = "assay.intent";
 export const TRELLIS_PLUGIN_ID = "assay.trellis";
-export const DECISION_GOVERNANCE_RESPONSIBILITY = "decision-governance";
-export const NATIVE_DECISION_PROVIDER = "assay.native";
 
 export type PluginInstallStrategy = "workspace-scaffold" | "workspace-runtime";
 

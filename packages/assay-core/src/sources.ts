@@ -389,30 +389,17 @@ async function writeYamlFile(file: string, value: unknown): Promise<void> {
 }
 
 // Source-entry ledger directories live directly under references/<alias>/.
-// Layout v3 nested these under references/<alias>/.assay/, but once the
-// workspace state dir became .assay (v4) that nesting produced confusing
-// paths like .assay/references/foo/.assay/observations/. The ledger is now
-// flat; LEGACY_SOURCE_LEDGER is read only as a migration fallback.
 const OBSERVATIONS_DIR = "observations";
 const MANIFESTS_DIR = "manifests";
 const CAPTURES_DIR = "captures";
 const COMPARISONS_DIR = "comparisons";
-const LEGACY_SOURCE_LEDGER = ".assay";
 
 function observationPath(observationId: string): string {
   return `${OBSERVATIONS_DIR}/${observationId}.yaml`;
 }
 
-function legacyObservationPath(observationId: string): string {
-  return `${LEGACY_SOURCE_LEDGER}/${OBSERVATIONS_DIR}/${observationId}.yaml`;
-}
-
 function manifestPath(observationId: string): string {
   return `${MANIFESTS_DIR}/${observationId}.json`;
-}
-
-function legacyManifestPath(observationId: string): string {
-  return `${LEGACY_SOURCE_LEDGER}/${MANIFESTS_DIR}/${observationId}.json`;
 }
 
 function analysisStatusForChange(
@@ -979,18 +966,9 @@ async function loadObservation(
 ): Promise<SourceObservation | null> {
   if (!observationRef) return null;
   const normalized = observationRef.replace(/\\/g, "/");
-  // Resolve three selector shapes: a full path (flat or legacy), or a bare
-  // observation id. Bare ids and flat paths prefer the v4 flat layout; legacy
-  // .assay/observations/ paths are read as-is for migration compatibility.
-  let file: string;
-  if (normalized.endsWith(".yaml")) {
-    file = path.join(entryRoot, normalized);
-  } else {
-    file = path.join(entryRoot, OBSERVATIONS_DIR, `${normalized}.yaml`);
-    if (!(await exists(file))) {
-      file = path.join(entryRoot, legacyObservationPath(normalized));
-    }
-  }
+  const file = normalized.endsWith(".yaml")
+    ? path.join(entryRoot, normalized)
+    : path.join(entryRoot, OBSERVATIONS_DIR, `${normalized}.yaml`);
   if (!(await exists(file))) return null;
   return readYamlFile<SourceObservation>(file);
 }
@@ -1001,17 +979,7 @@ async function loadObservationManifest(
 ): Promise<SourceManifest | null> {
   if (!observation) return null;
   const file = path.join(entryRoot, observation.manifest);
-  if (await exists(file)) {
-    return readManifest(file);
-  }
-  // Migration fallback: v3 stored manifests under .assay/manifests/. If the
-  // manifest path points at the flat layout but the file is missing, try the
-  // legacy location derived from the observation id.
-  const legacyFile = path.join(entryRoot, legacyManifestPath(observation.observation_id));
-  if (await exists(legacyFile)) {
-    return readManifest(legacyFile);
-  }
-  return null;
+  return (await exists(file)) ? readManifest(file) : null;
 }
 
 async function writeLineage(entryRoot: string, lineage: SourceLineage): Promise<void> {
@@ -1329,9 +1297,7 @@ export async function getSourceLog(options: {
   const root = path.resolve(options.root);
   requireManifestPresent(await loadManifest(root), root);
   const entry = await sourceEntryForAlias(root, options.alias);
-  const flatDir = path.join(entry.absolutePath, OBSERVATIONS_DIR);
-  const legacyDir = path.join(entry.absolutePath, LEGACY_SOURCE_LEDGER, OBSERVATIONS_DIR);
-  const observationsDir = (await exists(flatDir)) ? flatDir : legacyDir;
+  const observationsDir = path.join(entry.absolutePath, OBSERVATIONS_DIR);
   const entries = await readdir(observationsDir, { withFileTypes: true });
   const observations: SourceLogEntry[] = [];
   for (const file of entries) {
@@ -1349,12 +1315,7 @@ export async function getSourceLog(options: {
 function normalizeObservationSelector(selector: string): string {
   const normalized = selector.replace(/\\/g, "/");
   if (normalized.endsWith(".yaml")) return normalized;
-  // Accept both flat (observations/<id>) and legacy (.assay/observations/<id>)
-  // selectors; readers resolve both against the source entry root.
   if (normalized.startsWith(`${OBSERVATIONS_DIR}/`)) return `${normalized}.yaml`;
-  if (normalized.startsWith(`${LEGACY_SOURCE_LEDGER}/${OBSERVATIONS_DIR}/`)) {
-    return `${normalized}.yaml`;
-  }
   return `${OBSERVATIONS_DIR}/${normalized}.yaml`;
 }
 
@@ -1394,11 +1355,8 @@ export async function resolveSourceObservation(
   let diffExists: string | null = null;
   if (diffName) {
     const flat = `${COMPARISONS_DIR}/${diffName}`;
-    const legacy = `${LEGACY_SOURCE_LEDGER}/${COMPARISONS_DIR}/${diffName}`;
     if (await exists(path.join(entry.absolutePath, flat))) {
       diffExists = flat;
-    } else if (await exists(path.join(entry.absolutePath, legacy))) {
-      diffExists = legacy;
     }
   }
 

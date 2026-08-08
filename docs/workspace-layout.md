@@ -1,6 +1,5 @@
 # Workspace Layout
 
-Assay has two layout modes. Both use `.assay/` as the Assay-owned state directory. Legacy `.framework/` workspaces are accepted for migration and discovery only; run `assay migrate-layout --apply` to move them to `.assay/`.
 
 ## Standalone mode
 
@@ -11,7 +10,7 @@ Use standalone when the Assay workbench is the project: studying external system
 project/    required native Project envelope and native Roadmap items
 tasks/      native bounded outcomes; created when the first Task is written
 systems/    registered systems and system metadata
-knowledge/  accepted reusable decisions, patterns, guides, and troubleshooting notes
+knowledge/  accepted reusable patterns, guides, and troubleshooting notes
 ```
 
 Reference and Analysis are native, lazy work areas for every archetype. `study` scaffolds them eagerly; `solve`, `explore`, and custom archetypes create `references/` or `analyses/` on the first source/reference/analysis command. Their absence is healthy and `status` still reports both zones.
@@ -20,7 +19,6 @@ Archetype-specific working directories sit alongside this base.
 
 | Archetype | Adds |
 | --- | --- |
-| `study` | `references/`, `references/frozen/`, `analyses/references/`, `analyses/gaps/`, `analyses/patterns/`, `analyses/templates/`, and `knowledge/decisions/`. |
 | `solve` | `problem/`, `intake/`, `benchmarks/`, `attempts/`, `tools/`, `iterations/`, `iterations/templates/`, `objective.json`, and `systems/current.json`. |
 | `explore` | `approaches/`, `trials/`, `comparison.md`, `iterations/`, and `iterations/templates/`. |
 
@@ -67,7 +65,7 @@ Suggested fields are `run_id`, `started_at`, `benchmark`, `attempt`, `score`,
 reports the record count once the file exists. The solve `README.md` carries
 the same convention.
 
-Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
+Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`.
 
 ## Native Task records
 
@@ -81,7 +79,6 @@ terminal Tasks move under `tasks/archive/<stable-id>/`.
 A Task preserves one bounded outcome across sessions, agents, compaction, and
 attempts. `.assay/task-contexts.json` stores exact host-context bindings, but
 Task never guesses current from active count, age, or title. It does not replace
-the native Project, analyses, ADRs, `knowledge/`, or host-owned agent and
 dispatch state. See [Task records](task.md) for its lifecycle and command guide.
 
 ## Capability and plugin structure
@@ -96,11 +93,10 @@ detect an absent, legacy, partial, or already-converged scaffold without
 rewriting intent content. Legacy `project.capabilities: ["intent"]` remains a
 valid desired-state source and can be adopted in place.
 
-The manifest's `bindings` map remains available for genuinely exclusive
-providers. `assay.trellis` no longer uses it: the legacy operational plugin
+The manifest's `bindings` map remains available for genuinely exclusive,
+generic providers. `assay.trellis` does not use it: its operational plugin
 stores v1 runtime state under `.assay/trellis/` and declares additive runtime
-capabilities. A legacy preview binding is ignored for ADR authority and removed
-on reconcile, so `assay.native` remains the decision owner.
+capabilities on reconcile.
 
 Independently packaged external descriptors use a separate control-plane file,
 `.assay/external-plugins.json`. Each record contains the validated descriptor,
@@ -113,8 +109,8 @@ target version rather than fabricate one; observations always name a concrete
 host version, and exact comparison occurs only when the target declared one.
 State ownership entries are either safe Assay-relative paths or opaque
 host-owned symbolic locators. Assay never resolves or deletes a host locator.
-External records contribute no native module,
-responsibility binding, decision provider, runtime hook, or workspace writer.
+External records contribute no native module, responsibility binding, runtime
+hook, or workspace writer.
 Removing a record never deletes the referenced package or host-owned state.
 
 Operational v1 remains entirely project-local:
@@ -139,13 +135,10 @@ confirmed with `--purge --yes` after backup.
 
 | Module | Adds |
 | --- | --- |
-| `adr` | `knowledge/decisions/` with `README.md` and `ADR-TEMPLATE.md`, plus the `.assay/adrs.json` index. |
 | `intent` | `intent/`, `intent/original/`, and `intent/requirements/`, each with a `README.md`. |
 | `iteration` | `iterations/` and `iterations/templates/` with `README.md` and `iteration-plan.md`. |
 
-These paths resolve through the workspace layout like every other work folder: `knowledge/decisions/` in standalone, `.assay/knowledge/decisions/` in overlay. Run `assay capability list` to see which modules a workspace has and how it got them; run `assay plugin list` to compare desired and installed plugin state.
 
-Every workspace has a native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Init creates only `project.yaml`, `README.md`, and `roadmap/README.md`; `assay roadmap create` then adds `roadmap/<id>/{item.yaml,outcome.md}`. The root Roadmap README stays explanatory and never becomes a dynamic index. Native Spec storage remains lazy: the first successful Spec write creates `specs/README.md` plus `specs/<spec-id>/{spec.yaml,specification.md}`; retired records may move unchanged to `specs/archive/<id>/`. The Spec README is explanatory, never a dynamic index. Project-selected `relay/` and `extensions/` are also lazy. Reference, Analysis, Task, System, ADR/knowledge, and `.assay/` runtime records remain independent authorities.
 
 ```yaml
 __schema: 1
@@ -176,8 +169,6 @@ intent/requirements/<date>-<slug>.md         requirement carrying derives_from
 
 The capture filename is derived from the SHA-256 of its own body, and the full digest is recorded in the frontmatter. That is what makes captures append-only: a re-capture of the same text lands on the same path and changes nothing, while a record whose body no longer matches its digest is reported instead of silently replaced. Corrections are new captures with `supersedes: [<capture-id>]`, never edits.
 
-Decisions have no directory here. `assay intent promote --to decision` creates
-an ADR through the native `adr` module with `related_intent` and `system` set.
 The legacy Trellis task/context runtime does not replace or dual-write that
 decision authority.
 

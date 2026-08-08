@@ -94,7 +94,7 @@ export function dirsForArchetype(archetype: Archetype, mode: ProjectMode): reado
 export type ProfileTemplateEntry = ArchetypeTemplateEntry;
 export type Profile = Archetype;
 
-export const SUPPORTED_CAPABILITY_MODULES = ["adr", "intent", "iteration"] as const;
+export const SUPPORTED_CAPABILITY_MODULES = ["intent", "iteration"] as const;
 export type CapabilityModule = (typeof SUPPORTED_CAPABILITY_MODULES)[number];
 
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_CAPABILITY_MODULES);
@@ -116,16 +116,6 @@ export interface ModuleScaffold {
  * so an overlapping file is written once.
  */
 export const MODULE_SCAFFOLDS: Readonly<Record<CapabilityModule, ModuleScaffold>> = {
-  adr: {
-    dirs: [{ path: "knowledge/decisions", purpose: "Accepted decisions and ADRs" }],
-    templates: [
-      { path: "knowledge/decisions/README.md", templateId: "knowledge.decisions.readme" },
-      {
-        path: "knowledge/decisions/ADR-TEMPLATE.md",
-        templateId: "knowledge.decisions.adr_template",
-      },
-    ],
-  },
   intent: {
     dirs: [
       { path: "intent/original", purpose: "Verbatim intent captures, append-only" },
@@ -238,7 +228,7 @@ const REMOVED_ARCHETYPES = new Map<string, { removedIn: string; hint: string }>(
     "evaluation",
     {
       removedIn: "0.4.0",
-      hint: "use `study` and record the choice with `assay capability add adr`",
+      hint: "use `study` and record the current contract with `assay spec`",
     },
   ],
   [

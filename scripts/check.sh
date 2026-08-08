@@ -22,7 +22,6 @@ mkdir -p "$demo"
   node "$cli" status >/dev/null
   node "$cli" update --dry-run >/dev/null
   node "$cli" projects list --json >/dev/null
-  node "$cli" migrate-layout --dry-run >/dev/null
 )
 
 adopted="$tmp/adopted"

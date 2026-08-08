@@ -24,7 +24,6 @@ node packages/assay-cli/dist/cli.js source add <repo-or-dir> [alias]
 node packages/assay-cli/dist/cli.js check
 node packages/assay-cli/dist/cli.js status
 node packages/assay-cli/dist/cli.js update --dry-run
-node packages/assay-cli/dist/cli.js migrate-layout --dry-run
 ```
 
 ## Validation

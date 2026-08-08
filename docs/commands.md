@@ -1,6 +1,6 @@
 # Commands
 
-Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`; legacy `.framework/manifest.json` is a migration fallback only. Pass `--root <dir>` to operate on another workspace.
+Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`. Pass `--root <dir>` to operate on another workspace. Pre-0.7 workspaces fail closed with a cutover locator and require a separate external tool.
 
 ## Workspace lifecycle
 
@@ -11,7 +11,6 @@ assay convert --to standalone --target <dir> [--move | --copy] [--no-keep-overla
 assay check [--advisories] [--root <dir>]
 assay status [--root <dir>] [--json] [--fetch]
 assay update [--root <dir>] [--dry-run] [--agents] [--force | --skip-all | --create-new] [--no-track]
-assay migrate-layout [--root <dir>] [--dry-run | --apply] [--backup]
 assay archetype [--root <dir>] [--json]
 assay archetype list [--root <dir>] [--json]
 ```
@@ -29,8 +28,8 @@ remain options on the existing lifecycle verbs, not a third setup operation.
 
 If `AGENTS.md` contains incomplete `<!-- ASSAY:START -->` / `<!-- ASSAY:END -->` markers, Assay leaves the file unchanged and reports the malformed block so you can fix or remove it manually.
 
-`assay check` validates required structure, registries, indexes, managed-file
-state, source observation integrity, and donor persistence. It exits non-zero
+`assay check` validates required structure, registries, managed-file state,
+source observation integrity, and donor persistence. It exits non-zero
 only for missing required structure or invalid persisted state. Add
 `--advisories` to request non-blocking workflow reminders such as open
 iterations, unfinished draft analyses, pending queue entries, lingering
@@ -79,11 +78,6 @@ Next: assay source sync qwen-agent
 - `Next:` appears only for an upstream move, which is the case `source sync`
   resolves. A drifted or modified checkout is deliberately refused by `sync`, so
   it is reported rather than pointed at a command that would fail.
-
-`status` also prints a `Decision records` line for a source whose latest change
-was graded `major` or `replacement`. The built-in Trellis runtime does not
-replace native decision governance, so the next action continues to name the
-Assay ADR workflow. Nothing is blocked.
 
 ## Native Task records
 
@@ -225,7 +219,6 @@ assay spec archive <id> [--root <dir>] [--json]
 assay spec validate [id] [--root <dir>] [--json]
 ```
 
-Spec storage is lazy. Creation starts a draft; promotion pins exact Analysis or Task bytes while copying only the independent `--body` file. Activation validates body structure but is not approval or Project acceptance. No Task, Roadmap, System, Analysis, or ADR state is propagated. See [Native specifications](spec.md).
 
 ## Workspace plugins and reconcile
 
@@ -277,7 +270,6 @@ Its protocol version, per-plugin receipt `state_version`, and dedicated runtime
 state schema are all exactly `1`. Dynamic task state is stored only in
 `.assay/trellis/`; no Trellis CLI or root `.trellis/` sidecar is used. It
 declares task-store, context-provider, and host-hook-registration runtime
-capabilities while Assay native ADR and intent remain active.
 
 ```bash
 assay trellis task create --title "Implement slice" [--session-id <id>] --json
@@ -363,10 +355,7 @@ or purges orphaned receipts. Re-running `--apply` after convergence is an exact
 no-op: it does not refresh timestamps or append another event.
 
 Responsibility bindings remain distinct from capability contributions. The
-built-in `assay.trellis` runtime does not claim `decision-governance`;
-`assay.native` continues to own ADRs. Reconcile migrates the 0.5 preview's
 legacy `federated-provider` declaration/receipt and removes its obsolete
-`decision-governance` binding without reading or modifying `.trellis/`.
 
 ## Attach an existing repository
 
@@ -421,14 +410,13 @@ assay absorb <source-dir> [--name <name>] [--root <dir>] [--as problem|intake]
 assay reference add <source-dir> <name> [--root <dir>]
 assay reference backfill <path> [--source <origin>] [--root <dir>]
 assay analysis new <title> [--root <dir>] [--for-source <alias>] [--observation <id-or-path>] [--for-reference <path>]
-assay analysis close <path> --exit adopt|reject|experiment|adr [--note <note>] [--root <dir>]
 assay iteration start <title> [--root <dir>]
 assay iteration close <selector> --result applied|rejected|retest [--note <note>] [--root <dir>]
 assay event capture --kind observation|analysis|decision|gotcha|note --text <text> [--root <dir>]
 assay knowledge add <type> <title> [--from-analysis <path>] [--from-iteration <path>] [--root <dir>]
 ```
 
-Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`. Older v3 workspaces nested these under `references/<alias>/.assay/`. That nesting is read as a compatibility fallback and is never rewritten: existing v3 entries keep working in place, while every new observation is written to the flat layout.
+Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`.
 
 `analysis close` records the caller's explicit exit, updates bound source
 metadata, and writes an event. It does not block on section-content heuristics.
@@ -480,7 +468,6 @@ execute target tests, create commits, or restore revisions. See
 [Donor Adoption](donor-adoption.md) for the definition schema, baseline model,
 and integrity behavior.
 
-## Systems, ADRs, and project registry
 
 ```bash
 assay system register <path> [--root <dir>] [--name <name>] [--vcs independent-git|embedded|none] [--vcs-ref <ref>] [--system-version <version>] [--primary] [--supersedes <names>] [--intent-authority inline|external|none] [--intent-pointer <pointer>]
@@ -489,12 +476,6 @@ assay system promote <selector> [--root <dir>]
 assay system archive <selector> [--root <dir>] [--dry-run | --apply]
 assay system list [--root <dir>] [--status primary|active|superseded|archived] [--json]
 assay system show <selector> [--root <dir>] [--json]
-assay adr new <title> [--from-analysis <path>] [--from-iteration <path>] [--force] [--root <dir>]
-assay adr accept <selector> [--root <dir>]
-assay adr supersede <old-selector> <new-selector> [--root <dir>]
-assay adr deprecate <selector> [--root <dir>]
-assay adr list [--root <dir>] [--status proposed|accepted|superseded|deprecated] [--native] [--json]
-assay adr show <selector> [--root <dir>] [--native] [--json]
 assay projects
 assay projects list [--json] [--all] [--status active|missing|uninstalled]
 assay projects scan <roots...> [--json]
@@ -533,21 +514,13 @@ report the base structure and say in one line why the archetype's own
 directories are missing from the report. To keep a removed shape, copy its
 directories into your own archetype YAML under `.assay/archetypes/`.
 
-`.trellis/`, `.superpowers/`, or an existing `docs/adr/` directory can produce
-the legacy parallel-governance advisory, but native ADR creation remains
-available. Installing `assay.trellis` does not bind or replace decision
-governance: `adr new|accept|supersede|deprecate`,
-`intent promote --to decision`, and `knowledge add decision` continue through
-the Assay-native ADR workflow. `adr list --native` and `adr show --native`
-remain explicit aliases for reading that same native archive.
-
 ## Product intent
 
 Intent records what was actually asked for, kept separate from what was later built. It is an optional capability module; enable it with `assay plugin add assay.intent`. The older `assay capability add intent` path remains compatible.
 
 ```bash
 assay intent capture [--text <text> | --file <workspace-relative-path>] [--system <name>] [--source <text>] [--supersedes <ids>] [--force] [--root <dir>]
-assay intent promote <capture> --to requirement|decision [--title <title>] [--root <dir>]
+assay intent promote <capture> --to requirement [--title <title>] [--root <dir>]
 assay intent list [--system <name>] [--include-lineage] [--json] [--root <dir>]
 ```
 
@@ -565,7 +538,6 @@ Every capture is scoped to one registered system. `--system` accepts a name or u
 
 If the named system records `intent_authority: external` or `none`, `capture` refuses and prints the pointer. `--force` records the text anyway, marked `shadow: true` in the record and flagged in `intent list`, so a convenience copy is never mistaken for the authoritative one.
 
-`promote --to requirement` writes `intent/requirements/<date>-<slug>.md` carrying `derives_from`. `promote --to decision` creates an ADR through the `adr` capability with `related_intent` and `system` set, so the decision points back at the words it answers.
 
 ```bash
 assay plugin add assay.intent
@@ -578,29 +550,17 @@ Assay stores captured text as given. Redact credentials and personal data before
 
 ## Capability modules
 
-Capability modules are optional workspace features: `adr` enables the ADR commands and index, `intent` enables the intent commands and directories, `iteration` enables the iteration commands and templates. An archetype turns some of them on at init, and `capability add` turns the rest on later, so the archetype chosen at init does not lock the workspace out of a capability it needs afterwards.
-
 ```bash
 assay capability add <module> [--root <dir>]
 assay capability list [--root <dir>] [--json]
-```
-
-`capability add` creates the module's directories and templates through the workspace layout — under `.assay/` in an overlay workspace, at the root in a standalone one — writes any state file the module needs (`adr` creates `.assay/adrs.json`), records the module in the manifest, and appends a `capability.added` event. Files that already exist are left alone, and a module the workspace already has reports that and changes nothing, so the command is safe to re-run.
-
-```bash
-assay capability add adr        # an explore workspace gains knowledge/decisions/ and adr commands
-assay adr new "Adopt overlay layout"
 ```
 
 `capability list` shows every module with how the workspace obtained it: `archetype` for modules the archetype provides, `added` for modules enabled afterwards.
 
 Templates a capability scaffolds are managed files like any other, so `assay update` reconciles them and `assay check` reports the module's directories as required structure.
 
-Every workspace has one native Project at `project/` in standalone mode or `.assay/project/` in overlay mode. Its initial shape is `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap items are added under `roadmap/<id>/`. `specs/`, Project-selected `relay/`, and `extensions/` are lazy semantic locations. For a legacy workspace, run `assay project migrate-authority --dry-run` followed by `--apply` before ordinary update. Migration copies the retired `project-authority/` capability without merging or deleting its source; `update` detects that input and leaves it untouched until the explicit migration runs.
-
 ## Custom archetypes
 
-Archetype lookup order is project-local `.assay/archetypes/<name>.yaml`, then user-global `~/.assay/archetypes/<name>.yaml`, then built-ins. A custom archetype YAML declares `extends: base`, `mode`, `modules` (`adr`, `intent`, `iteration`), `dirs`, and `templates`.
 
 Template entries can carry their own content, so an archetype pack does not depend on built-in templateIds:
 

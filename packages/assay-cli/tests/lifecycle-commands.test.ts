@@ -486,138 +486,19 @@ describe("assay knowledge add CLI", () => {
     expect(result.stderr).toContain("Invalid type 'bogus'");
   });
 
-  it("supports all four knowledge types", async () => {
+  it("supports all current knowledge types", async () => {
     const root = await initWorkspace("KnowAllTypes");
 
     const typeDirs: Record<string, string> = {
-      decision: "decisions",
       pattern: "patterns",
       guide: "guides",
       troubleshooting: "troubleshooting",
     };
-    for (const type of ["decision", "pattern", "guide", "troubleshooting"] as const) {
+    for (const type of ["pattern", "guide", "troubleshooting"] as const) {
       const result = await runCli(["knowledge", "add", type, `${type} entry`, "--root", root]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`Added knowledge: knowledge/${typeDirs[type]}/`);
     }
-  });
-});
-
-describe("assay capability CLI", () => {
-  it("adds a module the archetype lacks and reports the scaffolded files", async () => {
-    const root = await initWorkspace("CapAdd", BARE_ARCHETYPE);
-
-    const added = await runCli(["capability", "add", "adr", "--root", root]);
-
-    expect(added.exitCode).toBe(0);
-    expect(added.stderr).toBe("");
-    expect(added.stdout).toContain("Added capability: adr");
-    expect(added.stdout).toContain("Enabled capabilities: adr");
-    expect(added.stdout).toContain("knowledge/decisions/ADR-TEMPLATE.md");
-    expect(added.stdout).toContain("Event:");
-    expect(await exists(path.join(root, "knowledge", "decisions", "README.md"))).toBe(true);
-
-    const adr = await runCli(["adr", "new", "First Decision", "--root", root]);
-    expect(adr.exitCode).toBe(0);
-    expect(adr.stdout).toContain("Created ADR: ADR-0001-first-decision");
-
-    const check = await runCli(["check", "--root", root]);
-    expect(check.exitCode).toBe(0);
-    expect(check.stdout).toContain("Framework check: ok");
-  });
-
-  it("reports an already-enabled module without failing", async () => {
-    const root = await initWorkspace("CapRerun", BARE_ARCHETYPE);
-    await runCli(["capability", "add", "iteration", "--root", root]);
-
-    const rerun = await runCli(["capability", "add", "iteration", "--root", root]);
-
-    expect(rerun.exitCode).toBe(0);
-    expect(rerun.stderr).toBe("");
-    expect(rerun.stdout).toContain("Capability already enabled: iteration");
-
-    const provided = await runCli([
-      "capability",
-      "add",
-      "adr",
-      "--root",
-      await initWorkspace("CapStudy"),
-    ]);
-    expect(provided.exitCode).toBe(0);
-    expect(provided.stdout).toContain("Capability already enabled: adr (provided by archetype)");
-  });
-
-  it("rejects an unsupported module name", async () => {
-    const root = await initWorkspace("CapUnknown", BARE_ARCHETYPE);
-
-    const result = await runCli(["capability", "add", "telepathy", "--root", root]);
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Error: unsupported capability module 'telepathy'");
-    expect(result.stderr).toContain("supported modules: adr, intent, iteration");
-  });
-
-  it("lists modules and distinguishes archetype-provided from added", async () => {
-    const root = await initWorkspace("CapList");
-    await runCli(["capability", "add", "iteration", "--root", root]);
-
-    const listed = await runCli(["capability", "list", "--root", root]);
-    expect(listed.exitCode).toBe(0);
-    expect(listed.stdout).toContain("Capability modules for CapList (archetype study):");
-    expect(listed.stdout).toContain("adr: enabled (archetype)");
-    expect(listed.stdout).toContain("intent: not enabled");
-    expect(listed.stdout).toContain("iteration: enabled (added)");
-
-    const json = await runCli(["capability", "list", "--root", root, "--json"]);
-    expect(json.exitCode).toBe(0);
-    expect(JSON.parse(json.stdout).capabilities).toEqual([
-      { module: "adr", enabled: true, source: "archetype", supported: true },
-      { module: "intent", enabled: false, source: null, supported: true },
-      { module: "iteration", enabled: true, source: "added", supported: true },
-    ]);
-  });
-
-  it("marks modules that are not enabled", async () => {
-    const root = await initWorkspace("CapListNone", BARE_ARCHETYPE);
-
-    const listed = await runCli(["capability", "list", "--root", root]);
-
-    expect(listed.exitCode).toBe(0);
-    expect(listed.stdout).toContain("adr: not enabled");
-    expect(listed.stdout).toContain("iteration: not enabled");
-  });
-});
-
-describe("assay native Project migration CLI", () => {
-  it("previews and applies the retired project-authority migration without deleting source", async () => {
-    const root = await initWorkspace("ProjectMigration", "solve");
-    await rm(path.join(root, "project"), { recursive: true });
-    await mkdir(path.join(root, "project-authority", "specs"), { recursive: true });
-    const placeholder = "# Managed legacy placeholder\n";
-    await writeFile(path.join(root, "project-authority", "README.md"), placeholder, "utf8");
-    await writeFile(path.join(root, "project-authority", "specs", "api.md"), "# API\n", "utf8");
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    manifest.project.capabilities = ["project-authority"];
-    recordManagedFile(manifest, {
-      path: "project-authority/README.md",
-      templateId: "project.authority.readme",
-      content: placeholder,
-    });
-    await saveManifest(root, manifest);
-
-    const preview = await runCli(["project", "migrate-authority", "--root", root, "--dry-run"]);
-    expect(preview.exitCode, preview.stderr).toBe(0);
-    expect(preview.stdout).toContain("Project authority migration: dry-run");
-    expect(await exists(path.join(root, "project"))).toBe(false);
-
-    const applied = await runCli(["project", "migrate-authority", "--root", root, "--apply"]);
-    expect(applied.exitCode, applied.stderr).toBe(0);
-    expect(applied.stdout).toContain("Project authority migration: applied");
-    expect(await readFile(path.join(root, "project", "specs", "api.md"), "utf8")).toBe("# API\n");
-    expect(await readFile(path.join(root, "project-authority", "specs", "api.md"), "utf8")).toBe(
-      "# API\n",
-    );
   });
 });
 
@@ -717,43 +598,6 @@ describe("assay plugin CLI", () => {
     expect(result.exitCode, result.stderr).toBe(0);
     expect(await exists(path.join(root, ".assay", "trellis", "state.json"))).toBe(true);
     expect(await exists(path.join(root, ".trellis"))).toBe(false);
-  });
-
-  it("shows Trellis runtime capabilities while native decision governance stays active", async () => {
-    const root = path.join(await tempDir(), "CliTrellis");
-
-    const initialized = await runCli(["init", root, "--name", "CliTrellis", "--plugin", "trellis"]);
-    expect(initialized.exitCode, initialized.stderr).toBe(0);
-    expect(initialized.stdout).toContain("Added plugin: assay.trellis");
-
-    const plugins = await runCli(["plugin", "list", "--root", root]);
-    expect(plugins.exitCode, plugins.stderr).toBe(0);
-    expect(plugins.stdout).toContain("workspace-runtime");
-    expect(plugins.stdout).toContain(
-      "runtime task-store, session-store, journal-store, runtime-config, durable-channel, external-worker-protocol, codex-memory-reader, legacy-migration, context-provider, host-hook-registration",
-    );
-    expect(plugins.stdout).toContain("decision-governance: desired assay.native");
-
-    const status = await runCli(["status", "--root", root]);
-    expect(status.exitCode, status.stderr).toBe(0);
-    expect(status.stdout).toContain("Decision governance");
-    expect(status.stdout).toContain("active provider: assay.native");
-
-    const analysis = await runCli(["analysis", "new", "Provider decision", "--root", root]);
-    const analysisPath = analysis.stdout.match(/Created analysis: (.+)/)?.[1]?.trim();
-    expect(analysisPath).toBeDefined();
-    const closed = await runCli([
-      "analysis",
-      "close",
-      analysisPath as string,
-      "--exit",
-      "adr",
-      "--allow-empty",
-      "--root",
-      root,
-    ]);
-    expect(closed.exitCode, closed.stderr).toBe(0);
-    expect(closed.stdout).toContain("Next: `assay adr new");
   });
 });
 
@@ -860,17 +704,5 @@ describe("Next: hints on high-adoption write commands", () => {
     ]);
     expect(knowledge.exitCode, knowledge.stderr).toBe(0);
     expect(knowledge.stdout).toContain("Next: write the entry in knowledge/patterns/");
-  });
-
-  it("names the first command a newly added capability makes available", async () => {
-    const root = await initWorkspace("NextCapability", BARE_ARCHETYPE);
-
-    const added = await runCli(["capability", "add", "adr", "--root", root]);
-    expect(added.exitCode, added.stderr).toBe(0);
-    expect(added.stdout).toContain("Next: `assay adr new");
-
-    const rerun = await runCli(["capability", "add", "adr", "--root", root]);
-    expect(rerun.exitCode, rerun.stderr).toBe(0);
-    expect(rerun.stdout).not.toContain("Next:");
   });
 });

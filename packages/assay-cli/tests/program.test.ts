@@ -82,31 +82,22 @@ beforeEach(async () => {
 });
 
 describe("assay Commander registration", () => {
-  it("registers root commands in help", () => {
+  it("omits retired commands from help and rejects them without workspace writes", async () => {
     const help = createProgram().helpInformation();
+    for (const command of ["adr", "migrate-layout", "project"]) {
+      expect(help).not.toMatch(new RegExp(`^\\s+${command}(?:\\s|$)`, "m"));
+    }
 
-    expect(help).toContain("Usage: assay [options] [command]");
-    for (const command of [
-      "init",
-      "adopt",
-      "check",
-      "status",
-      "update",
-      "projects",
-      "project",
-      "migrate-layout",
-      "archetype",
-      "plugin",
-      "task",
-      "trellis",
-      "reconcile",
-      "reference",
-      "analysis",
-      "iteration",
-      "event",
-      "adr",
+    const root = await tempDir();
+    const before = await readdir(root);
+    for (const args of [
+      ["adr", "list", "--root", root],
+      ["migrate-layout", "--root", root],
+      ["project", "migrate-authority", "--root", root],
     ]) {
-      expect(help).toContain(command);
+      const result = await runCli(args);
+      expect(result.exitCode).not.toBe(0);
+      expect(await readdir(root)).toEqual(before);
     }
   });
 
@@ -116,16 +107,6 @@ describe("assay Commander registration", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: assay reference add [options] <source-dir> <name>");
     expect(result.stdout).toContain("--root <target-dir>");
-    expect(result.stderr).toBe("");
-  });
-
-  it("exposes explicit native Project migration help", async () => {
-    const result = await runCli(["project", "migrate-authority", "--help"]);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Usage: assay project migrate-authority [options]");
-    expect(result.stdout).toContain("--dry-run");
-    expect(result.stdout).toContain("--apply");
     expect(result.stderr).toBe("");
   });
 
@@ -164,16 +145,6 @@ describe("assay Commander registration", () => {
 });
 
 describe("assay CLI subprocess behavior", () => {
-  it("prints root help with exit code 0", async () => {
-    const result = await runCli(["--help"]);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Bootstrap and update an Assay evidence workbench.");
-    expect(result.stdout).toContain("adopt");
-    expect(result.stdout).toContain("migrate-layout");
-    expect(result.stderr).toBe("");
-  });
-
   it("runs init, check, status, and update dry-run against a temporary workspace", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
@@ -398,18 +369,6 @@ describe("assay CLI subprocess behavior", () => {
     expect(untrackedAttachRecord.exitCode).toBe(1);
     expect(untrackedAttachRecord.stderr).toContain("project not found");
   }, 45_000);
-
-  it("prints migrate-layout help with explicit backup mode", async () => {
-    const result = await runCli(["migrate-layout", "--help"]);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Usage: assay migrate-layout [options]");
-    expect(result.stdout).toContain("--dry-run");
-    expect(result.stdout).toContain("--apply");
-    expect(result.stdout).toContain("--backup");
-    expect(result.stdout).toContain("with --apply, back up pre-existing files");
-    expect(result.stderr).toBe("");
-  });
 
   it("accepts init archetype and rejects the removed profile option", async () => {
     const removedProfileFlag = `--${"profile"}`;
@@ -793,57 +752,6 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.stderr).toContain("Assay framework manifest already exists");
   });
 
-  it("defaults root-scoped commands to the current working directory", async () => {
-    const workspace = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-
-    const init = await runCli(["init", workspace, "--name", "Default Root"]);
-    expect(init.exitCode).toBe(0);
-
-    const check = await runCliIn(workspace, ["check"]);
-    expect(check.exitCode).toBe(0);
-    expect(check.stdout).toContain("Framework check: ok");
-
-    const status = await runCliIn(workspace, ["status"]);
-    expect(status.exitCode).toBe(0);
-    expect(status.stdout).toContain("Project: Default Root");
-
-    const update = await runCliIn(workspace, ["update", "--dry-run"]);
-    expect(update.exitCode).toBe(0);
-    expect(update.stdout).toContain("Framework update: dry-run");
-
-    const migration = await runCliIn(workspace, ["migrate-layout", "--dry-run"]);
-    expect(migration.exitCode).toBe(0);
-    expect(migration.stdout).toContain("Layout migration: dry-run");
-
-    const reference = await runCliIn(workspace, ["reference", "add", source, "Source Project"]);
-    expect(reference.exitCode).toBe(0);
-    expect(reference.stdout).toContain("Frozen reference: references/frozen/");
-
-    const analysis = await runCliIn(workspace, ["analysis", "new", "Review Source"]);
-    expect(analysis.exitCode).toBe(0);
-    expect(analysis.stdout).toContain("Created analysis: analyses/references/");
-
-    const iteration = await runCliIn(workspace, ["iteration", "start", "Try Pattern"]);
-    expect(iteration.exitCode).toBe(1);
-    expect(iteration.stdout).toBe("");
-    expect(iteration.stderr).toContain("capability not enabled in archetype study: iteration");
-
-    const event = await runCliIn(workspace, [
-      "event",
-      "capture",
-      "--kind",
-      "note",
-      "--text",
-      "Captured from CLI test",
-    ]);
-    expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .assay/events/");
-    expect(event.stderr).toBe("");
-  });
-
   it("returns non-zero for failed checks", async () => {
     const root = await tempDir();
     await mkdir(path.join(root, ".assay"), { recursive: true });
@@ -897,72 +805,6 @@ describe("assay CLI subprocess behavior", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Allowed choices are");
-  });
-
-  it("runs the remaining cross-feature commands", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-    await runCli(["init", root, "--name", "Compatibility"]);
-
-    const reference = await runCli(["reference", "add", source, "Source Project", "--root", root]);
-    expect(reference.exitCode).toBe(0);
-    expect(reference.stdout).toContain("Frozen reference: references/frozen/");
-
-    const analysis = await runCli(["analysis", "new", "Review Source", "--root", root]);
-    expect(analysis.exitCode).toBe(0);
-    expect(analysis.stdout).toContain("Created analysis: analyses/references/");
-
-    const iteration = await runCli(["iteration", "start", "Try Pattern", "--root", root]);
-    expect(iteration.exitCode).toBe(1);
-    expect(iteration.stdout).toBe("");
-    expect(iteration.stderr).toContain("capability not enabled in archetype study: iteration");
-
-    const solveRoot = path.join(await tempDir(), "solve");
-    await runCli(["init", solveRoot, "--name", "Compatibility Solve", "--archetype", "solve"]);
-    const solveIteration = await runCli(["iteration", "start", "Try Pattern", "--root", solveRoot]);
-    expect(solveIteration.exitCode).toBe(0);
-    expect(solveIteration.stdout).toContain("Started iteration: iterations/");
-    expect(solveIteration.stdout).toContain("Plan:");
-
-    const event = await runCli([
-      "event",
-      "capture",
-      "--kind",
-      "note",
-      "--text",
-      "Captured from CLI test",
-      "--root",
-      root,
-    ]);
-    expect(event.exitCode).toBe(0);
-    expect(event.stdout).toContain("Captured event: .assay/events/");
-    expect(event.stderr).toBe("");
-
-    const migration = await runCli(["migrate-layout", "--root", root, "--dry-run"]);
-    expect(migration.exitCode).toBe(0);
-    expect(migration.stdout).toContain("Layout migration: dry-run");
-    expect(migration.stdout).toContain("Plan:");
-  });
-
-  it("applies migrate-layout without creating backups by default", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await runCli(["init", root, "--name", "Migration Apply"]);
-    await mkdir(path.join(root, "references", "202401"), { recursive: true });
-    await writeFile(path.join(root, "references", "202401", "source.md"), "# Source\n", "utf8");
-
-    const result = await runCli(["migrate-layout", "--root", root, "--apply"]);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Layout migration: applied");
-    expect(result.stdout).toContain("references/202401 -> references/frozen/202401");
-    expect(result.stdout).not.toContain("Backup:");
-    expect(result.stderr).toBe("");
-    expect(
-      await readFile(path.join(root, "references", "frozen", "202401", "source.md"), "utf8"),
-    ).toBe("# Source\n");
-    expect(await readdir(path.join(root, ".assay", "backups"))).toEqual([".gitkeep"]);
   });
 
   it("lists, shows, scans, forgets, and prunes project registry records", async () => {

@@ -222,7 +222,7 @@ when a stale writer must fail rather than overwrite newer state.
 | Roadmap, project specifications, and acceptance | native Project |
 | Agent DAG, dispatch, owner, and execution permissions | host runtime |
 | Fork, activation, and promotion semantics | Relay |
-| Durable product decisions and reusable learning | ADRs, analyses, and `knowledge/` |
+| Durable learning and investigation outcomes | analyses and `knowledge/` |
 
 Task files can cite or summarize the context needed to perform the Task, but
 they do not take ownership from these systems. Creating, binding, relating, or

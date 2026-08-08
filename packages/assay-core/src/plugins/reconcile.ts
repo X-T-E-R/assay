@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ADRS_FILE, CURRENT_VERSION, MANIFEST_FILE, PLUGINS_STATE_FILE } from "../constants.js";
+import { CURRENT_VERSION, MANIFEST_FILE, PLUGINS_STATE_FILE } from "../constants.js";
 import { FrameworkError, FrameworkNotFoundError, InvalidManifestError } from "../errors.js";
 import { appendEvent } from "../events.js";
 import {
@@ -25,13 +25,13 @@ import type {
   ProviderTarget,
   WorkspaceLayout,
 } from "../schemas/index.js";
+import { withWorkspaceMutationCoordination } from "../tasks/task-storage.js";
 import { type TemplateFile, capabilityTemplates } from "../templates.js";
 import { nowIso } from "../time.js";
 import {
   type ProviderHealth,
   type ProviderObservation,
   type ResponsibilityStatus,
-  getDecisionGovernanceStatus,
   normalizeProviderTarget,
 } from "./authority.js";
 import {
@@ -43,7 +43,6 @@ import {
   setExternalPluginEnabled,
 } from "./external.js";
 import {
-  DECISION_GOVERNANCE_RESPONSIBILITY,
   type PluginDefinition,
   getPluginDefinition,
   listPluginDefinitions,
@@ -571,20 +570,6 @@ async function applyReconcileContext(
         };
         manifestChanged = true;
       }
-      const legacyBinding = context.manifest.bindings?.[DECISION_GOVERNANCE_RESPONSIBILITY];
-      if (legacyBinding?.provider === entry.id) {
-        const nextBindings = { ...(context.manifest.bindings ?? {}) };
-        Reflect.deleteProperty(nextBindings, DECISION_GOVERNANCE_RESPONSIBILITY);
-        if (Object.keys(nextBindings).length === 0) {
-          Reflect.deleteProperty(context.manifest, "bindings");
-        } else {
-          context.manifest.bindings = nextBindings;
-        }
-        manifestChanged = true;
-        report.notes.push(
-          "removed legacy assay.trellis decision-governance binding; Assay native ADR and intent remain active",
-        );
-      }
     }
     nextState.plugins[entry.id] = nextReceipt(
       definition,
@@ -620,7 +605,7 @@ async function applyReconcileContext(
   };
 }
 
-export async function reconcilePlugins(
+async function reconcilePluginsUnlocked(
   options: ReconcilePluginsOptions,
 ): Promise<ReconcilePluginsResult> {
   const root = path.resolve(options.root);
@@ -642,7 +627,13 @@ export async function reconcilePlugins(
   };
 }
 
-export async function addPlugin(options: AddPluginOptions): Promise<AddPluginResult> {
+export async function reconcilePlugins(
+  options: ReconcilePluginsOptions,
+): Promise<ReconcilePluginsResult> {
+  return withWorkspaceMutationCoordination(options.root, () => reconcilePluginsUnlocked(options));
+}
+
+async function addPluginUnlocked(options: AddPluginOptions): Promise<AddPluginResult> {
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
   const { id, declaration } = pluginDeclarationFor(options.plugin);
@@ -712,15 +703,6 @@ export async function addPlugin(options: AddPluginOptions): Promise<AddPluginRes
     !alreadyDeclared || declarationChanged || bindingChanged,
   );
   if (
-    bindingChanged &&
-    (await exists(path.join(root, ADRS_FILE))) &&
-    !applied.report.notes.some((note) => note.includes("inactive Assay-native decision archive"))
-  ) {
-    applied.report.notes.push(
-      `${ADRS_FILE} preserved as an inactive Assay-native decision archive`,
-    );
-  }
-  if (
     (!alreadyDeclared || declarationChanged) &&
     !applied.report.updated_files.includes(MANIFEST_FILE)
   ) {
@@ -734,7 +716,11 @@ export async function addPlugin(options: AddPluginOptions): Promise<AddPluginRes
   };
 }
 
-export async function removePlugin(options: {
+export async function addPlugin(options: AddPluginOptions): Promise<AddPluginResult> {
+  return withWorkspaceMutationCoordination(options.root, () => addPluginUnlocked(options));
+}
+
+async function removePluginUnlocked(options: {
   readonly root: string;
   readonly plugin: string;
   readonly mode: "disable" | "uninstall";
@@ -983,13 +969,18 @@ export async function removePlugin(options: {
   return result;
 }
 
+export async function removePlugin(
+  options: Parameters<typeof removePluginUnlocked>[0],
+): ReturnType<typeof removePluginUnlocked> {
+  return withWorkspaceMutationCoordination(options.root, () => removePluginUnlocked(options));
+}
+
 async function statusForWorkspace(root: string): Promise<{
   readonly manifest: FrameworkManifest;
   readonly statuses: PluginStatus[];
   readonly responsibilities: ResponsibilityStatus[];
 }> {
   const manifest = requireManifest(await loadManifest(root), root);
-  const decisionStatus = await getDecisionGovernanceStatus(root, manifest);
   let archetype: Archetype;
   try {
     archetype = await loadArchetype(manifest.project.archetype, { root });
@@ -1036,7 +1027,7 @@ async function statusForWorkspace(root: string): Promise<{
             : "plugin is available but not desired",
         };
       }),
-      responsibilities: [decisionStatus],
+      responsibilities: [],
     };
   }
   const desired = desiredPlugins(manifest, archetype.modules);
@@ -1060,8 +1051,6 @@ async function statusForWorkspace(root: string): Promise<{
       action === "noop" || action === "adopt" || action === "refresh" || action === "available";
     const health: ProviderHealth =
       entry?.health ?? (action === "available" ? "not-checked" : "unhealthy");
-    const activeResponsibilities =
-      decisionStatus.activeProvider === id ? [DECISION_GOVERNANCE_RESPONSIBILITY] : [];
     statuses.push({
       id,
       kind: definition?.kind ?? receipt?.kind ?? manifest.plugins?.[id]?.kind ?? "unknown",
@@ -1076,7 +1065,7 @@ async function statusForWorkspace(root: string): Promise<{
       runtimeCapabilities: definition?.runtimeCapabilities ?? [],
       operationalResponsibilities: definition?.operationalResponsibilities ?? [],
       providedResponsibilities: definition?.providedResponsibilities ?? [],
-      activeResponsibilities,
+      activeResponsibilities: [],
       missingPaths: entry?.missingPaths ?? [],
       observations: entry?.observations ?? null,
       desiredSources: entry?.desiredSources ?? [],
@@ -1087,7 +1076,7 @@ async function statusForWorkspace(root: string): Promise<{
           : (entry?.message ?? "plugin is available but not desired"),
     });
   }
-  return { manifest, statuses, responsibilities: [decisionStatus] };
+  return { manifest, statuses, responsibilities: [] };
 }
 
 export async function listPlugins(rootValue: string): Promise<ListPluginsResult> {

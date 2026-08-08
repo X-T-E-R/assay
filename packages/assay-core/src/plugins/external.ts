@@ -7,6 +7,7 @@ import { CURRENT_VERSION, MANAGED_DIR } from "../constants.js";
 import { FrameworkError, FrameworkNotFoundError, InvalidManifestError } from "../errors.js";
 import { loadManifest } from "../manifest.js";
 import { stringifySortedJson } from "../serialization.js";
+import { withWorkspaceMutationCoordination } from "../tasks/task-storage.js";
 import { nowIso } from "../time.js";
 
 export const EXTERNAL_PLUGINS_STATE_FILE = `${MANAGED_DIR}/external-plugins.json`;
@@ -441,7 +442,7 @@ async function readJsonFile(fileValue: string): Promise<unknown> {
   }
 }
 
-export async function registerExternalPlugin(options: {
+async function registerExternalPluginUnlocked(options: {
   readonly root: string;
   readonly descriptor: unknown;
   readonly now?: Date;
@@ -488,6 +489,14 @@ export async function registerExternalPlugin(options: {
   };
 }
 
+export async function registerExternalPlugin(
+  options: Parameters<typeof registerExternalPluginUnlocked>[0],
+): ReturnType<typeof registerExternalPluginUnlocked> {
+  return withWorkspaceMutationCoordination(options.root, () =>
+    registerExternalPluginUnlocked(options),
+  );
+}
+
 export async function registerExternalPluginFromFile(options: {
   readonly root: string;
   readonly file: string;
@@ -500,7 +509,7 @@ export async function registerExternalPluginFromFile(options: {
   });
 }
 
-export async function observeExternalPlugin(options: {
+async function observeExternalPluginUnlocked(options: {
   readonly root: string;
   readonly observation: unknown;
   readonly now?: Date;
@@ -531,6 +540,14 @@ export async function observeExternalPlugin(options: {
   return { root, plugin: externalStatus(recorded) };
 }
 
+export async function observeExternalPlugin(
+  options: Parameters<typeof observeExternalPluginUnlocked>[0],
+): ReturnType<typeof observeExternalPluginUnlocked> {
+  return withWorkspaceMutationCoordination(options.root, () =>
+    observeExternalPluginUnlocked(options),
+  );
+}
+
 export async function observeExternalPluginFromFile(options: {
   readonly root: string;
   readonly file: string;
@@ -543,7 +560,7 @@ export async function observeExternalPluginFromFile(options: {
   });
 }
 
-export async function setExternalPluginEnabled(options: {
+async function setExternalPluginEnabledUnlocked(options: {
   readonly root: string;
   readonly plugin: string;
   readonly enabled: boolean;
@@ -569,7 +586,15 @@ export async function setExternalPluginEnabled(options: {
   return { root, plugin: externalStatus(recorded), changed };
 }
 
-export async function removeExternalPlugin(options: {
+export async function setExternalPluginEnabled(
+  options: Parameters<typeof setExternalPluginEnabledUnlocked>[0],
+): ReturnType<typeof setExternalPluginEnabledUnlocked> {
+  return withWorkspaceMutationCoordination(options.root, () =>
+    setExternalPluginEnabledUnlocked(options),
+  );
+}
+
+async function removeExternalPluginUnlocked(options: {
   readonly root: string;
   readonly plugin: string;
   readonly now?: Date;
@@ -588,6 +613,14 @@ export async function removeExternalPlugin(options: {
   delete state.plugins[id];
   await saveExternalPluginsState(root, state, options.now ?? new Date());
   return { root, plugin: id, changed: true, hostStatePreserved: true };
+}
+
+export async function removeExternalPlugin(
+  options: Parameters<typeof removeExternalPluginUnlocked>[0],
+): ReturnType<typeof removeExternalPluginUnlocked> {
+  return withWorkspaceMutationCoordination(options.root, () =>
+    removeExternalPluginUnlocked(options),
+  );
 }
 
 function externalStatus(lock: ExternalPluginLock): ExternalPluginStatus {

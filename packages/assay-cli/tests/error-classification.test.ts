@@ -62,28 +62,15 @@ describe("assay error messages distinguish user input from internal faults", () 
     expect(result.stderr).not.toContain("Runtime error");
   });
 
-  it("prefixes a self-superseding ADR with Error", async () => {
-    const root = await workspace("PrefixAdr");
-    const created = await cliRunner.runCli(["adr", "new", "T1", "--root", root]);
-    expect(created.exitCode, created.stderr).toBe(0);
-    const id = created.stdout.match(/ADR-\d{4}-[a-z0-9-]+/)?.[0];
-    if (!id) throw new Error(`ADR id not found in output:\n${created.stdout}`);
-    await cliRunner.runCli(["adr", "accept", id, "--root", root]);
-
-    const result = await cliRunner.runCli(["adr", "supersede", id, id, "--root", root]);
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(`Error: ADR cannot supersede itself: ${id}`);
-    expect(result.stderr).not.toContain("Runtime error");
-  });
-
-  it("keeps Runtime error for a corrupted persisted record", async () => {
+  it("reports an old manifest as a stable cutover requirement", async () => {
     const root = await workspace("PrefixCorrupt");
     await writeFile(path.join(root, ".assay", "manifest.json"), '{"__schema": 1}', "utf8");
 
     const result = await cliRunner.runCli(["update", "--root", root]);
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Runtime error");
+    expect(result.stderr).toContain("Error: Workspace cutover required");
+    expect(result.stderr).toContain("0.7.0+s2+l5");
+    expect(result.stderr).toContain("assay-cutover:");
   });
 });

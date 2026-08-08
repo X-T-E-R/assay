@@ -1,7 +1,6 @@
 import path from "node:path";
 import { Command, Option } from "@commander-js/extra-typings";
 import {
-  type AdrStatus,
   type AnalysisExit,
   type AssayProjectRegistryStatus,
   CURRENT_VERSION,
@@ -21,7 +20,6 @@ import {
   type SystemVcs,
   type WorkspacePrivacy,
   absorbReference,
-  acceptAdr,
   addCapability,
   addKnowledge,
   addPlugin,
@@ -46,23 +44,19 @@ import {
   closeIteration,
   contextTrellisMemory,
   convertOverlayToStandalone,
-  createAdr,
   createAnalysis,
   createTrellisChannel,
   createTrellisTask,
   currentTrellisSession,
   decideDonorAdoption,
-  deprecateAdr,
   diffSource,
   discoverFrameworkRoot,
   endTrellisSession,
-  findAdr,
   findProjectRecord,
   findSystem,
   finishTrellisWorker,
   forgetProject,
   getCurrentTrellisTask,
-  getDecisionGovernanceStatus,
   getDonorAdoption,
   getDonorHistory,
   getDonorStatus,
@@ -75,7 +69,6 @@ import {
   initFramework,
   inspectDonorAdoption,
   installTrellisHook,
-  listAdrs,
   listAvailableArchetypes,
   listCapabilities,
   listDonorAdoptions,
@@ -88,8 +81,6 @@ import {
   listTrellisTasks,
   listTrellisWorkers,
   loadManifest,
-  migrateLayout,
-  migrateProjectAuthority,
   mutateTrellisLease,
   observeExternalPluginFromFile,
   parseTrellisJson,
@@ -114,7 +105,6 @@ import {
   removePlugin,
   renderCodexSessionStartHook,
   repairTrellisChannel,
-  requireAdrIndex,
   requireSystemsRegistry,
   restoreTrellisLegacyHookScrub,
   rollbackTrellisLegacyMigration,
@@ -130,7 +120,6 @@ import {
   showTrellisTask,
   startIteration,
   startTrellisSession,
-  supersedeAdr,
   switchSource,
   syncSource,
   takeDonorMaterial,
@@ -144,8 +133,6 @@ import { recordCommandProjectLifecycle } from "./command-lifecycle.js";
 import { mapCliError } from "./errors.js";
 import {
   formatAdoptionResult,
-  formatAdrList,
-  formatAdrRecord,
   formatAttachResult,
   formatCapabilityAdd,
   formatCapabilityList,
@@ -162,7 +149,6 @@ import {
   formatIntentCapture,
   formatIntentList,
   formatIntentPromotion,
-  formatMigrationResult,
   formatPluginAdd,
   formatPluginCheck,
   formatPluginList,
@@ -209,20 +195,12 @@ interface ProjectPruneOptions extends ProjectJsonOptions {
   readonly dryRun?: boolean;
 }
 
-interface AdrListOptions {
-  readonly json?: boolean;
-  readonly native?: boolean;
-  readonly root: string;
-  readonly status?: string;
-}
-
 const PROJECT_STATUSES: readonly AssayProjectRegistryStatus[] = [
   "active",
   "missing",
   "uninstalled",
 ];
 
-const ADR_STATUSES: readonly AdrStatus[] = ["proposed", "accepted", "superseded", "deprecated"];
 const INTENT_AUTHORITY_MODES: readonly SystemIntentAuthorityMode[] = ["inline", "external", "none"];
 const ABSORPTION_OUTLETS: readonly AbsorptionOutlet[] = ["problem", "intake"];
 
@@ -287,16 +265,6 @@ function parseStatusFilter(status?: string): AssayProjectRegistryStatus | undefi
     return status as AssayProjectRegistryStatus;
   }
   throw new Error(`--status must be one of: ${PROJECT_STATUSES.join(", ")}`);
-}
-
-function parseAdrStatusFilter(status?: string): AdrStatus | undefined {
-  if (status === undefined) {
-    return undefined;
-  }
-  if (ADR_STATUSES.includes(status as AdrStatus)) {
-    return status as AdrStatus;
-  }
-  throw new Error(`--status must be one of: ${ADR_STATUSES.join(", ")}`);
 }
 
 /**
@@ -383,37 +351,6 @@ async function writeArchetypeCommandResult(
   writeLine(output, "stdout", `Mode: ${payload.mode}`);
 }
 
-/**
- * Where an analysis goes after it closes depends on how it closed: an adopted
- * pattern becomes knowledge, a decision becomes an ADR, an experiment becomes
- * an iteration. Naming the one command that fits the exit is the whole point of
- * the hint — a generic "record the outcome" line would be prose.
- */
-function analysisCloseNextLine(
-  analysisPath: string,
-  exit: string,
-  decisionProvider = "assay.native",
-): string {
-  switch (exit) {
-    case "adopt":
-      return `Next: \`assay knowledge add pattern "<title>" --from-analysis ${analysisPath}\` to keep what survived.`;
-    case "adr":
-      return decisionProvider === "assay.native"
-        ? 'Next: `assay adr new "<decision title>"` to record the decision this analysis reached.'
-        : "Next: restore the configured decision provider before recording this decision.";
-    case "experiment":
-      return 'Next: `assay iteration start "<what you are trying>"` to run the experiment this analysis proposed.';
-    default:
-      return "Next: `assay status` shows what is still open in this workspace.";
-  }
-}
-
-/**
- * What follows registering a system. A non-primary one has an obvious next
- * step; for the primary one the freshly generated contract carries metadata and
- * no description yet. Both hold in every archetype, unlike `iteration start`,
- * which only exists where the iteration module is enabled.
- */
 function systemRegisterNextLine(system: {
   readonly name: string;
   readonly status: string;
@@ -430,8 +367,6 @@ function systemRegisterNextLine(system: {
 /** The first command a freshly scaffolded capability module makes available. */
 function capabilityAddNextLine(module: string): string {
   switch (module) {
-    case "adr":
-      return 'Next: `assay adr new "<decision title>"`.';
     case "intent":
       return 'Next: `assay intent capture --text "<what the product is for>"`.';
     case "iteration":
@@ -714,38 +649,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", formatProjectList("tracked Assay projects", records));
     });
 
-  const project = program
-    .command("project")
-    .description("Inspect and migrate the workspace's native Project");
-
-  project
-    .command("migrate-authority")
-    .description("Safely copy the retired project-authority capability into the native Project")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .addOption(new Option("--dry-run", "preview without writing").conflicts("apply"))
-    .addOption(new Option("--apply", "apply the validated copy").conflicts("dryRun"))
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await migrateProjectAuthority({
-        root,
-        apply: commandOptions.apply === true,
-      });
-      writeLine(
-        output,
-        "stdout",
-        [
-          `Project authority migration: ${result.apply ? "applied" : "dry-run"}`,
-          `Source: ${result.source} (preserved)`,
-          `Target: ${result.target}`,
-          `Entries: ${result.entries.join(", ") || "(none)"}`,
-          result.removedCapability
-            ? "Manifest: retired project-authority capability will be removed"
-            : "Manifest: no retired capability entry",
-          ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
-        ].join("\n"),
-      );
-    });
-
   projects
     .command("show")
     .description("Show one tracked project by id, id prefix, or path")
@@ -810,25 +713,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "stdout",
         formatProjectList(`${verb} ${records.length} project(s)`, records),
       );
-    });
-
-  program
-    .command("migrate-layout")
-    .description("Plan or apply old-to-new folder layout migration")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .addOption(new Option("--dry-run", "plan migration without applying writes").conflicts("apply"))
-    .addOption(new Option("--apply", "apply copy-first migration steps").conflicts("dryRun"))
-    .option("--backup", "with --apply, back up pre-existing files overwritten by migration")
-    .action(async (commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const shouldApply = commandOptions.apply === true;
-      const result = await migrateLayout({
-        root,
-        dryRun: !shouldApply,
-        apply: shouldApply,
-        backup: commandOptions.backup === true,
-      });
-      writeLine(output, "stdout", formatMigrationResult(result));
     });
 
   const archetypeCommand = program
@@ -2473,7 +2357,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(
         output,
         "stdout",
-        `Next: fill ## Key observations, then \`assay analysis close ${result.path} --exit adopt|reject|experiment|adr\`.`,
+        `Next: fill ## Key observations, then \`assay analysis close ${result.path} --exit adopt|reject|experiment\`.`,
       );
     });
 
@@ -2483,7 +2367,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .argument("<path>", "analysis file path relative to workspace root")
     .addOption(
       new Option("--exit <exit>", "decision exit")
-        .choices(["adopt", "reject", "experiment", "adr"])
+        .choices(["adopt", "reject", "experiment"])
         .makeOptionMandatory(),
     )
     .option("--note <note>", "closing note")
@@ -2505,16 +2389,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Closed analysis: ${result.path}`);
       writeLine(output, "stdout", `Exit: ${commandOptions.exit}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
-      const decisionProvider =
-        commandOptions.exit === "adr"
-          ? await getDecisionGovernanceStatus(root).then(
-              (status) => status.activeProvider ?? status.desiredProvider,
-            )
-          : "assay.native";
       writeLine(
         output,
         "stdout",
-        analysisCloseNextLine(result.path, commandOptions.exit, decisionProvider),
+        commandOptions.exit === "adopt"
+          ? `Next: \`assay knowledge add pattern "<title>" --from-analysis ${result.path}\` to keep what survived.`
+          : commandOptions.exit === "experiment"
+            ? 'Next: `assay iteration start "<what you are trying>"`.'
+            : "Next: `assay status` shows what is still open in this workspace.",
       );
     });
 
@@ -2588,117 +2470,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Captured event: ${result.eventFile}`);
     });
 
-  const adr = program.command("adr").description("Architecture decision record operations");
-
-  adr
-    .command("new")
-    .description("Create a proposed ADR under knowledge/decisions")
-    .argument("<title>", "ADR title")
-    .option("--from-analysis <path>", "originating analysis path")
-    .option("--from-iteration <path>", "originating iteration path")
-    .option("--force", "suppress the legacy external-governance advisory")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (title, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await createAdr(
-        root,
-        {
-          title,
-          ...(commandOptions.fromAnalysis === undefined
-            ? {}
-            : { relatedAnalysis: commandOptions.fromAnalysis }),
-          ...(commandOptions.fromIteration === undefined
-            ? {}
-            : { relatedIteration: commandOptions.fromIteration }),
-        },
-        {
-          force: commandOptions.force ?? false,
-          onWarning: (message) => writeLine(output, "stderr", message),
-        },
-      );
-      writeLine(output, "stdout", `Created ADR: ${result.adr.id}`);
-      writeLine(output, "stdout", `Path: ${result.adr.path}`);
-      writeLine(output, "stdout", `Status: ${result.adr.status}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-    });
-
-  adr
-    .command("accept")
-    .description("Accept a proposed ADR")
-    .argument("<selector>", "ADR id, number, or unique id prefix")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (selector, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await acceptAdr(root, selector);
-      writeLine(output, "stdout", `Accepted ADR: ${result.adr.id}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-    });
-
-  adr
-    .command("supersede")
-    .description("Mark an accepted ADR as superseded by another accepted ADR")
-    .argument("<old-selector>", "ADR being superseded")
-    .argument("<new-selector>", "accepted replacement ADR")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (oldSelector, newSelector, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await supersedeAdr(root, oldSelector, newSelector);
-      writeLine(output, "stdout", `Superseded ADR: ${result.oldAdr.id}`);
-      writeLine(output, "stdout", `Replacement: ${result.newAdr.id}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-    });
-
-  adr
-    .command("deprecate")
-    .description("Deprecate a proposed or accepted ADR without replacing it")
-    .argument("<selector>", "ADR id, number, or unique id prefix")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (selector, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await deprecateAdr(root, selector);
-      writeLine(output, "stdout", `Deprecated ADR: ${result.adr.id}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-    });
-
-  adr
-    .command("list")
-    .description("List indexed ADRs")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--native", "read the inactive Assay-native ADR archive")
-    .option("--json", "emit JSON")
-    .addOption(new Option("--status <status>", "filter by status").choices([...ADR_STATUSES]))
-    .action(async (commandOptions: AdrListOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const status = parseAdrStatusFilter(commandOptions.status);
-      const { adrs } = await listAdrs(root, status, { native: commandOptions.native ?? false });
-      if (commandOptions.json) {
-        writeJson(output, { adrs });
-        return;
-      }
-      writeLine(output, "stdout", formatAdrList("Architecture decision records", adrs));
-    });
-
-  adr
-    .command("show")
-    .description("Show one ADR by id, number, or unique id prefix")
-    .argument("<selector>", "ADR id, number, or unique id prefix")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option("--native", "read the inactive Assay-native ADR archive")
-    .option("--json", "emit JSON")
-    .action(async (selector, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const index = await requireAdrIndex(root, { native: commandOptions.native ?? false });
-      const record = findAdr(index, selector);
-      if (commandOptions.json) {
-        writeJson(output, record);
-        return;
-      }
-      writeLine(output, "stdout", formatAdrRecord(record));
-    });
-
   const intent = program
     .command("intent")
-    .description("Capture product intent verbatim and promote it into requirements or decisions");
+    .description("Capture product intent verbatim and promote it into requirements");
 
   intent
     .command("capture")
@@ -2727,14 +2501,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   intent
     .command("promote")
-    .description("Derive a requirement or an ADR from a recorded intent capture")
+    .description("Derive a requirement from a recorded intent capture")
     .argument("<capture>", "intent capture id or unique id prefix")
     .addOption(
       new Option("--to <target>", "promotion target")
-        .choices(["requirement", "decision"])
+        .choices(["requirement"])
         .makeOptionMandatory(),
     )
-    .option("--title <title>", "title for the requirement or ADR")
+    .option("--title <title>", "title for the requirement")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (capture, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -2983,13 +2757,13 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   knowledge
     .command("add")
     .description("Add a knowledge entry")
-    .argument("<type>", "knowledge type: decision, pattern, guide, troubleshooting")
+    .argument("<type>", "knowledge type: pattern, guide, troubleshooting")
     .argument("<title>", "knowledge entry title")
     .option("--from-analysis <path>", "originating analysis path")
     .option("--from-iteration <path>", "originating iteration path")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (type, title, commandOptions) => {
-      const validTypes = ["decision", "pattern", "guide", "troubleshooting"];
+      const validTypes = ["pattern", "guide", "troubleshooting"];
       if (!validTypes.includes(type)) {
         output.stderr(`Invalid type '${type}'. Must be one of: ${validTypes.join(", ")}\n`);
         output.setExitCode(1);

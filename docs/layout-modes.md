@@ -18,7 +18,7 @@ The manifest carries a `layout` block so runtime code asks "where is `references
 ```json
 {
   "layout": {
-    "version": 4,
+    "version": 5,
     "mode": "standalone",
     "state_root": ".assay",
     "work_root": ".",
@@ -28,7 +28,6 @@ The manifest carries a `layout` block so runtime code asks "where is `references
       "events": ".assay/events",
       "backups": ".assay/backups",
       "systems_registry": ".assay/systems-registry.json",
-      "adrs_index": ".assay/adrs.json",
       "references": "references",
       "analyses": "analyses",
       "iterations": "iterations",
@@ -53,7 +52,6 @@ assay-workbench/
     manifest.json
     task-contexts.json
     systems-registry.json
-    adrs.json
     events/
     backups/
     archetypes/
@@ -79,7 +77,6 @@ product-repo/
     manifest.json
     task-contexts.json
     systems-registry.json
-    adrs.json
     events/
     backups/
     archetypes/
@@ -98,7 +95,6 @@ Overlay exists because the repo root is already the system. Assay must not move 
 
 ### Standalone Git
 
-The outer Git repository is optional. Use it when the team wants to review and share evidence, analyses, ADRs, observation summaries, and knowledge.
 
 Recommended tracked content:
 
@@ -107,7 +103,6 @@ Recommended tracked content:
 .assay/VERSION
 .assay/task-contexts.json
 .assay/systems-registry.json
-.assay/adrs.json
 .assay/events/
 references/**/source.yaml
 references/**/history.md
@@ -145,7 +140,6 @@ If you want versioned Assay memory without product commits, initialize Git insid
 ```bash
 cd .assay
 git init
-git add manifest.json systems-registry.json adrs.json events analyses knowledge references
 ```
 
 This makes Assay state independently versioned while the product repo still
@@ -166,8 +160,6 @@ references/foo/
   captures/
   comparisons/
 ```
-
-Older v3 workspaces nested these under `references/foo/.assay/`. Once the workspace state dir became `.assay/`, that nesting would produce `.assay/references/foo/.assay/observations/` in overlay, so layout v4 writes the ledger flat. Existing nested entries are read in place as a compatibility fallback and are never rewritten.
 
 ## Overlay attach workflow
 
@@ -237,7 +229,6 @@ For both modes:
 - The path map resolves all archetype folders.
 - The systems registry has at most one primary system.
 - Registered independent Git systems actually have Git metadata.
-- Analyses, observations, ADRs, and iterations still close the loop.
 
 For overlay privacy:
 

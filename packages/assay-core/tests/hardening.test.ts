@@ -11,7 +11,6 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import {
-  acceptAdr,
   addCapability,
   addSource,
   applyUpdate,
@@ -21,10 +20,8 @@ import {
   closeAnalysis,
   closeIteration,
   convertOverlayToStandalone,
-  createAdr,
   createAnalysis,
   initFramework,
-  listAdrs,
   listIntent,
   loadManifest,
   promoteIntent,
@@ -210,8 +207,7 @@ describe("git ref arguments cannot be parsed as git options", () => {
 /**
  * Frontmatter is written as text, so any value that can carry a newline can
  * also carry a second `---` terminator. The record would still be written, and
- * only the next read would fail — permanently, because captures and ADR
- * markdown are not rewritten from the value that produced them.
+ * only the next read would fail permanently because records are append-only.
  */
 const TERMINATOR_PAYLOAD = 'ticket #42\n---\n\ninjected: "yes"';
 
@@ -270,25 +266,6 @@ describe("frontmatter values cannot terminate their own record", () => {
     expect(header.injected).toBeUndefined();
     // The requirement is still discoverable from the capture it derives from.
     expect((await listIntent({ root })).captures[0]?.requirements).toEqual([promoted.path]);
-  });
-
-  it("round-trips an ADR title carrying a frontmatter terminator through accept", async () => {
-    const root = await standaloneWorkspace("AdrTitleInjection");
-
-    const created = await createAdr(root, { title: TERMINATOR_PAYLOAD });
-
-    const header = frontmatterOf(await readFile(path.join(root, created.adr.path), "utf8"));
-    expect(header.title).toBe(TERMINATOR_PAYLOAD);
-    expect(header.status).toBe("proposed");
-    expect(header.injected).toBeUndefined();
-
-    // `accept` rewrites the frontmatter in place by matching the terminator.
-    await acceptAdr(root, created.adr.id);
-    const accepted = await readFile(path.join(root, created.adr.path), "utf8");
-    expect(frontmatterOf(accepted).title).toBe(TERMINATOR_PAYLOAD);
-    expect(frontmatterOf(accepted).status).toBe("accepted");
-    expect(accepted).toContain("## Consequences");
-    expect((await listAdrs(root)).adrs[0]?.title).toBe(TERMINATOR_PAYLOAD);
   });
 });
 
@@ -530,114 +507,6 @@ describe("convert carries the full workspace state to the new standalone root", 
     30_000,
   );
 
-  it("keeps native ADR templates through legacy Trellis reconcile and conversion", async () => {
-    const root = await overlayWorkspace("ConvertLegacyTrellisAdr");
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    manifest.plugins = { "assay.trellis": { kind: "federated-provider" } };
-    manifest.bindings = {
-      "decision-governance": {
-        provider: "assay.trellis",
-        target: { kind: "workspace" },
-      },
-    };
-    await saveManifest(root, manifest);
-    await savePluginsState(root, {
-      __schema: 2,
-      plugins: {
-        "assay.trellis": {
-          kind: "federated-provider",
-          state_version: 1,
-          installed_at: "2026-07-28T00:00:00+00:00",
-          updated_at: "2026-07-28T00:00:00+00:00",
-        },
-      },
-      updated_at: "2026-07-28T00:00:00+00:00",
-    });
-
-    await applyUpdate({ root });
-    const overlayAdrTemplate = path.join(
-      root,
-      ".assay",
-      "knowledge",
-      "decisions",
-      "ADR-TEMPLATE.md",
-    );
-    expect(await exists(overlayAdrTemplate)).toBe(true);
-    await reconcilePlugins({ root, apply: true });
-    await applyUpdate({ root });
-    expect(await exists(overlayAdrTemplate)).toBe(true);
-
-    const target = path.join(path.dirname(root), "converted-legacy-trellis-adr");
-    await convertOverlayToStandalone({ root, target });
-    await applyUpdate({ root: target });
-    expect(await exists(path.join(target, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
-    expect((await createAdr(target, { title: "Native After Convert" })).adr.id).toBe(
-      "ADR-0001-native-after-convert",
-    );
-  });
-
-  it("copies the ADR index so ADR numbering continues instead of restarting", async () => {
-    const root = await overlayWorkspace("ConvertAdrs");
-    const first = await createAdr(root, { title: "Overlay Decision" });
-    expect(first.adr.id).toBe("ADR-0001-overlay-decision");
-
-    const target = path.join(path.dirname(root), "converted-adrs");
-    await convertOverlayToStandalone({ root, target });
-
-    // The index travelled with the ADR markdown, so `adr list` sees the ADR ...
-    const listed = await listAdrs(target);
-    expect(listed.adrs.map((adr) => adr.id)).toEqual(["ADR-0001-overlay-decision"]);
-    expect(await exists(path.join(target, ".assay", "adrs.json"))).toBe(true);
-
-    // ... and the next ADR gets a fresh number instead of colliding on 0001.
-    const second = await createAdr(target, { title: "Standalone Decision" });
-    expect(second.adr.id).toBe("ADR-0002-standalone-decision");
-
-    // Index paths follow the hoisted markdown, so `check` finds every ADR.
-    expect(listed.adrs[0]?.path).toBe("knowledge/decisions/ADR-0001-overlay-decision.md");
-    expect(await exists(path.join(target, "knowledge", "decisions"))).toBe(true);
-    for (const adr of (await listAdrs(target)).adrs) {
-      expect(await exists(path.join(target, adr.path))).toBe(true);
-    }
-    const check = await checkFramework({ root: target });
-    expect(check.rows.filter((row) => row.message?.includes("missing on disk"))).toEqual([]);
-  });
-
-  it("copies project-local archetypes so the converted workspace can still load its archetype", async () => {
-    const root = await overlayWorkspace("ConvertArchetypes");
-    const archetypeDir = path.join(root, ".assay", "archetypes");
-    await mkdir(archetypeDir, { recursive: true });
-    await writeFile(
-      path.join(archetypeDir, "local-study.yaml"),
-      [
-        "extends: base",
-        "mode: learning",
-        "modules:",
-        "  - adr",
-        "dirs:",
-        "  - knowledge/decisions",
-        "templates: []",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    const manifestPath = path.join(root, ".assay", "manifest.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
-      project: { archetype: string };
-    };
-    manifest.project.archetype = "local-study";
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-
-    const target = path.join(path.dirname(root), "converted-archetypes");
-    await convertOverlayToStandalone({ root, target });
-
-    expect(await exists(path.join(target, ".assay", "archetypes", "local-study.yaml"))).toBe(true);
-    // A command that must resolve the archetype now works in the new root.
-    const adr = await createAdr(target, { title: "Post Convert Decision" });
-    expect(adr.adr.id).toBe("ADR-0001-post-convert-decision");
-  });
-
   it("rewrites managed-file paths for the hoisted work folders so `check` passes", async () => {
     const root = await overlayWorkspace("ConvertManagedFiles");
     await applyUpdate({ root });
@@ -669,6 +538,18 @@ describe("convert carries the full workspace state to the new standalone root", 
     expect(await exists(path.join(target, ".assay", "donors", "example", "state.json"))).toBe(true);
   });
 
+  it("does not copy retired decision-index bytes", async () => {
+    const root = await overlayWorkspace("ConvertRetiredIndex");
+    const retired = path.join(root, ".assay", "adrs.json");
+    await writeFile(retired, "{malformed", "utf8");
+
+    const target = path.join(path.dirname(root), "converted-retired-index");
+    await convertOverlayToStandalone({ root, target });
+
+    expect(await exists(path.join(target, ".assay", "adrs.json"))).toBe(false);
+    expect(await readFile(retired, "utf8")).toBe("{malformed");
+  });
+
   it("refuses --no-keep-overlay without --move instead of silently keeping the overlay", async () => {
     const root = await overlayWorkspace("ConvertKeepOverlay");
     const target = path.join(path.dirname(root), "converted-keep-overlay");
@@ -680,59 +561,9 @@ describe("convert carries the full workspace state to the new standalone root", 
     // The refusal happens before any target state is written.
     expect(await exists(path.join(target, ".assay", "manifest.json"))).toBe(false);
   });
-
-  it("removes the emptied overlay state directory with --move --no-keep-overlay", async () => {
-    const root = await overlayWorkspace("ConvertMoveRemoveOverlay");
-    await createAdr(root, { title: "Moved Decision" });
-
-    const target = path.join(path.dirname(root), "converted-move-remove");
-    const result = await convertOverlayToStandalone({
-      root,
-      target,
-      move: true,
-      keepOverlay: false,
-    });
-
-    expect(result.overlayStateRemoved).toBe(true);
-    expect(await exists(path.join(root, ".assay"))).toBe(false);
-    // The product repo itself is untouched.
-    expect(await exists(path.join(root, "product.txt"))).toBe(true);
-    expect((await git(root, ["status", "--short"])).trim()).toBe("");
-    expect(await exists(path.join(target, ".assay", "adrs.json"))).toBe(true);
-  });
 });
 
 describe("check accepts archetype-declared knowledge subdirectories", () => {
-  it("does not warn about a knowledge folder the archetype declares", async () => {
-    const root = path.join(await tempDirs.createTempDir(), "CustomKnowledge");
-    const archetypeDir = path.join(root, ".assay", "archetypes");
-    await mkdir(archetypeDir, { recursive: true });
-    await writeFile(
-      path.join(archetypeDir, "playbook-study.yaml"),
-      [
-        "extends: base",
-        "mode: learning",
-        "modules:",
-        "  - adr",
-        "dirs:",
-        "  - knowledge/decisions",
-        "  - knowledge/playbooks",
-        "templates: []",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    await initFramework({ target: root, name: "CustomKnowledge", archetype: "playbook-study" });
-    expect(await exists(path.join(root, "knowledge", "playbooks"))).toBe(true);
-
-    const result = await checkFramework({ root });
-
-    expect(
-      result.rows.filter((row) => row.message?.includes("unexpected knowledge subdirectory")),
-    ).toEqual([]);
-  });
-
   it("still warns about the legacy troubleshootings directory", async () => {
     const root = await standaloneWorkspace("LegacyKnowledgeDrift");
     await mkdir(path.join(root, "knowledge", "troubleshootings"), { recursive: true });

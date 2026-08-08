@@ -19,10 +19,8 @@ import {
   addPlugin,
   checkFramework,
   checkPlugins,
-  createAdr,
   createTrellisTask,
   getCurrentTrellisTask,
-  getDecisionGovernanceStatus,
   getTrellisContext,
   initFramework,
   installTrellisHook,
@@ -69,43 +67,6 @@ describe("assay.trellis built-in runtime", () => {
       writes.filter((target) => target.endsWith("/.assay/trellis/wal/active.json")),
     ).toHaveLength(2);
     expect(writes.some((target) => target.endsWith("/.assay/trellis/state.json"))).toBe(true);
-  });
-
-  it("installs v1 state under .assay and leaves native decisions active", async () => {
-    const root = await workspace("BuiltInTrellis");
-    const result = await addPlugin({
-      root,
-      plugin: "trellis",
-      now: new Date("2026-08-02T08:00:00.000Z"),
-    });
-
-    expect(result.plugins).toEqual([
-      expect.objectContaining({
-        id: "assay.trellis",
-        kind: "workspace-runtime",
-        action: "install",
-      }),
-    ]);
-    expect(await pathExists(path.join(root, ".trellis"))).toBe(false);
-    expect(JSON.parse(await readFile(path.join(root, TRELLIS_RUNTIME_STATE_FILE), "utf8"))).toEqual(
-      expect.objectContaining({ __schema: 1, protocol_version: 1, session_currents: {} }),
-    );
-    expect((await loadManifest(root))?.plugins?.["assay.trellis"]).toEqual({
-      kind: "workspace-runtime",
-    });
-    expect((await loadManifest(root))?.bindings?.["decision-governance"]).toBeUndefined();
-    expect((await loadPluginsState(root))?.plugins["assay.trellis"]).toEqual(
-      expect.objectContaining({ kind: "workspace-runtime", state_version: 1 }),
-    );
-    expect((await getDecisionGovernanceStatus(root)).activeProvider).toBe("assay.native");
-    expect((await checkPlugins(root)).ok).toBe(true);
-    expect((await checkFramework({ root })).ok).toBe(true);
-    await addCapability({ root, module: "adr" });
-    await expect(createAdr(root, { title: "Native decisions stay available" })).resolves.toEqual(
-      expect.objectContaining({
-        adr: expect.objectContaining({ title: "Native decisions stay available" }),
-      }),
-    );
   });
 
   it("creates tasks with a recoverable staged commit and renders the current Codex context", async () => {
@@ -419,48 +380,5 @@ describe("assay.trellis built-in runtime", () => {
       /install conflict/,
     );
     expect(await readFile(hookFile, "utf8")).toBe(modified);
-  });
-
-  it("migrates legacy v1 federated metadata without reading or writing .trellis", async () => {
-    const root = await workspace("LegacyMetadata");
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    manifest.__schema = 2;
-    manifest.minimum_assay_version = "0.5.0";
-    manifest.plugins = { "assay.trellis": { kind: "federated-provider" } };
-    manifest.bindings = {
-      "decision-governance": {
-        provider: "assay.trellis",
-        target: { kind: "workspace" },
-      },
-    };
-    await saveManifest(root, manifest);
-    await savePluginsState(root, {
-      __schema: 2,
-      plugins: {
-        "assay.trellis": {
-          kind: "federated-provider",
-          state_version: 1,
-          installed_at: "2026-07-28T00:00:00+00:00",
-          updated_at: "2026-07-28T00:00:00+00:00",
-          observations: {
-            provider_locator: "workspace:.trellis",
-            provider_version: "1.0.0",
-          },
-        },
-      },
-      updated_at: "2026-07-28T00:00:00+00:00",
-    });
-
-    expect((await getDecisionGovernanceStatus(root)).activeProvider).toBe("assay.native");
-    const migrated = await reconcilePlugins({ root, apply: true });
-    expect(migrated.plugins[0]).toEqual(expect.objectContaining({ action: "repair" }));
-    expect((await loadManifest(root))?.plugins?.["assay.trellis"]?.kind).toBe("workspace-runtime");
-    expect((await loadManifest(root))?.bindings?.["decision-governance"]).toBeUndefined();
-    expect((await loadPluginsState(root))?.plugins["assay.trellis"]).toEqual(
-      expect.objectContaining({ kind: "workspace-runtime", state_version: 1 }),
-    );
-    expect((await loadPluginsState(root))?.plugins["assay.trellis"]?.observations).toBeUndefined();
-    expect(await pathExists(path.join(root, ".trellis"))).toBe(false);
   });
 });

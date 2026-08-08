@@ -56,7 +56,6 @@ A global `assay` command (via `npm link` in `packages/assay-cli`) is optional an
 
 ## Working directory conventions
 
-All workspace commands (`init`, `adopt`, `check`, `status`, `update`, `reconcile`, `plugin add|list|check`, `migrate-layout`, `source add|sync|switch|status|diff|log`, `reference add`, `analysis new`, `analysis close`, `iteration start`, `iteration close`, `knowledge add`, `adr new|accept|supersede|deprecate|list|show`, `system register|update|promote|archive|list|show`) default to `process.cwd()` and walk up to discover `.assay/manifest.json`.
 
 Use `cd <target-dir>` before running commands, or pass `--root <path>` / `[target-dir]` only when operating on a workspace from another directory.
 
@@ -104,18 +103,3 @@ When maintaining the Assay repository, validate through the release scripts rath
 ```
 
 Those scripts build the TypeScript packages, run typecheck/lint/tests/smoke, and verify the committed `examples/framework-template` workspace with the built CLI.
-
-## ADR index (per-workspace)
-
-Each workspace can track architecture decision records in `.assay/adrs.json` with markdown files under `knowledge/decisions/`. Manage ADRs with the `adr` command group rather than editing the JSON directly:
-
-```bash
-assay adr new "Title" [--from-analysis <path>] [--from-iteration <path>]
-assay adr accept <selector>
-assay adr supersede <old-selector> <new-selector>
-assay adr deprecate <selector>
-assay adr list [--status proposed|accepted|superseded|deprecated] [--json]
-assay adr show <selector> [--json]
-```
-
-Selectors can be the full ADR id, a unique id prefix, or the ADR number.

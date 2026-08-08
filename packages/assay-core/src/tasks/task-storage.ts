@@ -1,6 +1,17 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+} from "node:fs/promises";
 import path from "node:path";
 
 export type TaskStorageProbePhase = "after-temp-sync" | "before-commit";
@@ -18,6 +29,17 @@ type TaskLockProbe = (
 let storageProbe: TaskStorageProbe | undefined;
 let lockProbe: TaskLockProbe | undefined;
 let lockWaitMs = 10_000;
+const workspaceMutationContext = new AsyncLocalStorage<ReadonlySet<string>>();
+const workspaceConversionContext = new AsyncLocalStorage<ReadonlySet<string>>();
+const TRANSIENT_COORDINATION_MARKER = ".workspace-coordination-transient";
+
+export type WorkspaceMutationProbeStage = "before-acquire" | "after-acquire";
+type WorkspaceMutationProbe = (
+  stage: WorkspaceMutationProbeStage,
+  root: string,
+  lockDirectory: string,
+) => void | Promise<void>;
+let workspaceMutationProbe: WorkspaceMutationProbe | undefined;
 
 /** Test-only failure injection for proving the atomic replacement boundary. */
 export function setTaskStorageProbeForTests(probe: TaskStorageProbe | undefined): void {
@@ -32,6 +54,11 @@ export function setTaskLockWaitForTests(milliseconds: number | undefined): void 
 /** Test-only failure injection around the prepared-lock claim. */
 export function setTaskLockProbeForTests(probe: TaskLockProbe | undefined): void {
   lockProbe = probe;
+}
+
+/** Test-only observation hook for the cross-owner workspace mutation gate. */
+export function setWorkspaceMutationProbeForTests(probe: WorkspaceMutationProbe | undefined): void {
+  workspaceMutationProbe = probe;
 }
 
 export class TaskStorageBoundaryError extends Error {
@@ -62,6 +89,12 @@ export class TaskLockUnavailableError extends Error {
     this.name = "TaskLockUnavailableError";
     this.target = target;
   }
+}
+
+interface CoordinationDirectories {
+  readonly stateDirectory: string;
+  readonly coordinationDirectory: string;
+  readonly transientStateDirectory: boolean;
 }
 
 function pathKey(value: string): string {
@@ -175,10 +208,11 @@ export async function atomicWriteTaskText(
   }
 }
 
-export async function withTaskLock<T>(
+async function withTaskLockRaw<T>(
   root: string,
   lockDirectory: string,
   callback: () => Promise<T>,
+  probe: TaskLockProbe | undefined,
 ): Promise<T> {
   await assertTaskStorageBoundary(root, lockDirectory);
   const parent = path.dirname(lockDirectory);
@@ -188,7 +222,7 @@ export async function withTaskLock<T>(
   const token = randomUUID();
   while (true) {
     await assertTaskStorageBoundary(root, parent);
-    if (await tryClaimLock(root, lockDirectory, token)) break;
+    if (await tryClaimLock(root, lockDirectory, token, probe)) break;
     let info: Awaited<ReturnType<typeof lstat>>;
     try {
       info = await lstat(lockDirectory);
@@ -222,7 +256,7 @@ export async function withTaskLock<T>(
       }
       throw ownerError;
     }
-    await lockProbe?.("after-owner-entry-inspection", lockDirectory, lockDirectory);
+    await probe?.("after-owner-entry-inspection", lockDirectory, lockDirectory);
     let owner: LockOwner;
     try {
       owner = await readLockOwner(root, lockDirectory);
@@ -282,7 +316,16 @@ export async function withTaskLock<T>(
   } catch (error) {
     outcome = { ok: false, error };
   }
-  const owner = await readLockOwner(root, lockDirectory);
+  let owner: LockOwner;
+  try {
+    owner = await readLockOwner(root, lockDirectory);
+  } catch (releaseError) {
+    // A callback that already detected a redirect/identity violation must not
+    // have that security finding masked by our intentionally fail-closed
+    // refusal to release a lock through the changed path.
+    if (!outcome.ok) throw outcome.error;
+    throw releaseError;
+  }
   if (owner.token !== token) {
     throw new TaskLockUnavailableError(
       lockDirectory,
@@ -292,6 +335,125 @@ export async function withTaskLock<T>(
   await rm(lockDirectory, { recursive: true, force: true });
   if (!outcome.ok) throw outcome.error;
   return outcome.value;
+}
+
+/**
+ * Serialize conversion with every mutable owner that participates in this
+ * gate. Async-local reentrancy preserves the established nested lock order for
+ * Task, Roadmap, Spec, donor, Trellis, and plugin operations.
+ */
+export async function withWorkspaceMutationCoordination<T>(
+  rootValue: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const root = path.resolve(rootValue);
+  const key = pathKey(root);
+  const current = workspaceMutationContext.getStore();
+  if (current?.has(key)) return callback();
+
+  const prepared = await prepareCoordinationDirectories(root);
+  const { coordinationDirectory } = prepared;
+  const conversionBoundary = path.join(coordinationDirectory, "conversion-boundary");
+  const conversionOwned = workspaceConversionContext.getStore()?.has(key) === true;
+  if (!conversionOwned && (await lstatIfPresent(conversionBoundary)) !== undefined) {
+    throw new TaskLockUnavailableError(
+      conversionBoundary,
+      `workspace conversion is in progress: ${root}`,
+    );
+  }
+  const lockDirectory = path.join(coordinationDirectory, "workspace-mutation");
+  await workspaceMutationProbe?.("before-acquire", root, lockDirectory);
+  try {
+    return await withTaskLockRaw(
+      root,
+      lockDirectory,
+      async () => {
+        if (!conversionOwned && (await lstatIfPresent(conversionBoundary)) !== undefined) {
+          throw new TaskLockUnavailableError(
+            conversionBoundary,
+            `workspace conversion began before mutation lock acquisition: ${root}`,
+          );
+        }
+        await workspaceMutationProbe?.("after-acquire", root, lockDirectory);
+        return workspaceMutationContext.run(new Set([...(current ?? []), key]), callback);
+      },
+      undefined,
+    );
+  } finally {
+    await cleanupCoordinationDirectories(root, prepared);
+  }
+}
+
+/**
+ * Establish a fail-closed conversion boundary, then wait for any mutation that
+ * acquired the shared gate before the boundary. Later mutations cannot cross
+ * the boundary, so preflight, transfer, and source cleanup form one snapshot.
+ */
+export async function withWorkspaceConversionCoordination<T>(
+  rootValue: string,
+  callback: () => Promise<T>,
+  options: { readonly removeStateDirectoryWhenEmpty?: boolean } = {},
+): Promise<T> {
+  const root = path.resolve(rootValue);
+  const key = pathKey(root);
+  const current = workspaceConversionContext.getStore();
+  if (current?.has(key)) return callback();
+  const prepared = await prepareCoordinationDirectories(root);
+  const { coordinationDirectory } = prepared;
+  const boundary = path.join(coordinationDirectory, "conversion-boundary");
+  await assertTaskStorageBoundary(root, path.join(root, ".assay"));
+  await assertTaskStorageBoundary(root, coordinationDirectory);
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(boundary, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new TaskLockUnavailableError(
+        boundary,
+        `workspace conversion is already active: ${root}`,
+      );
+    }
+    throw error;
+  }
+  try {
+    await handle.writeFile(
+      `${JSON.stringify({ pid: process.pid, token: randomUUID(), created_at: new Date().toISOString() })}\n`,
+      "utf8",
+    );
+    await handle.sync();
+    return await workspaceConversionContext.run(new Set([...(current ?? []), key]), () =>
+      withWorkspaceMutationCoordination(root, callback),
+    );
+  } finally {
+    await handle.close().catch(() => undefined);
+    await rm(boundary, { force: true });
+    await cleanupCoordinationDirectories(root, prepared);
+    if (options.removeStateDirectoryWhenEmpty) {
+      await rmdir(prepared.stateDirectory).catch((error: unknown) => {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+      });
+    }
+  }
+}
+
+export async function withTaskLock<T>(
+  root: string,
+  lockDirectory: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  return withWorkspaceMutationCoordination(root, () =>
+    withTaskLockRaw(root, lockDirectory, callback, lockProbe),
+  );
+}
+
+/** Test-only access to the task-lock protocol without the workspace owner gate. */
+export async function withTaskLockUncoordinatedForTests<T>(
+  root: string,
+  lockDirectory: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  return withTaskLockRaw(root, lockDirectory, callback, lockProbe);
 }
 
 interface LockOwner {
@@ -322,6 +484,88 @@ async function lstatIfPresent(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+async function prepareCoordinationDirectories(root: string): Promise<CoordinationDirectories> {
+  const stateDirectory = path.join(root, ".assay");
+  const coordinationDirectory = path.join(stateDirectory, "coordination");
+  const marker = path.join(stateDirectory, TRANSIENT_COORDINATION_MARKER);
+  await assertTaskStorageBoundary(root, stateDirectory);
+  await assertTaskStorageBoundary(root, coordinationDirectory);
+
+  let transientStateDirectory = false;
+  const existingState = await lstatIfPresent(stateDirectory);
+  if (existingState === undefined) {
+    const staging = path.join(root, `.assay.coordination-${randomUUID()}.tmp`);
+    await assertTaskStorageBoundary(root, staging);
+    await mkdir(staging);
+    let markerHandle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      markerHandle = await open(path.join(staging, TRANSIENT_COORDINATION_MARKER), "wx", 0o600);
+      await markerHandle.writeFile(`${JSON.stringify({ pid: process.pid })}\n`, "utf8");
+      await markerHandle.sync();
+      await markerHandle.close();
+      markerHandle = undefined;
+      try {
+        await rename(staging, stateDirectory);
+        transientStateDirectory = true;
+      } catch (error) {
+        if ((await lstatIfPresent(stateDirectory)) === undefined) throw error;
+      }
+    } finally {
+      await markerHandle?.close().catch(() => undefined);
+      await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  await assertTaskStorageBoundary(root, stateDirectory);
+  const stateInfo = await lstat(stateDirectory);
+  if (!stateInfo.isDirectory() || stateInfo.isSymbolicLink()) {
+    throw new TaskStorageBoundaryError(
+      stateDirectory,
+      "workspace coordination state root is not a real directory",
+    );
+  }
+  transientStateDirectory ||= (await lstatIfPresent(marker))?.isFile() === true;
+
+  await assertTaskStorageBoundary(root, coordinationDirectory);
+  try {
+    await mkdir(coordinationDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  await assertTaskStorageBoundary(root, coordinationDirectory);
+  const coordinationInfo = await lstat(coordinationDirectory);
+  if (!coordinationInfo.isDirectory() || coordinationInfo.isSymbolicLink()) {
+    throw new TaskStorageBoundaryError(
+      coordinationDirectory,
+      "workspace coordination path is not a real directory",
+    );
+  }
+  return { stateDirectory, coordinationDirectory, transientStateDirectory };
+}
+
+async function cleanupCoordinationDirectories(
+  root: string,
+  prepared: CoordinationDirectories,
+): Promise<void> {
+  let coordinationRemoved = false;
+  try {
+    await rmdir(prepared.coordinationDirectory);
+    coordinationRemoved = true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") coordinationRemoved = true;
+    else if (code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+  }
+  if (!coordinationRemoved || !prepared.transientStateDirectory) return;
+  const marker = path.join(prepared.stateDirectory, TRANSIENT_COORDINATION_MARKER);
+  await assertTaskStorageBoundary(root, prepared.stateDirectory);
+  await rm(marker, { force: true });
+  await rmdir(prepared.stateDirectory).catch((error: unknown) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+  });
 }
 
 function sameDirectoryIdentity(
@@ -376,14 +620,25 @@ async function observedOwnerlessIsCurrent(
   return afterOwnerCheck !== undefined && sameDirectoryIdentity(currentDirectory, afterOwnerCheck);
 }
 
-async function tryClaimLock(root: string, finalDirectory: string, token: string): Promise<boolean> {
+async function tryClaimLock(
+  root: string,
+  finalDirectory: string,
+  token: string,
+  probe: TaskLockProbe | undefined,
+): Promise<boolean> {
   const temporaryDirectory = `${finalDirectory}.claim-${token}`;
   await assertTaskStorageBoundary(root, temporaryDirectory);
-  await mkdir(temporaryDirectory);
+  try {
+    await mkdir(temporaryDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await mkdir(path.dirname(temporaryDirectory), { recursive: true });
+    return false;
+  }
   let claimed = false;
   try {
     await writeLockOwner(root, temporaryDirectory, token);
-    await lockProbe?.("after-owner-sync", finalDirectory, temporaryDirectory);
+    await probe?.("after-owner-sync", finalDirectory, temporaryDirectory);
     await assertTaskStorageBoundary(root, path.dirname(finalDirectory));
     try {
       await lstat(finalDirectory);
@@ -391,7 +646,7 @@ async function tryClaimLock(root: string, finalDirectory: string, token: string)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    await lockProbe?.("before-claim", finalDirectory, temporaryDirectory);
+    await probe?.("before-claim", finalDirectory, temporaryDirectory);
     try {
       await rename(temporaryDirectory, finalDirectory);
       claimed = true;

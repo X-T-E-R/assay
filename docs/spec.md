@@ -1,6 +1,5 @@
 # Native specifications
 
-`assay spec` stores current normative constraints and acceptance contracts in the native Project. A Spec is not an ADR, approval, Project acceptance, Roadmap milestone, Task assignment, or System lifecycle signal.
 
 ## Storage and identity
 
@@ -63,6 +62,5 @@ Multiple active Specs may coexist. Assay does not infer conflicts, priority, or 
 
 ## Authority boundaries
 
-Analysis and Task own their source content. Spec owns the promoted current normative contract. Task finish, Roadmap realize, System promote, and every Spec lifecycle command leave the other authorities unchanged. Phase 1 adds no `spec_refs` to Task, Roadmap, or System and does not alter ADR behavior.
 
 `list` and `validate` preserve partial health: malformed records produce issues without hiding healthy siblings. Exact healthy `show` is independent of unrelated broken history. Storage and promotion reject traversal, redirects/reparse points, non-regular files, invalid UTF-8, oversized files, stale revisions, and external byte changes at publication boundaries.

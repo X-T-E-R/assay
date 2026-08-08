@@ -1,34 +1,14 @@
-import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
-import {
-  cp,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { parse, stringify } from "yaml";
 
 import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
-import { appendEvent } from "./events.js";
-import { fileHash } from "./hashing.js";
-import { resolveWorkspaceLayout, workspaceWorkRelativePath } from "./layout.js";
-import { loadManifest, saveManifest } from "./manifest.js";
-import { relativeDisplayPath } from "./paths.js";
+import { workspaceWorkRelativePath } from "./layout.js";
 import { projectReadableId } from "./readable-id.js";
-import {
-  type FrameworkManifest,
-  type NativeProject,
-  type WorkspaceLayout,
-  nativeProjectSchema,
-} from "./schemas/index.js";
+import { type NativeProject, type WorkspaceLayout, nativeProjectSchema } from "./schemas/index.js";
 import { withTaskLock } from "./tasks/task-storage.js";
 
 export const PROJECT_SCHEMA_VERSION = 1 as const;
@@ -57,7 +37,7 @@ This is the workspace's single native Project authority. The Project owns its ad
 
 Semantic locations such as \`specs/\`, \`relay/\`, and \`extensions/\` are created only when the Project adopts material that belongs there. Their absence is healthy.
 
-Native Specs under \`specs/<id>/{spec.yaml,specification.md}\` own current normative constraints and acceptance contracts. They are not approvals, Roadmap state, Task state, System state, or ADR replacements; promotion and lifecycle commands do not propagate across those authorities.
+Native Specs under \`specs/<id>/{spec.yaml,specification.md}\` own current normative constraints and acceptance contracts. They are not approvals, Roadmap state, Task state, or System lifecycle signals; promotion and lifecycle commands do not propagate across those authorities.
 
 Authority remains separate elsewhere:
 
@@ -260,235 +240,6 @@ async function preflightNativeProjectPath(root: string, layout: WorkspaceLayout)
       }
     }
   }
-}
-
-export interface ProjectAuthorityMigrationOptions {
-  readonly root: string;
-  readonly apply?: boolean;
-  readonly now?: Date;
-}
-
-export interface ProjectAuthorityMigrationResult {
-  readonly root: string;
-  readonly dryRun: boolean;
-  readonly apply: boolean;
-  readonly source: string;
-  readonly target: string;
-  readonly entries: readonly string[];
-  readonly removedCapability: boolean;
-  readonly eventFile?: string;
-}
-
-const LEGACY_DOMAIN_DIRECTORIES = new Set(["facts", "policy", "norms", "specs", "relay"]);
-
-/**
- * Copy the retired project-authority capability into the native Project.
- * The source is intentionally retained. Validation and staging happen before
- * the target or manifest is changed, so conflicts cannot produce a partial
- * merge.
- */
-export async function migrateProjectAuthority(
-  options: ProjectAuthorityMigrationOptions,
-): Promise<ProjectAuthorityMigrationResult> {
-  const root = path.resolve(options.root);
-  const manifest = await loadManifest(root);
-  if (!manifest) {
-    throw new FrameworkNotFoundError(`No Assay manifest found at ${root}.`);
-  }
-  const layout = resolveWorkspaceLayout(manifest);
-  if (!layout) throw new FrameworkError("workspace layout is unavailable");
-  const sourceRelative = workspaceWorkRelativePath(layout, "project-authority");
-  const targetRelative = projectRootRelativePath(layout);
-  const source = path.join(root, sourceRelative);
-  const target = path.join(root, targetRelative);
-
-  await assertOrdinaryDirectory(source, "legacy project-authority", false);
-  await assertOrdinaryTree(source, "legacy project-authority");
-  await assertOrdinaryDirectory(
-    await nearestExistingAncestor(target),
-    "native Project target ancestor",
-    false,
-  );
-  const targetExists = await assertOrdinaryDirectory(target, "native Project target", true);
-  if (targetExists && (await readdir(target)).length > 0) {
-    throw new FrameworkError(`native Project target already contains content: ${targetRelative}`);
-  }
-
-  const entries = await validateLegacyProjectAuthorityEntries(
-    root,
-    source,
-    sourceRelative,
-    manifest,
-  );
-  const manifestProjection = projectManifestProjection(
-    manifest,
-    sourceRelative,
-    targetRelative,
-    entries,
-  );
-  const removedCapability = manifest.project.capabilities?.includes("project-authority") ?? false;
-  const resultBase = {
-    root,
-    dryRun: options.apply !== true,
-    apply: options.apply === true,
-    source: sourceRelative,
-    target: targetRelative,
-    entries,
-    removedCapability,
-  } as const;
-  if (options.apply !== true) return resultBase;
-
-  const staged = path.join(path.dirname(target), `.project.assay-migrate-${randomUUID()}`);
-  const originalManifest = await readFile(path.join(root, layout.paths.manifest), "utf8");
-  let targetInstalled = false;
-  let eventFile: string | undefined;
-  try {
-    await mkdir(staged, { recursive: false });
-    for (const entry of entries) {
-      await cp(path.join(source, entry), path.join(staged, entry), {
-        recursive: true,
-        force: false,
-        errorOnExist: true,
-      });
-    }
-    // Build the exact native minimum next to the copied legacy domain folders.
-    await writeFile(
-      path.join(staged, "project.yaml"),
-      serializeNativeProject({
-        __schema: PROJECT_SCHEMA_VERSION,
-        id: projectReadableId(manifest.project.name),
-        name: manifest.project.name,
-        authority: { mode: PROJECT_AUTHORITY_MODE, pointer: PROJECT_AUTHORITY_POINTER },
-      }),
-      "utf8",
-    );
-    await writeFile(path.join(staged, "README.md"), projectReadme(), "utf8");
-    await mkdir(path.join(staged, "roadmap"), { recursive: false });
-    await writeFile(path.join(staged, "roadmap", "README.md"), projectRoadmapReadme(), "utf8");
-
-    if (targetExists) await rm(target, { recursive: false });
-    await rename(staged, target);
-    targetInstalled = true;
-
-    manifest.managed_files = manifestProjection.managedFiles;
-    manifest.user_deleted = manifestProjection.userDeleted;
-    const capabilities = (manifest.project.capabilities ?? []).filter(
-      (capability) => capability !== "project-authority",
-    );
-    manifest.project.capabilities = capabilities.length > 0 ? capabilities : undefined;
-    await saveManifest(root, manifest);
-    eventFile = relativeDisplayPath(
-      await appendEvent(
-        root,
-        {
-          event: "project-authority.migrated",
-          source: sourceRelative,
-          target: targetRelative,
-          source_preserved: true,
-          entries,
-        },
-        options.now ?? new Date(),
-      ),
-      root,
-    );
-  } catch (error) {
-    await rm(staged, { recursive: true, force: true }).catch(() => undefined);
-    if (targetInstalled) {
-      await rm(target, { recursive: true, force: true }).catch(() => undefined);
-      if (targetExists) await mkdir(target, { recursive: true }).catch(() => undefined);
-    }
-    await writeFile(path.join(root, layout.paths.manifest), originalManifest, "utf8").catch(
-      () => undefined,
-    );
-    throw error;
-  }
-
-  return { ...resultBase, ...(eventFile ? { eventFile } : {}) };
-}
-
-function projectManifestProjection(
-  manifest: FrameworkManifest,
-  sourceRoot: string,
-  targetRoot: string,
-  copiedEntries: readonly string[],
-): {
-  readonly managedFiles: FrameworkManifest["managed_files"];
-  readonly userDeleted: string[];
-} {
-  const copied = new Set(copiedEntries);
-  const managedFiles: FrameworkManifest["managed_files"] = {};
-  for (const [managedPath, record] of Object.entries(manifest.managed_files)) {
-    const projected = projectLegacyManifestPath(managedPath, sourceRoot, targetRoot, copied);
-    if (projected === null) continue;
-    if (projected !== managedPath && manifest.managed_files[projected] !== undefined) {
-      throw new FrameworkError(
-        `native Project manifest target already exists: ${projected}; migration will not merge managed authority`,
-      );
-    }
-    managedFiles[projected] = record;
-  }
-  const userDeleted = [
-    ...new Set(
-      manifest.user_deleted.flatMap((deletedPath) => {
-        const projected = projectLegacyManifestPath(deletedPath, sourceRoot, targetRoot, copied);
-        return projected === null ? [] : [projected];
-      }),
-    ),
-  ];
-  return { managedFiles, userDeleted };
-}
-
-/**
- * Move active manifest ownership for copied domain paths. The legacy root
- * README and any legacy path not copied into Project are explicitly retired.
- */
-function projectLegacyManifestPath(
-  candidate: string,
-  sourceRoot: string,
-  targetRoot: string,
-  copiedEntries: ReadonlySet<string>,
-): string | null {
-  if (candidate === `${sourceRoot}/README.md`) return null;
-  const prefix = `${sourceRoot}/`;
-  if (!candidate.startsWith(prefix)) return candidate;
-  const relative = candidate.slice(prefix.length);
-  const first = relative.split("/")[0];
-  if (!first || !copiedEntries.has(first)) return null;
-  return `${targetRoot}/${relative}`;
-}
-
-async function validateLegacyProjectAuthorityEntries(
-  root: string,
-  source: string,
-  sourceRelative: string,
-  manifest: FrameworkManifest,
-): Promise<string[]> {
-  const entries = await readdir(source, { withFileTypes: true });
-  const copyEntries: string[] = [];
-  for (const entry of entries) {
-    if (entry.name === "README.md") {
-      const managedPath = `${sourceRelative}/README.md`;
-      const record = manifest.managed_files[managedPath];
-      if (record?.template_id !== "project.authority.readme") {
-        throw new FrameworkError(
-          `legacy project-authority contains an unknown README.md; preserve or classify it before migration: ${managedPath}`,
-        );
-      }
-      if ((await fileHash(path.join(root, managedPath))) !== record.hash) {
-        throw new FrameworkError(
-          `legacy project-authority README.md was modified by the user; preserve or classify it before migration: ${managedPath}`,
-        );
-      }
-      continue;
-    }
-    if (!entry.isDirectory() || !LEGACY_DOMAIN_DIRECTORIES.has(entry.name)) {
-      throw new FrameworkError(
-        `legacy project-authority contains an unknown entry; preserve or classify it before migration: ${sourceRelative}/${entry.name}`,
-      );
-    }
-    copyEntries.push(entry.name);
-  }
-  return copyEntries.sort();
 }
 
 async function assertOrdinaryTree(directory: string, label: string): Promise<void> {

@@ -7,8 +7,8 @@ import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE, VERSION_FILE } from "./con
 import { FrameworkAlreadyExistsError, FrameworkError } from "./errors.js";
 import { appendEvent } from "./events.js";
 import { defaultOverlayLayout, workspacePath, workspaceTemplateRelativePath } from "./layout.js";
-import { defaultManifest, saveManifest } from "./manifest.js";
-import { relativeDisplayPath, slugify } from "./paths.js";
+import { defaultManifest, loadManifest, saveManifest } from "./manifest.js";
+import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath, slugify } from "./paths.js";
 import { dirsForArchetype, loadArchetype } from "./profile.js";
 import { recordProjectLifecycleBestEffort } from "./project-registry.js";
 import { ensureNativeProject, preflightNativeProjectBoundary } from "./project.js";
@@ -122,22 +122,19 @@ export async function attachExistingRepo(
   options: AttachExistingRepoOptions,
 ): Promise<AttachResult> {
   const root = path.resolve(options.root);
+  await assertNoAncestorWorkspaceAuthority(root);
   const now = options.now ?? new Date();
   const privacy: WorkspacePrivacy = options.privacy ?? "private";
   const layout = defaultOverlayLayout(privacy);
+  const installedManifest = await loadManifest(root);
 
   // `.assay` is the Project ancestor in overlay mode. Validate it before even
   // probing the manifest or project-local archetype paths.
   await preflightNativeProjectBoundary(root, layout);
 
-  if (await exists(path.join(root, MANIFEST_FILE))) {
+  if (installedManifest) {
     throw new FrameworkAlreadyExistsError(
       `Assay manifest already exists at ${path.join(root, MANIFEST_FILE)}. Use \`assay update\` or remove it first.`,
-    );
-  }
-  if (await exists(path.join(root, ".framework", "manifest.json"))) {
-    throw new FrameworkAlreadyExistsError(
-      `Legacy .framework/manifest.json found at ${root}. Run \`assay migrate-layout --apply\` to migrate it to .assay/ before attaching.`,
     );
   }
 
@@ -152,7 +149,7 @@ export async function attachExistingRepo(
 
   // Validate the archetype before writing any state. Without this an
   // `--archetype bogus` attach produced a manifest that every later command
-  // (status, check, adr, ...) failed to load its archetype for.
+  // (status, check, source, ...) failed to load its archetype for.
   const archetypeName = options.archetype ?? "study";
   const archetype = await loadArchetype(archetypeName, { root });
 
@@ -174,7 +171,7 @@ export async function attachExistingRepo(
     mode: archetype.mode,
   });
   manifest.layout = layout;
-  manifest.layout_version = 4;
+  manifest.layout_version = 5;
   await saveManifest(root, manifest);
   await ensureNativeProject(root, layout, project);
 

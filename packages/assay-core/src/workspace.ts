@@ -3,7 +3,6 @@ import path from "node:path";
 import { execa } from "execa";
 import { parse as parseYaml } from "yaml";
 
-import { defaultAdrIndex, loadAdrIndex, saveAdrIndex } from "./adrs.js";
 import {
   ASSAY_AGENTS_FILE,
   ASSAY_AGENTS_MALFORMED_REASON,
@@ -12,13 +11,7 @@ import {
   describeAssayAgentsBlockAction,
   planAssayAgentsBlock,
 } from "./agents.js";
-import {
-  ADRS_FILE,
-  LEGACY_MANAGED_DIR,
-  MANAGED_DIR,
-  MANIFEST_FILE,
-  SYSTEMS_REGISTRY_FILE,
-} from "./constants.js";
+import { MANAGED_DIR, MANIFEST_FILE, SYSTEMS_REGISTRY_FILE } from "./constants.js";
 import { collectDonorIntegrityRows, getDonorSummary } from "./donors/index.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
@@ -42,15 +35,14 @@ import {
   recordTemplate,
   saveManifest,
 } from "./manifest.js";
-import { relativeDisplayPath, resolveContainedPath, slugify } from "./paths.js";
 import {
-  type DecisionGovernanceStatus,
-  getDecisionGovernanceStatus,
-  nativeDecisionGovernanceEnabled,
-  requireNativeDecisionGovernance,
-} from "./plugins/authority.js";
+  assertNoAncestorWorkspaceAuthority,
+  relativeDisplayPath,
+  resolveContainedPath,
+  slugify,
+} from "./paths.js";
 import { collectPluginCheckRows } from "./plugins/reconcile.js";
-import { DECISION_GOVERNANCE_RESPONSIBILITY, pluginCapabilities } from "./plugins/registry.js";
+import { pluginCapabilities } from "./plugins/registry.js";
 import { loadPluginsState } from "./plugins/state.js";
 import {
   type Archetype,
@@ -79,8 +71,6 @@ import {
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import { RoadmapError, validateRoadmaps } from "./roadmap.js";
 import type {
-  AdrIndex,
-  AdrRecord,
   FrameworkManifest,
   ProjectArchetype,
   ProjectMode,
@@ -98,12 +88,7 @@ import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js"
 import { TaskError, validateTasks } from "./task.js";
 import { archetypeTemplates, capabilityTemplates, mergeTemplateFiles } from "./templates.js";
 import { nowIso } from "./time.js";
-import {
-  type SourceAdrSuggestion,
-  type UpstreamStatus,
-  adrSuggestionsForSources,
-  collectUpstreamStatus,
-} from "./upstream.js";
+import { type UpstreamStatus, collectUpstreamStatus } from "./upstream.js";
 import { NATIVE_LAZY_DIRECTORIES, archetypeZones } from "./zones.js";
 
 const GENERATED_REFERENCE_DIRS = new Set([
@@ -149,11 +134,7 @@ export async function desiredRuntimeTemplates(
     options.plugins,
     pluginState,
   );
-  const decisionManifest =
-    options.bindings === undefined ? {} : ({ bindings: options.bindings } as const);
-  const capabilities = nativeDecisionGovernanceEnabled(decisionManifest)
-    ? resolvedCapabilities
-    : resolvedCapabilities.filter((capability) => capability !== "adr");
+  const capabilities = resolvedCapabilities;
   return mergeTemplateFiles(
     archetypeTemplates(project, mode, archetypeDefinition, options.layout),
     capabilityTemplates(project, mode, archetypeDefinition, capabilities, options.layout),
@@ -314,8 +295,6 @@ export interface FrameworkStatusResult {
   /** Drift of each living source's checkout; omitted when there are none. */
   readonly upstream?: UpstreamStatus;
   /** Sources whose latest change grade suggests recording a decision. */
-  readonly adrSuggestions?: readonly SourceAdrSuggestion[];
-  readonly decisionGovernance?: DecisionGovernanceStatus;
   readonly donors?: FrameworkStatusDonors;
   readonly openIterations?: number;
   readonly knowledgeEntries?: number;
@@ -418,7 +397,7 @@ export interface CloseIterationResult {
   readonly eventFile: string;
 }
 
-export type AnalysisExit = "adopt" | "reject" | "experiment" | "adr";
+export type AnalysisExit = "adopt" | "reject" | "experiment";
 
 export interface CloseAnalysisOptions {
   readonly root: string;
@@ -436,7 +415,7 @@ export interface CloseAnalysisResult {
   readonly eventFile: string;
 }
 
-export type KnowledgeType = "decision" | "pattern" | "guide" | "troubleshooting";
+export type KnowledgeType = "pattern" | "guide" | "troubleshooting";
 
 // Map each knowledge type to its directory name. Most types pluralize by
 // appending "s", but "troubleshooting" is already the directory name used by
@@ -444,7 +423,6 @@ export type KnowledgeType = "decision" | "pattern" | "guide" | "troubleshooting"
 // here would create a parallel "knowledge/troubleshootings/" directory and
 // split entries from their README — the bug this map exists to prevent.
 const KNOWLEDGE_TYPE_DIRS: Record<KnowledgeType, string> = {
-  decision: "decisions",
   pattern: "patterns",
   guide: "guides",
   troubleshooting: "troubleshooting",
@@ -535,7 +513,6 @@ function isWorkspaceArea(value: string): value is WorkspaceArea {
     value === "events" ||
     value === "backups" ||
     value === "systemsRegistry" ||
-    value === "adrsIndex" ||
     value === "references" ||
     value === "analyses" ||
     value === "iterations" ||
@@ -577,9 +554,7 @@ async function enabledCapabilities(
       manifest.plugins,
       pluginState,
     );
-    return nativeDecisionGovernanceEnabled(manifest)
-      ? capabilities
-      : capabilities.filter((capability) => capability !== "adr");
+    return capabilities;
   } catch {
     const capabilities = effectiveCapabilities(
       null,
@@ -587,9 +562,7 @@ async function enabledCapabilities(
       manifest.plugins,
       pluginState,
     );
-    return nativeDecisionGovernanceEnabled(manifest)
-      ? capabilities
-      : capabilities.filter((capability) => capability !== "adr");
+    return capabilities;
   }
 }
 
@@ -623,7 +596,7 @@ async function countKnowledgeEntries(root: string, layout: WorkspaceLayout): Pro
   await collectMarkdownFiles(knowledgeRoot, files);
   return files.filter((file) => {
     const basename = path.basename(file);
-    return basename !== "README.md" && basename !== "ADR-TEMPLATE.md";
+    return basename !== "README.md";
   }).length;
 }
 
@@ -654,111 +627,6 @@ async function countOpenIterations(root: string, layout: WorkspaceLayout): Promi
     }
   }
   return count;
-}
-
-const REQUIRED_ADR_FRONTMATTER_FIELDS = [
-  "adr",
-  "title",
-  "status",
-  "date",
-  "supersedes",
-  "superseded_by",
-  "related_analysis",
-  "related_iteration",
-] as const;
-
-function missingAdrFrontmatterFields(content: string): string[] {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match?.[1]) {
-    return [...REQUIRED_ADR_FRONTMATTER_FIELDS];
-  }
-  const frontmatter = match[1];
-  return REQUIRED_ADR_FRONTMATTER_FIELDS.filter((field) => {
-    const pattern = new RegExp(`^${field}:`, "m");
-    return !pattern.test(frontmatter);
-  });
-}
-
-function recordAdrChainErrors(rows: CheckRow[], index: AdrIndex): void {
-  for (const adr of Object.values(index.adrs)) {
-    for (const oldId of adr.supersedes) {
-      const oldAdr = index.adrs[oldId];
-      if (!oldAdr) {
-        rows.push({
-          path: ADRS_FILE,
-          status: "error",
-          message: `ADR '${adr.id}' supersedes missing ADR '${oldId}'`,
-        });
-        continue;
-      }
-      if (oldAdr.superseded_by !== adr.id) {
-        rows.push({
-          path: ADRS_FILE,
-          status: "error",
-          message: `ADR supersedes link is not bidirectional: '${adr.id}' -> '${oldId}'`,
-        });
-      }
-      if (oldAdr.status !== "superseded") {
-        rows.push({
-          path: ADRS_FILE,
-          status: "error",
-          message: `ADR '${oldId}' is superseded by '${adr.id}' but status is '${oldAdr.status}'`,
-        });
-      }
-    }
-
-    if (!adr.superseded_by) {
-      continue;
-    }
-    const replacement = index.adrs[adr.superseded_by];
-    if (!replacement) {
-      rows.push({
-        path: ADRS_FILE,
-        status: "error",
-        message: `ADR '${adr.id}' points to missing superseded_by '${adr.superseded_by}'`,
-      });
-      continue;
-    }
-    if (!replacement.supersedes.includes(adr.id)) {
-      rows.push({
-        path: ADRS_FILE,
-        status: "error",
-        message: `ADR superseded_by link is not bidirectional: '${adr.id}' -> '${replacement.id}'`,
-      });
-    }
-  }
-}
-
-function recordAdrCycleErrors(rows: CheckRow[], index: AdrIndex): void {
-  const reported = new Set<string>();
-  for (const start of Object.keys(index.adrs)) {
-    const seen = new Set<string>();
-    const order: string[] = [];
-    let current: string | null = start;
-
-    while (current) {
-      if (seen.has(current)) {
-        const cycleStart = order.indexOf(current);
-        const cycle = [...order.slice(cycleStart), current].join(" -> ");
-        if (!reported.has(cycle)) {
-          reported.add(cycle);
-          rows.push({
-            path: ADRS_FILE,
-            status: "error",
-            message: `ADR supersede chain has a cycle: ${cycle}`,
-          });
-        }
-        break;
-      }
-      seen.add(current);
-      order.push(current);
-      const record: AdrRecord | undefined = index.adrs[current];
-      if (!record?.superseded_by || !index.adrs[record.superseded_by]) {
-        break;
-      }
-      current = record.superseded_by;
-    }
-  }
 }
 
 async function writeTemplateFile(
@@ -794,29 +662,14 @@ async function writeTemplateFile(
   return "written";
 }
 
-async function scaffoldAdrIndex(root: string, report: OperationReport): Promise<void> {
-  const file = path.join(root, ADRS_FILE);
-  if (await exists(file)) {
-    report.skipped_files.push(ADRS_FILE);
-    return;
-  }
-  await saveAdrIndex(root, defaultAdrIndex());
-  report.created_files.push(ADRS_FILE);
-}
-
-/**
- * State a capability module needs beyond its template set. The ADR index is
- * generated JSON rather than a template, so it is written here instead of
- * through {@link MODULE_SCAFFOLDS}.
- */
 async function scaffoldCapabilityState(
   root: string,
   capability: CapabilityModule,
   report: OperationReport,
 ): Promise<void> {
-  if (capability === "adr") {
-    await scaffoldAdrIndex(root, report);
-  }
+  void root;
+  void capability;
+  void report;
 }
 
 function recordAssayAgentsResult(report: OperationReport, result: AssayAgentsBlockResult): void {
@@ -840,6 +693,8 @@ function recordAssayAgentsResult(report: OperationReport, result: AssayAgentsBlo
 
 export async function initFramework(options: InitFrameworkOptions): Promise<InitFrameworkResult> {
   const root = path.resolve(options.target);
+  await assertNoAncestorWorkspaceAuthority(root);
+  const installedManifest = await loadManifest(root);
   const project = options.name ?? path.basename(root);
   const report = createEmptyReport();
 
@@ -851,7 +706,7 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
 
   await ensureDir(root, root, report);
 
-  let manifest = (await loadManifest(root)) ?? defaultManifest(project, { archetype, mode });
+  let manifest = installedManifest ?? defaultManifest(project, { archetype, mode });
   manifest.project.archetype = archetype;
   manifest.project.mode = mode;
 
@@ -864,9 +719,7 @@ export async function initFramework(options: InitFrameworkOptions): Promise<Init
     manifest.plugins,
     pluginState,
   );
-  const capabilities = nativeDecisionGovernanceEnabled(manifest)
-    ? resolvedCapabilities
-    : resolvedCapabilities.filter((capability) => capability !== "adr");
+  const capabilities = resolvedCapabilities;
   const directories = new Set([
     ...dirsForArchetype(archetypeDefinition, mode),
     ...capabilityDirs(capabilities),
@@ -946,9 +799,6 @@ export async function addCapability(options: AddCapabilityOptions): Promise<AddC
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
   const module = requireCapabilityModule(options.module);
-  if (module === "adr") {
-    await requireNativeDecisionGovernance(root);
-  }
   const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
   const layout = layoutForManifest(manifest);
   const report = createEmptyReport();
@@ -1049,26 +899,14 @@ export async function listCapabilities(
   const archetypeDefinition = await loadArchetype(manifest.project.archetype, { root });
   const declared = new Set(manifest.project.capabilities ?? []);
   const fromPlugins = new Set(pluginCapabilities(manifest.plugins, await loadPluginsState(root)));
-  const nativeDecisions = nativeDecisionGovernanceEnabled(manifest);
-
   const capabilities: CapabilityStatus[] = SUPPORTED_CAPABILITY_MODULES.map((module) => {
-    const fromArchetype =
-      archetypeHasCapability(archetypeDefinition, module) && (module !== "adr" || nativeDecisions);
+    const fromArchetype = archetypeHasCapability(archetypeDefinition, module);
     const added = declared.has(module);
     const fromPlugin = fromPlugins.has(module);
     return {
       module,
-      enabled: (module !== "adr" || nativeDecisions) && (fromArchetype || added || fromPlugin),
-      source:
-        module === "adr" && !nativeDecisions
-          ? null
-          : fromArchetype
-            ? "archetype"
-            : fromPlugin
-              ? "plugin"
-              : added
-                ? "added"
-                : null,
+      enabled: fromArchetype || added || fromPlugin,
+      source: fromArchetype ? "archetype" : fromPlugin ? "plugin" : added ? "added" : null,
       supported: true,
     };
   });
@@ -1111,12 +949,7 @@ export async function checkFramework(
   // Resolve the workspace layout up front so checks point at the right paths
   // for both standalone (work folders at root) and overlay (work folders
   // under .assay/). If the manifest cannot be read, fall back to standalone.
-  let manifestForLayout: FrameworkManifest | null = null;
-  try {
-    manifestForLayout = await loadManifest(root);
-  } catch {
-    // invalid manifest is reported below; use standalone fallback for paths
-  }
+  const manifestForLayout = await loadManifest(root);
   const layout = layoutForManifest(manifestForLayout);
   if (manifestForLayout) {
     try {
@@ -1195,9 +1028,6 @@ export async function checkFramework(
   const explicitlyEnabledCapabilities = new Set<CapabilityModule>(
     declaredCapabilities(manifestForLayout),
   );
-  if (manifestForLayout && !nativeDecisionGovernanceEnabled(manifestForLayout)) {
-    explicitlyEnabledCapabilities.delete("adr");
-  }
   let pluginStateForChecks = null;
   try {
     pluginStateForChecks = await loadPluginsState(root);
@@ -1228,16 +1058,7 @@ export async function checkFramework(
     });
   }
 
-  let manifest: FrameworkManifest | null = null;
-  try {
-    manifest = await loadManifest(root);
-  } catch (error) {
-    rows.push({
-      path: MANIFEST_FILE,
-      status: "error",
-      message: error instanceof Error ? error.message : "manifest failed validation",
-    });
-  }
+  const manifest = manifestForLayout;
 
   if (manifest) {
     rows.push({
@@ -1273,13 +1094,6 @@ export async function checkFramework(
 
     // Semantic check 1: managed file existence + hash consistency
     for (const [filePath, record] of Object.entries(manifest.managed_files)) {
-      if (
-        !nativeDecisionGovernanceEnabled(manifest) &&
-        (record.template_id === "knowledge.decisions.readme" ||
-          record.template_id === "knowledge.decisions.adr_template")
-      ) {
-        continue;
-      }
       const absolutePath = path.join(root, filePath);
       if (!(await exists(absolutePath))) {
         rows.push({
@@ -1414,52 +1228,9 @@ export async function checkFramework(
     // iterations directory may not exist; skip
   }
 
-  // Semantic check 4: ADR index and supersede chain consistency
-  try {
-    const adrIndex = await loadAdrIndex(root);
-    if (adrIndex) {
-      for (const adr of Object.values(adrIndex.adrs)) {
-        const adrPath = path.join(root, adr.path);
-        if (!(await exists(adrPath))) {
-          rows.push({
-            path: adr.path,
-            status: "error",
-            message: `indexed ADR '${adr.id}' missing on disk`,
-          });
-          continue;
-        }
-        try {
-          const content = await readFile(adrPath, "utf8");
-          const missingFields = missingAdrFrontmatterFields(content);
-          if (missingFields.length > 0) {
-            rows.push({
-              path: adr.path,
-              status: "warning",
-              message: `ADR frontmatter missing: ${missingFields.join(", ")}`,
-            });
-          }
-        } catch {
-          rows.push({
-            path: adr.path,
-            status: "warning",
-            message: `could not read ADR '${adr.id}' for frontmatter check`,
-          });
-        }
-      }
-      recordAdrChainErrors(rows, adrIndex);
-      recordAdrCycleErrors(rows, adrIndex);
-    }
-  } catch (error) {
-    rows.push({
-      path: ADRS_FILE,
-      status: "error",
-      message: error instanceof Error ? error.message : "ADR index error",
-    });
-  }
-
-  // Semantic check 5: knowledge directory-name consistency
-  // The framework owns the base knowledge subdirectory names (decisions,
-  // patterns, guides, troubleshooting). A legacy bug appended "s" to every
+  // Semantic check 4: knowledge directory-name consistency
+  // The framework owns the base knowledge subdirectory names (patterns,
+  // guides, troubleshooting). A legacy bug appended "s" to every
   // knowledge type, producing a parallel "knowledge/troubleshootings/"
   // directory that split troubleshooting entries from their README. Flag any
   // knowledge subdirectory that is neither a base name nor declared by the
@@ -1469,7 +1240,6 @@ export async function checkFramework(
     const knowledgeRoot = workspacePath(root, layout, "knowledge");
     if (await exists(knowledgeRoot)) {
       const expectedKnowledgeDirs = new Set([
-        "decisions",
         "patterns",
         "guides",
         "troubleshooting",
@@ -1559,10 +1329,7 @@ export async function checkFramework(
   // Advisory check 4: pending queue entries.
   if (includeAdvisories) {
     try {
-      const queueCandidates = [
-        path.join(root, MANAGED_DIR, "queue.json"),
-        path.join(root, LEGACY_MANAGED_DIR, "queue.json"),
-      ];
+      const queueCandidates = [path.join(root, MANAGED_DIR, "queue.json")];
       for (const queuePath of queueCandidates) {
         if (!(await exists(queuePath))) continue;
         const raw = await readFile(queuePath, "utf8");
@@ -2188,7 +1955,7 @@ function sectionHasHumanContent(content: string, heading: string): boolean {
     const trimmed = line.trim();
     if (trimmed === "") return false;
     if (/^[-*]\s*(\[[ xX]\])?\s*$/.test(trimmed)) return false; // empty list item
-    if (/^- \[[ xX]\]\s+(adopt|reject|experiment|ADR)$/i.test(trimmed)) return false;
+    if (/^- \[[ xX]\]\s+(adopt|reject|experiment)$/i.test(trimmed)) return false;
     return true;
   });
 }
@@ -2341,9 +2108,6 @@ export async function getFrameworkStatus(
   if (manifest) {
     await preflightNativeProjectBoundary(root, layoutForManifest(manifest));
   }
-  const decisionGovernance = manifest
-    ? await getDecisionGovernanceStatus(root, manifest)
-    : undefined;
   const layout = layoutForManifest(manifest);
   // Zones come from the installed archetype plus the modules the workspace has
   // actually enabled, so a solve workspace stops being told about study's
@@ -2394,7 +2158,6 @@ export async function getFrameworkStatus(
   }
 
   let livingSources: FrameworkStatusLivingSources | undefined;
-  let adrSuggestions: readonly SourceAdrSuggestion[] | undefined;
   try {
     const status = await getSourceStatus({ root });
     const sources = status.sources;
@@ -2407,11 +2170,6 @@ export async function getFrameworkStatus(
         (source) => source.latestChangeClass === "major" && source.analysisStatus !== "closed",
       ).length,
     };
-    const suggestions = adrSuggestionsForSources(
-      sources,
-      decisionGovernance?.activeProvider ?? decisionGovernance?.desiredProvider,
-    );
-    adrSuggestions = suggestions.length > 0 ? suggestions : undefined;
   } catch {
     // sources may not exist or may be mid-migration; status omits the summary
   }
@@ -2463,7 +2221,6 @@ export async function getFrameworkStatus(
       ...(systems ? { systems } : {}),
       ...(livingSources ? { livingSources } : {}),
       ...(upstream ? { upstream } : {}),
-      ...(adrSuggestions ? { adrSuggestions } : {}),
       ...(donors ? { donors } : {}),
       ...(openIterations !== undefined ? { openIterations } : {}),
       knowledgeEntries: knowledgeCount,
@@ -2490,8 +2247,6 @@ export async function getFrameworkStatus(
     ...(systems ? { systems } : {}),
     ...(livingSources ? { livingSources } : {}),
     ...(upstream ? { upstream } : {}),
-    ...(adrSuggestions ? { adrSuggestions } : {}),
-    ...(decisionGovernance ? { decisionGovernance } : {}),
     ...(donors ? { donors } : {}),
     ...(openIterations !== undefined ? { openIterations } : {}),
     knowledgeEntries: knowledgeCount,
@@ -2740,7 +2495,7 @@ export async function readFrameworkMode(root: string): Promise<"learning" | "abs
     const manifest = await loadManifest(root);
     return manifest?.project.mode ?? "learning";
   } catch {
-    // unreadable/missing manifest; schema legacy default is learning
+    // unreadable or missing manifest: default to learning presentation
   }
   return "learning";
 }
@@ -3057,7 +2812,7 @@ export async function createAnalysis(
     options.forReference && (refFreezePath || refName)
       ? `- Reference: ${refName}\n- Source: ${refSource}\n- Freeze path: ${refFreezePath}\n`
       : "";
-  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n${referenceBlock}${sourceBlock}\n## Reference\n\n${refName || ""}\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n- [ ] ADR\n`;
+  const content = `# ${options.title}\n\n- Date: ${date}\n- Status: draft\n${referenceBlock}${sourceBlock}\n## Reference\n\n${refName || ""}\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Next iteration\n\n## Decision exit\n\n- [ ] adopt\n- [ ] reject\n- [ ] experiment\n`;
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, content, "utf8");
   const eventFile = await appendEvent(
@@ -3241,7 +2996,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
     adopt: "applied",
     reject: "rejected",
     experiment: "experiment",
-    adr: "adr",
   };
   const statusValue = statusMap[options.exit];
   content = setHeaderField(content, "Status", statusValue, `analysis ${analysisPath}`);
@@ -3249,7 +3003,7 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   // analysis card that does not carry that section records its exit through the
   // header alone; one that does carry it must contain the matching checkbox,
   // otherwise the requested exit cannot be recorded and the close fails.
-  const exitLabel = options.exit === "adr" ? "ADR" : options.exit;
+  const exitLabel = options.exit;
   if (findSection(content, "Decision exit") !== null) {
     const ticked = checkSectionCheckbox(content, "Decision exit", exitLabel);
     if (ticked === null) {
@@ -3354,9 +3108,6 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
 export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKnowledgeResult> {
   const root = path.resolve(options.root);
   const manifest = requireManifest(await loadManifest(root), root);
-  if (options.type === "decision") {
-    await requireNativeDecisionGovernance(root);
-  }
   const layout = layoutForManifest(manifest);
   const now = options.now ?? new Date();
   const date = dateStamp(now);

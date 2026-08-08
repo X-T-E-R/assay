@@ -56,7 +56,6 @@ node <repo-root>/packages/assay-cli/dist/cli.js <command>
 
 ## 工作目录约定
 
-所有工作区命令(`init`、`adopt`、`check`、`status`、`update`、`reconcile`、`plugin add|list|check`、`migrate-layout`、`source add|sync|switch|status|diff|log`、`reference add`、`analysis new`、`analysis close`、`iteration start`、`iteration close`、`knowledge add`、`adr new|accept|supersede|deprecate|list|show`、`system register|update|promote|archive|list|show`)默认用 `process.cwd()`,并向上查找 `.assay/manifest.json`。
 
 运行命令前先 `cd <target-dir>`;只有要操作别处的工作区时,才传 `--root <path>` / `[target-dir]`。
 
@@ -104,18 +103,3 @@ selector 可以是完整系统名,或唯一的名称前缀。
 ```
 
 这些脚本会构建 TypeScript 包、运行 typecheck/lint/tests/smoke,并用构建后的 CLI 验证已提交的 `examples/framework-template` 工作区。
-
-## ADR 索引(每个工作区)
-
-每个工作区可在 `.assay/adrs.json` 跟踪架构决策记录,markdown 文件位于 `knowledge/decisions/`。用 `adr` 命令组管理 ADR,不要直接编辑 JSON:
-
-```bash
-assay adr new "Title" [--from-analysis <path>] [--from-iteration <path>]
-assay adr accept <selector>
-assay adr supersede <old-selector> <new-selector>
-assay adr deprecate <selector>
-assay adr list [--status proposed|accepted|superseded|deprecated] [--json]
-assay adr show <selector> [--json]
-```
-
-selector 可以是完整 ADR id、唯一 id 前缀,或 ADR 编号。

@@ -205,10 +205,6 @@ function templateContentById(
       return intentOriginalReadme();
     case "intent.requirements.readme":
       return intentRequirementsReadme();
-    case "knowledge.decisions.readme":
-      return knowledgeDecisionsReadme();
-    case "knowledge.decisions.adr_template":
-      return adrTemplate();
     case "knowledge.guides.readme":
       return "# guides/\n\nReusable operational guides.\n";
     case "knowledge.patterns.readme":
@@ -292,7 +288,6 @@ export function frameworkReadme(): string {
     - \`VERSION\`: installed template version.
     - \`manifest.json\`: managed file hashes and template IDs.
     - \`systems-registry.json\`: registered systems and the current primary system after \`assay system register\`.
-    - \`adrs.json\`: ADR numbering and status index when the archetype enables ADRs.
     - \`events/\`: JSONL event ledger.
     - \`migrations/\`: migration notes and plans.
     - \`backups/\`: timestamped backups before update or migration.
@@ -369,7 +364,6 @@ export function referenceAnalysisTemplate(): string {
     - [ ] adopt
     - [ ] reject
     - [ ] experiment/iteration
-    - [ ] ADR
     `);
 }
 
@@ -463,34 +457,6 @@ export function intentRequirementsReadme(): string {
     from.
 
     Write these with \`assay intent promote <capture-id> --to requirement\`.
-    Decisions go to ADRs instead, through \`--to decision\`.
-    `);
-}
-
-export function knowledgeDecisionsReadme(): string {
-  return "# decisions/\n\nAccepted decisions and ADRs.\n";
-}
-
-export function adrTemplate(): string {
-  return dedent(`
-    ---
-    adr: ADR-0000-example
-    title: "Example decision"
-    status: proposed
-    date: YYYY-MM-DD
-    supersedes: []
-    superseded_by: null
-    related_analysis: null
-    related_iteration: null
-    ---
-
-    # Example decision
-
-    ## Context
-
-    ## Decision
-
-    ## Consequences
     `);
 }
 
@@ -561,7 +527,7 @@ export function artifactModelDoc(): string {
     | --- | --- | --- |
     | Living source | \`references/<source>/\` | sync / delta analysis / revalidation |
     | Frozen reference | \`references/frozen/YYYYMM/<name>/\` | legacy/full-capture analysis |
-    | Analysis | \`analyses/\` | reject / pattern / ADR |
+    | Analysis | \`analyses/\` | adopt / reject / experiment |
     | Iteration | \`iterations/YYYY-MM-DD-<topic>/\` | adopt / reject / retest |
     | Knowledge entry | \`knowledge/\` | future reuse |
     `);
@@ -583,7 +549,7 @@ export function workflowsDoc(): string {
     1. Identify the problem solved by the external system.
     2. Extract a mechanism, not just surface file names.
     3. Record applicability and anti-applicability.
-    4. Choose an exit: reject, ADR, or iteration.
+    4. Choose an exit: adopt, reject, or experiment.
     `);
 }
 

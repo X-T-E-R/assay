@@ -310,39 +310,3 @@ function summarize(input: {
   }
   return parts.join("; ");
 }
-
-export interface SourceAdrSuggestion {
-  readonly source: string;
-  readonly changeClass: SourceChangeClass;
-  readonly message: string;
-}
-
-/**
- * Sources whose latest recorded change was graded `major` or `replacement`.
- *
- * Change grading already exists and nothing consumes it. The hardest part of
- * keeping decision records is deciding whether a change deserves one, so the
- * grade is offered as exactly that prompt — a suggestion next to the source it
- * came from. It never blocks anything.
- */
-export function adrSuggestionsForSources(
-  sources: readonly SourceStatusEntry[],
-  decisionProvider = "assay.native",
-): SourceAdrSuggestion[] {
-  return sources
-    .filter(
-      (source) =>
-        source.latestChangeClass === "major" || source.latestChangeClass === "replacement",
-    )
-    .map((source) => {
-      const next =
-        decisionProvider === "assay.native"
-          ? 'record it: assay adr new "<decision>"'
-          : "restore the configured decision provider before recording it";
-      return {
-        source: source.alias,
-        changeClass: source.latestChangeClass as SourceChangeClass,
-        message: `source '${source.alias}' last changed at grade '${source.latestChangeClass}'. If that changed an architectural assumption, ${next}`,
-      };
-    });
-}

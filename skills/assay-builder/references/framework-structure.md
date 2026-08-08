@@ -10,7 +10,6 @@ Every current Assay workspace has a shared base, then the selected archetype add
 │   ├── <name>/             # active system (system.yaml + source; may be independent git repo)
 │   └── archive/            # archived prior systems, copy-first move
 ├── knowledge/        # accepted reusable knowledge only
-│   ├── decisions/    # accepted decisions and ADRs
 │   ├── patterns/     # validated reusable patterns
 │   ├── guides/       # operational guides
 │   └── troubleshooting/  # failure modes and fixes
@@ -98,12 +97,10 @@ The CLI writes and maintains these files automatically:
 - `.assay/task-contexts.json` — exact host-context bindings for native Tasks; the CLI owns this file.
 - `.assay/trellis/` — legacy operational task/session/journal/config/channel/worker state, WAL, terminal archive, and migration receipts. Native Tasks do not automatically import or migrate it. Codex sessions remain external and read-only.
 - `.assay/systems-registry.json` — system registry: primary marker, status, vcs, supersedes chain.
-- `.assay/adrs.json` — ADR index: number allocator, status, supersedes chain, and file paths.
 - `.assay/events/YYYY-MM.jsonl` — auditable JSONL event ledger.
 - `.assay/backups/` — pre-update and pre-migration backups.
 - `.assay/migrations/` — migration records.
 
-Do not edit these files manually; use the CLI for all manifest, plugin, registry, ADR, and event operations.
 
 `.trellis/` is not an Assay-managed path and is not used by the legacy
 `assay.trellis` plugin. Its operational task/session/journal/config/channel/worker state lives under

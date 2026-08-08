@@ -13,16 +13,14 @@ import {
   workspaceWorkRelativePath,
 } from "./layout.js";
 import { loadManifest, saveManifest } from "./manifest.js";
-import { relativeDisplayPath } from "./paths.js";
-import { reconcilePlugins } from "./plugins/reconcile.js";
-import { DECISION_GOVERNANCE_RESPONSIBILITY, TRELLIS_PLUGIN_ID } from "./plugins/registry.js";
+import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
 import { dirsForArchetype, loadArchetype } from "./profile.js";
 import { withRoadmapGlobalCoordination } from "./roadmap.js";
 import type { FrameworkManifest, SystemRecord, WorkspaceLayout } from "./schemas/index.js";
-import { adrIndexSchema } from "./schemas/index.js";
-import { stringifySortedJson, toPosixPath } from "./serialization.js";
+import { toPosixPath } from "./serialization.js";
 import { withSpecGlobalCoordination } from "./spec.js";
 import { defaultSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
+import { withWorkspaceConversionCoordination } from "./tasks/task-storage.js";
 import { nowIso } from "./time.js";
 
 export interface ConvertOverlayOptions {
@@ -56,7 +54,7 @@ const OVERLAY_WORK_AREAS = ["references", "analyses", "iterations", "knowledge"]
  * is missing from both the hoist and the managed-path rewrite would be
  * stranded in the source overlay after a move.
  */
-const OVERLAY_WORK_DIRECTORIES = ["intent", "project", "project-authority", "tasks"] as const;
+const OVERLAY_WORK_DIRECTORIES = ["intent", "project", "tasks"] as const;
 
 /**
  * Layout `paths` keys whose location differs between overlay and standalone.
@@ -103,25 +101,41 @@ export async function convertOverlayToStandalone(
   options: ConvertOverlayOptions,
 ): Promise<ConvertOverlayResult> {
   const sourceRoot = path.resolve(options.root);
-  const sourceManifest = await loadManifest(sourceRoot);
-  if (!sourceManifest) {
-    throw new FrameworkNotFoundError(
-      `No Assay manifest found at ${path.join(sourceRoot, MANIFEST_FILE)}. Run \`assay attach\` first.`,
-    );
-  }
-  const sourceLayout = resolveWorkspaceLayout(sourceManifest);
-  if (!sourceLayout || sourceLayout.mode !== "overlay") {
-    throw new FrameworkError(
-      `convert --to standalone requires an overlay workspace; ${sourceRoot} is not overlay mode.`,
-    );
-  }
-  const result = await withRoadmapGlobalCoordination(sourceRoot, () =>
-    withSpecGlobalCoordination(sourceRoot, () => convertOverlayToStandaloneLocked(options)),
+  const targetRoot = path.resolve(options.target);
+  await assertNoAncestorWorkspaceAuthority(sourceRoot);
+  await assertNoAncestorWorkspaceAuthority(targetRoot);
+  // Fail old/invalid envelopes without creating even a transient conversion
+  // boundary. The manifest is reloaded after the boundary for authority.
+  await loadManifest(sourceRoot);
+  const result = await withWorkspaceConversionCoordination(
+    sourceRoot,
+    async () => {
+      const sourceManifest = await loadManifest(sourceRoot);
+      if (!sourceManifest) {
+        throw new FrameworkNotFoundError(
+          `No Assay manifest found at ${path.join(sourceRoot, MANIFEST_FILE)}. Run \`assay attach\` first.`,
+        );
+      }
+      const sourceLayout = resolveWorkspaceLayout(sourceManifest);
+      if (!sourceLayout || sourceLayout.mode !== "overlay") {
+        throw new FrameworkError(
+          `convert --to standalone requires an overlay workspace; ${sourceRoot} is not overlay mode.`,
+        );
+      }
+      const result = await withRoadmapGlobalCoordination(sourceRoot, () =>
+        withSpecGlobalCoordination(sourceRoot, () => convertOverlayToStandaloneLocked(options)),
+      );
+      if (options.keepOverlay === false) {
+        await removeEmptiedOverlayState(sourceRoot, sourceLayout);
+      }
+      return result;
+    },
+    { removeStateDirectoryWhenEmpty: options.keepOverlay === false },
   );
   if (options.keepOverlay === false) {
     return {
       ...result,
-      overlayStateRemoved: await removeEmptiedOverlayState(sourceRoot, sourceLayout),
+      overlayStateRemoved: !(await exists(path.join(sourceRoot, MANAGED_DIR))),
     };
   }
   return result;
@@ -170,12 +184,10 @@ async function convertOverlayToStandaloneLocked(
       directory !== "systems",
   );
   const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  const decisionBinding = sourceManifest.bindings?.[DECISION_GOVERNANCE_RESPONSIBILITY];
   const targetExists = await exists(targetRoot);
   await assertTaskContextTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   await assertTaskTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   await assertNativeProjectTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
-  await assertProjectAuthorityTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   for (const directory of additionalWorkDirectories) {
     await assertWorkDirectoryTransferPathsSafe(
       sourceRoot,
@@ -197,14 +209,10 @@ async function convertOverlayToStandaloneLocked(
     await mkdir(targetRoot, { recursive: true });
   }
 
-  // Copy/move Assay state files (.assay/manifest.json, systems-registry,
-  // adrs.json, events, backups, donors, archetypes). Anything left behind
-  // silently corrupts the new workspace: a missing adrs.json makes `adr new`
-  // restart numbering at 0001 over existing ADR files, and a missing
-  // project-local archetypes/ makes every later command fail to load the
-  // workspace archetype.
+  // Copy/move Assay state files. Conversion intentionally ignores retired
+  // data surfaces and never reads or rewrites them.
   const stateAreas: readonly WorkspaceArea[] = ["events", "backups"];
-  const stateDirectories: readonly string[] = ["donors", "archetypes", "migrations", "trellis"];
+  const stateDirectories: readonly string[] = ["archetypes", "migrations"];
   await mkdir(path.join(targetRoot, MANAGED_DIR), { recursive: true });
   await copyOrMoveFile(
     path.join(sourceRoot, sourceLayout.paths.manifest),
@@ -216,7 +224,6 @@ async function convertOverlayToStandaloneLocked(
     path.join(targetRoot, targetLayout.paths.systems_registry),
     move,
   );
-  await transferAdrIndex(sourceRoot, sourceLayout, targetRoot, targetLayout, move);
   // Write VERSION into the target (overlay wrote it in source .assay/).
   await writeFile(path.join(targetRoot, VERSION_FILE), CURRENT_VERSION, "utf8");
   for (const area of stateAreas) {
@@ -233,6 +240,14 @@ async function convertOverlayToStandaloneLocked(
     if (await exists(from)) {
       await mkdir(path.dirname(to), { recursive: true });
       await copyOrMoveDir(from, to, move);
+    }
+  }
+  for (const directory of ["donors", "trellis"] as const) {
+    const from = path.join(sourceRoot, sourceLayout.state_root, directory);
+    const to = path.join(targetRoot, targetLayout.state_root, directory);
+    if (await exists(from)) {
+      await mkdir(path.dirname(to), { recursive: true });
+      await copyOrMoveDirWithoutLocks(from, to, move);
     }
   }
   await transferStateRootFiles(sourceRoot, sourceLayout, targetRoot, targetLayout, move);
@@ -252,11 +267,7 @@ async function convertOverlayToStandaloneLocked(
     const to = path.join(targetRoot, workspaceWorkRelativePath(targetLayout, directory));
     if (await exists(from)) {
       await mkdir(path.dirname(to), { recursive: true });
-      if (directory === "project-authority") {
-        await copyOrMoveProjectAuthorityDir(from, to, move);
-      } else {
-        await copyOrMoveDir(from, to, move);
-      }
+      await copyOrMoveDir(from, to, move);
     }
   }
   for (const directory of additionalWorkDirectories) {
@@ -287,7 +298,7 @@ async function convertOverlayToStandaloneLocked(
   const targetManifest: FrameworkManifest = {
     ...sourceManifest,
     layout: targetLayout,
-    layout_version: 4,
+    layout_version: 5,
     managed_files: rewriteManagedFilePaths(
       sourceManifest.managed_files,
       sourceLayout,
@@ -301,18 +312,6 @@ async function convertOverlayToStandaloneLocked(
         ),
       ),
     ],
-    ...(decisionBinding?.provider === TRELLIS_PLUGIN_ID &&
-    decisionBinding.target.kind === "workspace"
-      ? {
-          bindings: {
-            ...(sourceManifest.bindings ?? {}),
-            [DECISION_GOVERNANCE_RESPONSIBILITY]: {
-              provider: TRELLIS_PLUGIN_ID,
-              target: { kind: "system", name: systemName },
-            },
-          },
-        }
-      : {}),
     updated_at: nowIso(now),
   };
   await saveManifest(targetRoot, targetManifest);
@@ -355,15 +354,6 @@ async function convertOverlayToStandaloneLocked(
     ].join("\n"),
     "utf8",
   );
-
-  if (decisionBinding?.provider === TRELLIS_PLUGIN_ID) {
-    await reconcilePlugins({
-      root: targetRoot,
-      plugins: [TRELLIS_PLUGIN_ID],
-      apply: true,
-      now,
-    });
-  }
 
   const eventFile = await appendEvent(
     targetRoot,
@@ -465,37 +455,6 @@ async function assertTaskContextTransferSafe(
   }
 }
 
-/**
- * A converted target may already be a prepared directory, but Project
- * Authority content must never be merged into or overwrite it. Check this
- * before creating the target manifest or any other conversion output, so a
- * conflict leaves the target untouched by Assay.
- */
-async function assertProjectAuthorityTransferPathsSafe(
-  sourceRoot: string,
-  sourceLayout: WorkspaceLayout,
-  targetRoot: string,
-  targetLayout: WorkspaceLayout,
-): Promise<void> {
-  const source = path.join(
-    sourceRoot,
-    workspaceWorkRelativePath(sourceLayout, "project-authority"),
-  );
-  if (!(await assertRealDirectory(source, "source project-authority", true))) return;
-
-  const target = path.join(
-    targetRoot,
-    workspaceWorkRelativePath(targetLayout, "project-authority"),
-  );
-  const targetContainer = await nearestExistingAncestor(targetRoot);
-  await assertRealDirectory(targetContainer, "project-authority target ancestor", false);
-  if (!(await assertRealDirectory(target, "target project-authority", true))) return;
-
-  if ((await readdir(target)).length > 0) {
-    throw new FrameworkError(`target project-authority path already contains content: ${target}`);
-  }
-}
-
 async function assertNativeProjectTransferPathsSafe(
   sourceRoot: string,
   sourceLayout: WorkspaceLayout,
@@ -549,7 +508,7 @@ async function nearestExistingAncestor(target: string): Promise<string> {
     }
     const parent = path.dirname(current);
     if (parent === current) {
-      throw new FrameworkError(`no existing ancestor for project-authority target: ${target}`);
+      throw new FrameworkError(`no existing ancestor for target: ${target}`);
     }
     current = parent;
   }
@@ -643,49 +602,6 @@ async function assertRealDirectoryTree(directory: string, label: string): Promis
   }
 }
 
-/**
- * Copy the ADR index to the new root, rewriting each record's markdown path
- * from the overlay work root to the standalone one. The markdown files are
- * hoisted out of `.assay/` by this conversion, so an index copied verbatim
- * would point every ADR at a path that no longer exists — and `check` would
- * report each one as missing on disk.
- */
-async function transferAdrIndex(
-  sourceRoot: string,
-  sourceLayout: WorkspaceLayout,
-  targetRoot: string,
-  targetLayout: WorkspaceLayout,
-  move: boolean,
-): Promise<void> {
-  const from = path.join(sourceRoot, sourceLayout.paths.adrs_index);
-  if (!(await exists(from))) return;
-
-  const index = adrIndexSchema.parse(JSON.parse(await readFile(from, "utf8")));
-  const sourceKnowledge = `${sourceLayout.paths.knowledge}/`;
-  const targetKnowledge = `${targetLayout.paths.knowledge}/`;
-  for (const [id, adr] of Object.entries(index.adrs)) {
-    if (adr.path.startsWith(sourceKnowledge)) {
-      index.adrs[id] = {
-        ...adr,
-        path: `${targetKnowledge}${adr.path.slice(sourceKnowledge.length)}`,
-      };
-    }
-  }
-
-  const to = path.join(targetRoot, targetLayout.paths.adrs_index);
-  await mkdir(path.dirname(to), { recursive: true });
-  await writeFile(to, stringifySortedJson(index), "utf8");
-  if (move) {
-    await rm(from, { force: true });
-  }
-}
-
-/**
- * Copy loose files that sit directly in the state root (`.assay/README.md` and
- * any other managed state file) so the converted workspace keeps the managed
- * files its manifest records. Files handled explicitly above (manifest,
- * registry, ADR index, VERSION) are skipped.
- */
 async function transferStateRootFiles(
   sourceRoot: string,
   sourceLayout: WorkspaceLayout,
@@ -696,15 +612,22 @@ async function transferStateRootFiles(
   const from = path.join(sourceRoot, sourceLayout.state_root);
   if (!(await exists(from))) return;
   const handled = new Set(
-    [
-      sourceLayout.paths.manifest,
-      sourceLayout.paths.systems_registry,
-      sourceLayout.paths.adrs_index,
-      VERSION_FILE,
-    ].map((filePath) => path.basename(filePath)),
+    [sourceLayout.paths.manifest, sourceLayout.paths.systems_registry, VERSION_FILE].map(
+      (filePath) => path.basename(filePath),
+    ),
   );
+  // Preserve only generic/current loose state files, without parsing them.
+  // Retired surfaces are not named, read, copied, or rewritten here; the
+  // external cutover tool owns them.
+  const portableLooseState = new Set([
+    "README.md",
+    "plugins.json",
+    "external-plugins.json",
+    "task-contexts.json",
+    "queue.json",
+  ]);
   for (const entry of await readdir(from, { withFileTypes: true })) {
-    if (!entry.isFile() || handled.has(entry.name)) continue;
+    if (!entry.isFile() || handled.has(entry.name) || !portableLooseState.has(entry.name)) continue;
     await copyOrMoveFile(
       path.join(from, entry.name),
       path.join(targetRoot, targetLayout.state_root, entry.name),
@@ -807,14 +730,13 @@ async function copyOrMoveDir(from: string, to: string, move: boolean): Promise<v
   }
 }
 
-async function copyOrMoveProjectAuthorityDir(
-  from: string,
-  to: string,
-  move: boolean,
-): Promise<void> {
+async function copyOrMoveDirWithoutLocks(from: string, to: string, move: boolean): Promise<void> {
   if (!(await exists(from))) return;
   await mkdir(path.dirname(to), { recursive: true });
-  await cp(from, to, { recursive: true, errorOnExist: true, force: false });
+  await cp(from, to, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".lock",
+  });
   if (move) {
     await rm(from, { recursive: true, force: true });
   }

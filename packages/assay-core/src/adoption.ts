@@ -4,7 +4,8 @@ import path from "node:path";
 import { MANIFEST_FILE } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
-import { relativeDisplayPath } from "./paths.js";
+import { loadManifest } from "./manifest.js";
+import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
 import { recordProjectLifecycleBestEffort } from "./project-registry.js";
 import { type InitFrameworkResult, createAnalysis, initFramework } from "./workspace.js";
 
@@ -167,9 +168,9 @@ async function assertCanAdopt(root: string): Promise<void> {
   }
 
   const manifestPath = path.join(root, MANIFEST_FILE);
-  if (await exists(manifestPath)) {
+  if (await loadManifest(root)) {
     throw new FrameworkAlreadyExistsError(
-      `Assay framework manifest already exists at ${manifestPath}. Use status, update, or migrate-layout instead of adopt.`,
+      `Assay framework manifest already exists at ${manifestPath}. Use status or update instead of adopt.`,
     );
   }
 }
@@ -321,6 +322,7 @@ async function writeAdoptionAnalysis(
 export async function adoptExistingProject(
   options: AdoptExistingProjectOptions,
 ): Promise<AdoptExistingProjectResult> {
+  await assertNoAncestorWorkspaceAuthority(options.root);
   const dryRun = options.apply !== true;
   const now = options.now ?? new Date();
   const plan = await buildAdoptionPlan(options.root, now);

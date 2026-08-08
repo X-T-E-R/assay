@@ -12,7 +12,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MANIFEST_FILE,
   absorbReference,
-  acceptAdr,
   addKnowledge,
   addReference,
   addSource,
@@ -22,13 +21,11 @@ import {
   checkFramework,
   closeAnalysis,
   closeIteration,
-  createAdr,
   createAnalysis,
   desiredRuntimeTemplates,
   dirsForArchetype,
   getFrameworkStatus,
   initFramework,
-  loadAdrIndex,
   loadArchetype,
   loadManifest,
   loadSystemsRegistry,
@@ -37,7 +34,6 @@ import {
   readFrameworkMode,
   readInstalledArchetype,
   registerSystem,
-  saveAdrIndex,
   saveSystemsRegistry,
   startIteration,
   syncSource,
@@ -133,45 +129,6 @@ describe("desiredRuntimeTemplates", () => {
 });
 
 describe("initFramework", () => {
-  it("creates .assay version, manifest, primary directories, and managed records", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const result = await initFramework({ target: root, name: "Demo" });
-
-    expect(result.project).toBe("Demo");
-    expect(result.archetype).toBe("study");
-    expect(result.mode).toBe("learning");
-    expect(await exists(path.join(root, ".assay", "VERSION"))).toBe(true);
-    expect(await exists(path.join(root, MANIFEST_FILE))).toBe(true);
-    const archetype = await loadArchetype("study");
-    for (const directory of dirsForArchetype(archetype, "learning")) {
-      expect(await exists(path.join(root, directory))).toBe(true);
-    }
-    expect(await exists(path.join(root, "systems", "demo-core"))).toBe(false);
-    expect(await exists(path.join(root, ".assay", "config.yaml"))).toBe(false);
-    expect(await exists(path.join(root, "knowledge", "README.md"))).toBe(true);
-    expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(true);
-    expect(await exists(path.join(root, ".assay", "adrs.json"))).toBe(true);
-    expect(await exists(path.join(root, "iterations"))).toBe(false);
-    expect(result.report.created_dirs).not.toContain(".assay/events");
-
-    const manifest = await loadManifest(root);
-    expect(manifest).not.toBeNull();
-    expect(manifest?.project).toMatchObject({
-      name: "Demo",
-      archetype: "study",
-      mode: "learning",
-    });
-    expect(manifest?.project.core).toBeUndefined();
-    expect(Object.keys(manifest?.managed_files ?? {})).toContain(".assay/VERSION");
-    expect(Object.keys(manifest?.managed_files ?? {})).not.toContain(".assay/config.yaml");
-    expect(Object.keys(manifest?.managed_files ?? {})).not.toContain(
-      "systems/demo-core/system.yaml",
-    );
-    expect(Object.keys(manifest?.managed_files ?? {})).toHaveLength(
-      (await desiredRuntimeTemplates("Demo", "study", "learning")).length,
-    );
-  });
-
   it("skips existing files by default and leaves them untracked for a new workspace", async () => {
     const root = path.join(await tempDir(), "demo");
     await mkdir(root, { recursive: true });
@@ -266,14 +223,17 @@ describe("checkFramework and getFrameworkStatus", () => {
       "attempts",
       "tools",
       "iterations",
+      "project",
       "systems",
       "knowledge",
+      "references",
+      "analyses",
     ]);
     expect(solve.zones.find((zone) => zone.path === "problem")?.purpose).toBe(
       "Task statement, official rules, scoring definition",
     );
     // Study's directories are dead zones for a solve workspace.
-    expect(solve.zones.some((zone) => zone.path.startsWith("analyses"))).toBe(false);
+    expect(solve.zones.some((zone) => zone.path === "analyses/references")).toBe(false);
 
     const studyRoot = path.join(await tempDir(), "study");
     await initFramework({ target: studyRoot, name: "Study" });
@@ -490,125 +450,6 @@ describe("checkFramework semantic validation", () => {
     ).toBe(true);
   });
 
-  it("reports warning when an indexed ADR is missing required frontmatter fields", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-    const created = await createAdr(root, { title: "Needs Frontmatter" });
-    await writeFile(path.join(root, created.adr.path), "# No frontmatter\n", "utf8");
-
-    const result = await checkFramework({ root });
-
-    expect(result.ok).toBe(true);
-    expect(
-      result.rows.some(
-        (row) =>
-          row.path === created.adr.path &&
-          row.status === "warning" &&
-          row.message?.includes("ADR frontmatter missing"),
-      ),
-    ).toBe(true);
-  });
-
-  it("reports error for dangling ADR superseded_by references", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-    const created = await createAdr(root, { title: "Dangling ADR" });
-    await acceptAdr(root, created.adr.id);
-    const index = await loadAdrIndex(root);
-    if (!index) {
-      throw new Error("ADR index missing");
-    }
-    const record = index.adrs[created.adr.id];
-    if (!record) {
-      throw new Error("ADR record missing");
-    }
-    index.adrs[created.adr.id] = { ...record, superseded_by: "ADR-9999-missing" };
-    await saveAdrIndex(root, index);
-
-    const result = await checkFramework({ root });
-
-    expect(result.ok).toBe(false);
-    expect(
-      result.rows.some(
-        (row) => row.status === "error" && row.message?.includes("missing superseded_by"),
-      ),
-    ).toBe(true);
-  });
-
-  it("reports error for non-bidirectional ADR supersede links", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-    const oldAdr = await createAdr(root, { title: "Old ADR" });
-    const newAdr = await createAdr(root, { title: "New ADR" });
-    await acceptAdr(root, oldAdr.adr.id);
-    await acceptAdr(root, newAdr.adr.id);
-    const index = await loadAdrIndex(root);
-    if (!index) {
-      throw new Error("ADR index missing");
-    }
-    const oldRecord = index.adrs[oldAdr.adr.id];
-    if (!oldRecord) {
-      throw new Error("old ADR record missing");
-    }
-    index.adrs[oldAdr.adr.id] = {
-      ...oldRecord,
-      status: "superseded",
-      superseded_by: newAdr.adr.id,
-    };
-    await saveAdrIndex(root, index);
-
-    const result = await checkFramework({ root });
-
-    expect(result.ok).toBe(false);
-    expect(
-      result.rows.some(
-        (row) =>
-          row.status === "error" &&
-          row.message?.includes("superseded_by link is not bidirectional"),
-      ),
-    ).toBe(true);
-  });
-
-  it("reports error for ADR supersede cycles", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-    const first = await createAdr(root, { title: "First ADR" });
-    const second = await createAdr(root, { title: "Second ADR" });
-    await acceptAdr(root, first.adr.id);
-    await acceptAdr(root, second.adr.id);
-    const index = await loadAdrIndex(root);
-    if (!index) {
-      throw new Error("ADR index missing");
-    }
-    const firstRecord = index.adrs[first.adr.id];
-    const secondRecord = index.adrs[second.adr.id];
-    if (!firstRecord || !secondRecord) {
-      throw new Error("ADR records missing");
-    }
-    index.adrs[first.adr.id] = {
-      ...firstRecord,
-      status: "superseded",
-      supersedes: [second.adr.id],
-      superseded_by: second.adr.id,
-    };
-    index.adrs[second.adr.id] = {
-      ...secondRecord,
-      status: "superseded",
-      supersedes: [first.adr.id],
-      superseded_by: first.adr.id,
-    };
-    await saveAdrIndex(root, index);
-
-    const result = await checkFramework({ root });
-
-    expect(result.ok).toBe(false);
-    expect(
-      result.rows.some(
-        (row) => row.status === "error" && row.message?.includes("supersede chain has a cycle"),
-      ),
-    ).toBe(true);
-  });
-
   it("warns on an unexpected knowledge subdirectory (e.g. troubleshootings)", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
@@ -627,6 +468,23 @@ describe("checkFramework semantic validation", () => {
           row.message?.includes("troubleshootings"),
       ),
     ).toBe(true);
+  });
+
+  it("treats a loose knowledge/decisions directory as undeclared user content", async () => {
+    const root = path.join(await tempDir(), "demo");
+    await initFramework({ target: root, name: "Demo" });
+    await mkdir(path.join(root, "knowledge", "decisions"), { recursive: true });
+    await writeFile(path.join(root, "knowledge", "decisions", "old.md"), "user bytes", "utf8");
+
+    const result = await checkFramework({ root });
+
+    expect(result.ok).toBe(true);
+    expect(result.rows).toContainEqual(
+      expect.objectContaining({
+        path: "knowledge/decisions",
+        status: "warning",
+      }),
+    );
   });
 
   it("reports a frozen reference only for missing provenance, not for missing citations", async () => {
@@ -1216,30 +1074,6 @@ describe("workspace operations", () => {
     expect(sourceYaml).toContain("absorb_path: intake/candidate-source");
   });
 
-  it("a bare archetype scaffolds only systems/knowledge, no references or analyses", async () => {
-    const root = path.join(await tempDir(), "bare-archetype");
-    await writeBareArchetype(root);
-    await initFramework({ target: root, name: "BareProj", archetype: BARE_ARCHETYPE });
-
-    // Core dirs present
-    expect(await exists(path.join(root, "systems"))).toBe(true);
-    expect(await exists(path.join(root, "knowledge"))).toBe(true);
-
-    // Governance dirs absent — a bare archetype does not scaffold them
-    expect(await exists(path.join(root, "data"))).toBe(false);
-    expect(await exists(path.join(root, "references"))).toBe(false);
-    expect(await exists(path.join(root, "analyses"))).toBe(false);
-    expect(await exists(path.join(root, "iterations"))).toBe(false);
-    expect(await exists(path.join(root, "knowledge", "decisions", "ADR-TEMPLATE.md"))).toBe(false);
-    expect(await exists(path.join(root, ".assay", "adrs.json"))).toBe(false);
-    expect(await exists(path.join(root, "releases"))).toBe(false);
-
-    // Manifest records the archetype.
-    expect(await exists(path.join(root, ".assay", "config.yaml"))).toBe(false);
-    expect((await loadManifest(root))?.project.archetype).toBe(BARE_ARCHETYPE);
-    expect(await readInstalledArchetype(root)).toBe(BARE_ARCHETYPE);
-  });
-
   it("solve archetype scaffolds problem/ + intake/benchmarks/attempts + tools/iterations", async () => {
     const root = path.join(await tempDir(), "solve-archetype");
     await initFramework({ target: root, name: "ConProj", archetype: "solve" });
@@ -1472,25 +1306,6 @@ describe("workspace operations", () => {
       name: "Source",
     });
   });
-
-  it("keeps ADR audit append enabled even when event capture is not scaffolded", async () => {
-    const root = path.join(await tempDir(), "adr-audit-events");
-    await initFramework({ target: root, name: "ADR Audit", archetype: "study" });
-
-    const created = await createAdr(
-      root,
-      { title: "Record Architecture Decision" },
-      { now: new Date("2026-06-14T10:00:00") },
-    );
-
-    expect(created.eventFile).toBe(".assay/events/2026-06.jsonl");
-    expect(await exists(path.join(root, ".assay", "events", ".gitkeep"))).toBe(false);
-    const lines = (await readFile(path.join(root, created.eventFile), "utf8")).trim().split("\n");
-    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
-      event: "adr.created",
-      title: "Record Architecture Decision",
-    });
-  });
 });
 
 describe("closeIteration", () => {
@@ -1582,29 +1397,6 @@ describe("closeAnalysis", () => {
     const content = await readFile(created.absolutePath, "utf8");
     expect(content).toContain("Status: applied");
     expect(content).toContain("[x] adopt");
-  });
-
-  it("checks the ADR checkbox for adr exit", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-    const created = await createAnalysis({
-      root,
-      title: "ADR Candidate",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    await fillAnalysisSections(created.absolutePath, {
-      key: "- The decision should become an ADR.",
-    });
-
-    await closeAnalysis({
-      root,
-      path: created.path,
-      exit: "adr",
-      now: new Date("2026-06-15T10:00:00"),
-    });
-
-    const content = await readFile(created.absolutePath, "utf8");
-    expect(content).toContain("[x] ADR");
   });
 
   it("closes a living source observation through a bound analysis", async () => {

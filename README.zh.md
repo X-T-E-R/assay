@@ -12,14 +12,12 @@ Assay 把来源研究、实验和 AI 辅助构建变成你的仓库能记住的�
 
 你的 agent 一个下午能看二十个仓库。没有工作台，有价值的东西会消失在聊天记录里：什么重要、什么失败、采纳了什么、为什么下一个 agent 不该从零开始。
 
-Assay 是一个把证据变成更好系统的 CLI 工作台。它把来源、实验、分析、ADR 和可复用知识保存在普通文件里，让决策能撑过上下文重置。
 
 循环很简单：
 
 ```text
 来源 / 实验 / 目标
         -> 结构化分析 + 检查
-        -> 采纳 / 拒绝 / 实验 / ADR
         -> 知识、系统、下一轮迭代
 ```
 
@@ -44,7 +42,6 @@ Archetype 决定工作区结构和默认约定。它是**结构 + 约定 + 通�
 | 攻克一个可衡量目标 | `solve` | 目标、intake、attempts、benchmarks、迭代 |
 | 探索多个可能方向 | `explore` | approaches、trials、对比笔记、迭代路径 |
 
-三个内置 archetype 覆盖工作实际会呈现的三种形态：研究外部样例，攻克可衡量目标，或在目标形态还没确定时先铺开几个方向。需要别的结构时，在 `.assay/archetypes/` 或 `~/.assay/archetypes/` 下写一份自定义 archetype YAML，见 `docs/workspace-layout.md`。命令面很小：`task`、`roadmap`、`spec`、`source`、`analysis`、`donor`、`intent`、`iteration`、`adr`、`knowledge`、`system`、`check`。
 
 ## 让同一个结果跨上下文继续
 
@@ -70,19 +67,15 @@ none。Assay 不按 active 数量、创建时间或标题推断。文件合同�
 
 | 模块 | 打开什么 | 启用方式 |
 | --- | --- | --- |
-| `adr` | 带状态和取代链的编号架构决策 | `assay capability add adr` |
-| `intent` | 原样记录当初提出的诉求，再推进为需求或 ADR | `assay plugin add assay.intent` |
 | `iteration` | 对自有系统的受控改动，可开启并按结果关闭 | `assay capability add iteration` |
 
 `assay capability list` 显示工作区有哪些模块、分别怎么来的。添加模块会铺好它的目录和模板、记入 manifest，重复执行是安全的。`assay capability add intent` 仍作为兼容入口保留；`assay reconcile --apply` 会接管已有文件并补写插件回执，不移动或改写 intent 记录。
 
 每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。Project 使用 `project-<slug>`。Roadmap Item 位于 `roadmap/<roadmap-id>/`：`item.yaml` 保存封闭机器状态，`outcome.md` 保存读者可直接编辑且生命周期命令不会重写的结果说明；根 `roadmap/README.md` 只作说明，不生成动态索引。原生 Spec 按需位于 `specs/<spec-id>/{spec.yaml,specification.md}`，可从 Analysis 或 Task 显式提升当前约束而不修改来源。Project 选择的 `relay/` 与 `extensions/` 也按需创建。Reference、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。详见 [Native specifications](docs/spec.md)。
 
-`intent` 是三个 capability module 中最近引入的一个，也是仓库里最常缺失的一环：几个月后代码还在，当初为什么要做却已经找不到了。`assay intent capture` 按内容寻址、只追加地保存原始措辞，并绑定到已注册的系统，之后的需求或 ADR 就能指回它所依据的那段话。
 
 ## 用插件扩展工作区，不增加新的 setup 生命周期
 
-插件扩展已有 Assay 工作区，不替代 `init`、`attach`，也不改变 Assay 作为证据工作台的职责。`assay.intent` 以叠加方式提供 `intent` 能力；`assay.trellis` 是 legacy operational surface，动态状态位于 `.assay/trellis/`。原生 Task、ADR 与 intent 保持可用；新 Task 不会吸收、改写或自动迁移旧 Trellis 状态。
 
 ```bash
 # 创建或接入时顺便安装 intent。
@@ -161,7 +154,6 @@ cd assay
 node scripts/install.mjs
 ```
 
-让 agent 在任务需要来源研究、证据捕获、ADR、迭代或可复用知识时使用 Assay Builder skill。心智模型很简单：别只是"看几个例子"；打开一个来源、分析它、关闭决策、把持久发现保存为知识。
 
 安装参数和调用细节见 `skills/assay-builder/references/cli-setup.zh.md`。
 
@@ -169,13 +161,11 @@ node scripts/install.mjs
 
 Assay 把系统代码和 Assay 记忆分开。
 
-`standalone` 模式下，工作区 Git 是可选的。当分析、ADR、观察和知识需要评审或团队历史时再用。独立系统保留在自己的 Git 仓库里；工作台记录契约和决策，不记录它们的源码历史。
 
 `overlay` 模式下，Assay 默认不进入你的产品仓库。`assay attach --privacy private` 把 `/.assay/` 写入仓库本地的 `.git/info/exclude`，不动已跟踪的项目文件。如果想让 Assay 记忆有版本历史又不污染产品提交，用 `--privacy private-git` 在 `.assay/` 里初始化一个独立的 Git 仓库。
 
 ## Assay 故意不做的事
 
-Assay 不会替你跑模型、不会把文件藏进数据库、也不会让你信任一个黑盒 agent 循环。你的工作始终是普通文件。价值在于结构：来源可追踪、分析可以承载观察、重要选择能变成 ADR 或可复用知识，而不是口口相传。显式命令负责记录决策，不会用机械规则判断你的文字是否“写够了”。
 
 ## 了解更多
 

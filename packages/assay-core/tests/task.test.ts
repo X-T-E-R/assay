@@ -31,6 +31,7 @@ import {
   finishTask,
   initFramework,
   listTasks,
+  setConvertRoadmapProbeForTests,
   setTaskArchiveProbeForTests,
   setTaskRelations,
   setTaskTransactionProbeForTests,
@@ -45,6 +46,7 @@ import {
   setTaskLockWaitForTests,
   setTaskStorageProbeForTests,
   withTaskLock,
+  withTaskLockUncoordinatedForTests,
 } from "../src/tasks/task-storage.js";
 
 const roots: string[] = [];
@@ -119,6 +121,7 @@ afterEach(async () => {
   setTaskLockWaitForTests(undefined);
   setTaskTransactionProbeForTests(undefined);
   setTaskArchiveProbeForTests(undefined);
+  setConvertRoadmapProbeForTests(undefined);
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -692,7 +695,7 @@ describe("native Task persistence hardening", () => {
     const hold = new Promise<void>((resolve) => {
       releaseHolder = resolve;
     });
-    const holder = withTaskLock(root, lock, async () => {
+    const holder = withTaskLockUncoordinatedForTests(root, lock, async () => {
       markHolderReady?.();
       await hold;
     });
@@ -705,7 +708,9 @@ describe("native Task persistence hardening", () => {
         await holder;
       }
     });
-    expect(await withTaskLock(root, lock, async () => "waiter-claimed")).toBe("waiter-claimed");
+    expect(await withTaskLockUncoordinatedForTests(root, lock, async () => "waiter-claimed")).toBe(
+      "waiter-claimed",
+    );
     expect(injected).toBe(true);
     expect(await lstat(lock).catch(() => null)).toBeNull();
   });
@@ -815,6 +820,40 @@ describe("native Task persistence hardening", () => {
 });
 
 describe("native Task overlay conversion", () => {
+  it("fail-closes a Task mutation after the conversion boundary and preserves the snapshot", async () => {
+    const root = await workspace("ConvertConcurrentTask", "overlay");
+    const task = await createTask({ root, title: "Stable task" });
+    const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
+    roots.push(target);
+    let reached!: () => void;
+    let release!: () => void;
+    const atBoundary = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const continueConversion = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setConvertRoadmapProbeForTests(async () => {
+      reached();
+      await continueConversion;
+    });
+
+    const conversion = convertOverlayToStandalone({ root, target, move: false, keepOverlay: true });
+    await atBoundary;
+    try {
+      await expect(updateTaskStatus({ root, id: task.task.id, status: "paused" })).rejects.toThrow(
+        /workspace conversion/,
+      );
+    } finally {
+      release();
+    }
+    await conversion;
+
+    expect((await showTask({ root: target, id: task.task.id })).task.status).toBe("active");
+    expect((await showTask({ root, id: task.task.id })).task.status).toBe("active");
+    expect(await lstat(path.join(target, ".assay", "coordination")).catch(() => null)).toBeNull();
+  });
+
   it.each([
     { label: "copy", move: false, keepOverlay: true },
     { label: "move", move: true, keepOverlay: false },

@@ -123,7 +123,6 @@ function main() {
     if (!projects.includes("Assay Smoke")) {
       fail("CLI projects list did not include the initialized project.");
     }
-    run("CLI migrate-layout dry-run", ["migrate-layout", "--dry-run"], smokeOptions);
 
     const adopted = path.join(tempRoot, "adopted");
     mkdirSync(path.join(adopted, "src"), { recursive: true });

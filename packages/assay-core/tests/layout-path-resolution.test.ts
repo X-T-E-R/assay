@@ -8,10 +8,8 @@ import {
   FrameworkError,
   archiveSystem,
   attachExistingRepo,
-  createAdr,
   initFramework,
   loadManifest,
-  migrateLayout,
   registerSystem,
   saveManifest,
 } from "../src/index.js";
@@ -62,109 +60,6 @@ async function standaloneWorkspace(name: string): Promise<string> {
   await initFramework({ target: root, name, archetype: "study" });
   return root;
 }
-
-describe("ADR paths resolve through the layout path map", () => {
-  it("writes overlay ADRs under .assay and leaves the product repo root clean", async () => {
-    const root = await overlayWorkspace("Product");
-
-    const result = await createAdr(
-      root,
-      { title: "Overlay Decision" },
-      { now: new Date("2026-07-06T09:00:00") },
-    );
-
-    expect(result.adr.path).toBe(".assay/knowledge/decisions/ADR-0001-overlay-decision.md");
-    expect(await exists(path.join(root, ".assay", "knowledge", "decisions"))).toBe(true);
-    // The product repo must not gain a top-level knowledge/ directory: it is
-    // outside the /.assay/ exclude and would pollute product Git.
-    expect(await exists(path.join(root, "knowledge"))).toBe(false);
-    expect((await git(root, ["status", "--short"])).trim()).toBe("");
-
-    const content = await readFile(path.join(root, result.adr.path), "utf8");
-    expect(content).toContain("adr: ADR-0001-overlay-decision");
-  });
-
-  it("keeps standalone ADR paths at knowledge/decisions", async () => {
-    const root = await standaloneWorkspace("Standalone");
-
-    const result = await createAdr(
-      root,
-      { title: "Standalone Decision" },
-      { now: new Date("2026-07-06T09:00:00") },
-    );
-
-    expect(result.adr.path).toBe("knowledge/decisions/ADR-0001-standalone-decision.md");
-    expect(await exists(path.join(root, result.adr.path))).toBe(true);
-  });
-
-  it("keeps standalone ADR paths at knowledge/decisions for legacy v3 manifests", async () => {
-    const root = await standaloneWorkspace("LegacyStandalone");
-    const manifest = await loadManifest(root);
-    if (!manifest) throw new Error("manifest missing");
-    manifest.layout_version = 3;
-    Reflect.deleteProperty(manifest, "layout");
-    await saveManifest(root, manifest);
-
-    const result = await createAdr(
-      root,
-      { title: "Legacy Decision" },
-      { now: new Date("2026-07-06T09:00:00") },
-    );
-
-    expect(result.adr.path).toBe("knowledge/decisions/ADR-0001-legacy-decision.md");
-  });
-});
-
-describe("layout migration preserves the workspace mode", () => {
-  it("keeps overlay mode and paths when upgrading an overlay manifest", async () => {
-    const root = await overlayWorkspace("MigrateOverlay");
-
-    // Simulate an overlay workspace written by an older build: layout_version
-    // below the current one, which is what makes migrate-layout upgrade the
-    // manifest.
-    const before = await loadManifest(root);
-    if (!before?.layout) throw new Error("overlay manifest missing layout");
-    before.layout_version = 3;
-    await saveManifest(root, before);
-
-    await migrateLayout({ root, apply: true, now: new Date("2026-07-07T09:00:00") });
-
-    const after = await loadManifest(root);
-    expect(after?.layout_version).toBe(4);
-    expect(after?.layout?.mode).toBe("overlay");
-    expect(after?.layout?.work_root).toBe(".assay");
-    expect(after?.layout?.privacy).toBe("private");
-    expect(after?.layout?.paths.knowledge).toBe(".assay/knowledge");
-    expect(after?.layout?.paths.analyses).toBe(".assay/analyses");
-    expect(after?.layout?.paths.systems_contracts).toBe(".assay/systems");
-
-    // The migrated workspace must still write into .assay/.
-    const adr = await createAdr(
-      root,
-      { title: "Post Migration Decision" },
-      { now: new Date("2026-07-07T10:00:00") },
-    );
-    expect(adr.adr.path).toBe(".assay/knowledge/decisions/ADR-0001-post-migration-decision.md");
-    expect(await exists(path.join(root, "knowledge"))).toBe(false);
-  });
-
-  it("defaults a legacy v3 manifest without a layout block to standalone", async () => {
-    const root = await standaloneWorkspace("MigrateLegacy");
-    const before = await loadManifest(root);
-    if (!before) throw new Error("manifest missing");
-    before.layout_version = 3;
-    Reflect.deleteProperty(before, "layout");
-    await saveManifest(root, before);
-
-    await migrateLayout({ root, apply: true, now: new Date("2026-07-07T09:00:00") });
-
-    const after = await loadManifest(root);
-    expect(after?.layout_version).toBe(4);
-    expect(after?.layout?.mode).toBe("standalone");
-    expect(after?.layout?.work_root).toBe(".");
-    expect(after?.layout?.paths.knowledge).toBe("knowledge");
-  });
-});
 
 describe("attach validates the requested archetype", () => {
   it("rejects an unknown archetype before writing workspace state", async () => {

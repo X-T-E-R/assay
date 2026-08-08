@@ -2,7 +2,6 @@ import type {
   AddCapabilityResult,
   AddPluginResult,
   AdoptExistingProjectResult,
-  AdrRecord,
   ApplyUpdateResult,
   AssayProjectRecord,
   AttachResult,
@@ -21,7 +20,6 @@ import type {
   ListCapabilitiesResult,
   ListIntentResult,
   ListPluginsResult,
-  MigrateLayoutResult,
   OperationReport,
   PromoteIntentResult,
   ReconcilePluginsResult,
@@ -318,7 +316,6 @@ export function formatIntentCapture(result: CaptureIntentResult): string {
 export function formatIntentPromotion(result: PromoteIntentResult): string {
   return [
     `Promoted intent ${result.capture.id} to ${result.to}`,
-    ...(result.adrId ? [`ADR: ${result.adrId}`] : []),
     `Title: ${result.title}`,
     `Path: ${result.path}`,
     `System: ${result.capture.system}`,
@@ -347,7 +344,6 @@ export function formatIntentList(result: ListIntentResult): string {
         ...(capture.requirements.length > 0
           ? [`${capture.requirements.length} requirement(s)`]
           : []),
-        ...(capture.decisions.length > 0 ? [`ADR ${capture.decisions.join(",")}`] : []),
       ];
       const suffix = markers.length > 0 ? ` [${markers.join("; ")}]` : "";
       // A record damaged past parsing has no frontmatter left to report.
@@ -432,13 +428,6 @@ function upstreamLines(upstream: FrameworkStatusResult["upstream"]): string[] {
   return lines;
 }
 
-function adrSuggestionLines(suggestions: FrameworkStatusResult["adrSuggestions"]): string[] {
-  if (!suggestions || suggestions.length === 0) {
-    return [];
-  }
-  return ["Decision records", ...suggestions.map((suggestion) => `  - ${suggestion.message}`)];
-}
-
 export function formatStatusResult(result: FrameworkStatusResult): string {
   const header = ["Framework status", `Root: ${result.root}`];
   const semantics = manifestSemanticsLines(
@@ -461,15 +450,6 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
       ]
     : ["Manifest: missing", "Managed files: 0"];
   const archetypeNotice = result.archetypeNotice ? [`Archetype: ${result.archetypeNotice}`] : [];
-  const governance = result.decisionGovernance
-    ? [
-        "Decision governance",
-        `  - desired provider: ${result.decisionGovernance.desiredProvider}`,
-        `  - active provider: ${result.decisionGovernance.activeProvider ?? "(none)"}`,
-        `  - state: ${result.decisionGovernance.state}`,
-        `  - ${result.decisionGovernance.message}`,
-      ]
-    : [];
   const zones = zoneLines(result.zones);
 
   const systems =
@@ -523,12 +503,10 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     ...header,
     ...manifest,
     ...archetypeNotice,
-    ...governance,
     ...zones,
     ...systems,
     ...livingSources,
     ...upstreamLines(result.upstream),
-    ...adrSuggestionLines(result.adrSuggestions),
     ...donors,
     ...summary,
   ].join("\n");
@@ -563,18 +541,12 @@ export function formatSourceLogResult(result: SourceLogResult): string {
   ].join("\n");
 }
 
-/**
- * A `major` or `replacement` grade is Assay's only signal that an upstream
- * change may have invalidated an architectural assumption. Deciding whether a
- * change deserves a decision record is the step people report as the hard one,
- * so the grade is offered as that prompt. It blocks nothing.
- */
-function adrSuggestionForChange(changeClass: SourceSyncResult["changeClass"]): string[] {
+function revalidationSuggestionForChange(changeClass: SourceSyncResult["changeClass"]): string[] {
   if (changeClass !== "major" && changeClass !== "replacement") {
     return [];
   }
   return [
-    `Advisory: graded '${changeClass}'. If that changed an architectural assumption, record it: assay adr new "<decision>"`,
+    `Advisory: graded '${changeClass}'. Revalidate affected analyses and current Specs before reuse.`,
   ];
 }
 
@@ -586,7 +558,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
       `Change: ${result.changeClass}`,
       "Observation: unchanged",
       `Event: ${result.eventFile}`,
-      ...adrSuggestionForChange(result.changeClass),
+      ...revalidationSuggestionForChange(result.changeClass),
     ].join("\n");
   }
   return [
@@ -596,7 +568,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
     `Observation: ${result.observationFile ?? result.observation.observation_id}`,
     `Manifest: ${result.manifestFile ?? result.observation.manifest}`,
     `Event: ${result.eventFile}`,
-    ...adrSuggestionForChange(result.changeClass),
+    ...revalidationSuggestionForChange(result.changeClass),
   ].join("\n");
 }
 
@@ -781,24 +753,6 @@ export function formatUpdateResult(result: ApplyUpdateResult): string {
   ].join("\n");
 }
 
-export function formatMigrationResult(result: MigrateLayoutResult): string {
-  const steps = result.plan.steps.length
-    ? result.plan.steps.map((step) => {
-        const reason = step.reason ? ` - ${step.reason}` : "";
-        return `  - [${step.action ?? step.type}] ${step.from} -> ${step.to}${reason}`;
-      })
-    : ["  - no legacy layout changes detected"];
-
-  return [
-    `Layout migration: ${result.apply && !result.dryRun ? "applied" : "dry-run"}`,
-    `Root: ${result.root}`,
-    "Plan:",
-    ...steps,
-    ...(result.backup ? [`Backup: ${result.backup.relativePath}`] : []),
-    ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
-  ].join("\n");
-}
-
 export function formatAdoptionResult(result: AdoptExistingProjectResult): string {
   const moves =
     result.moves.length === 0
@@ -917,37 +871,4 @@ export function formatSystemList(
   return [title, ...lines, "", `${systems.length} system(s), primary: ${primary ?? "(none)"}`].join(
     "\n",
   );
-}
-
-function adrRelationLine(values: readonly string[]): string {
-  return values.length > 0 ? values.join(", ") : "-";
-}
-
-export function formatAdrRecord(adr: AdrRecord): string {
-  return [
-    `${adr.id} (${adr.status})`,
-    `  title:             ${adr.title}`,
-    `  date:              ${adr.date}`,
-    `  path:              ${adr.path}`,
-    `  supersedes:        ${adrRelationLine(adr.supersedes)}`,
-    `  superseded by:     ${adr.superseded_by ?? "-"}`,
-    `  related analysis:  ${adr.related_analysis ?? "-"}`,
-    `  related iteration: ${adr.related_iteration ?? "-"}`,
-    // Shown only when the ADR carries them, so ADRs written without the intent
-    // module keep the same output shape.
-    ...(adr.related_intent === undefined ? [] : [`  related intent:    ${adr.related_intent}`]),
-    ...(adr.system === undefined ? [] : [`  system:            ${adr.system}`]),
-  ].join("\n");
-}
-
-export function formatAdrList(title: string, adrs: readonly AdrRecord[]): string {
-  if (adrs.length === 0) {
-    return `${title}\n(none)`;
-  }
-  return [
-    title,
-    ...adrs.map((adr) => `${adr.id.padEnd(32)} ${adr.status.padEnd(10)} ${adr.date}  ${adr.title}`),
-    "",
-    `${adrs.length} ADR(s)`,
-  ].join("\n");
 }

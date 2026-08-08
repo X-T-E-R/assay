@@ -595,7 +595,7 @@ describe("native Spec", { timeout: 60_000 }, () => {
     ).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it("stores overlays under .assay and coordinates byte-preserving conversion", async () => {
+  it("stores overlays under .assay and fail-closes mutation during byte-preserving conversion", async () => {
     const root = path.join(os.tmpdir(), `assay-spec-overlay-${randomUUID()}`);
     roots.push(root);
     await mkdir(root, { recursive: true });
@@ -637,28 +637,23 @@ describe("native Spec", { timeout: 60_000 }, () => {
     });
     const converting = convertOverlayToStandalone({ root, target });
     await entered;
-    let settled = false;
-    const queued = createSpec({
-      root,
-      title: "Queued",
-      scope: "project",
-      strength: "required",
-    }).finally(() => {
-      settled = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(settled).toBe(false);
+    await expect(
+      createSpec({
+        root,
+        title: "Queued",
+        scope: "project",
+        strength: "required",
+      }),
+    ).rejects.toMatchObject({ code: "SPEC_CONFLICT" });
     releaseResolve?.();
     await converting;
-    const queuedResult = await queued;
-    expect(queuedResult.item.id).toBe("spec-0002-queued");
     expect(
       await readFile(path.join(target, "project", "specs", original.item.id, "spec.yaml")),
     ).toEqual(originalItemBytes);
     expect(
       await readFile(path.join(target, "project", "specs", original.item.id, "specification.md")),
     ).toEqual(originalBodyBytes);
-    await expect(showSpec({ root: target, id: queuedResult.item.id })).rejects.toMatchObject({
+    await expect(showSpec({ root: target, id: "spec-0002-queued" })).rejects.toMatchObject({
       code: "SPEC_NOT_FOUND",
     });
   });

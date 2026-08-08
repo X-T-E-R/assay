@@ -34,7 +34,6 @@ try {
     Invoke-Checked "node" @($cli, "status")
     Invoke-Checked "node" @($cli, "update", "--dry-run")
     Invoke-Checked "node" @($cli, "projects", "list", "--json")
-    Invoke-Checked "node" @($cli, "migrate-layout", "--dry-run")
   }
   finally {
     Pop-Location

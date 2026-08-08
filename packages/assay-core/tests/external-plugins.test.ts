@@ -40,7 +40,7 @@ function fixtureDescriptor(id = "example.readonly-command") {
     __schema: 1,
     id,
     adapter_version: "1.0.0",
-    assay: { spi_version: 1, version: "0.6.0" },
+    assay: { spi_version: 1, version: "0.7.0" },
     provenance: {
       source: "npm:@example/assay-plugin-fixture",
       ref: "v1.0.0",

@@ -57,9 +57,6 @@ export const frameworkProjectSchema = z
     // archetype settings. The authoritative native Project identity and
     // charter live in <work-root>/project/project.yaml and README.md.
     name: z.string().min(1),
-    // Legacy v2 manifests may still carry project.core. Layout v3 keeps it
-    // optional for migration reads only; fresh manifests must not materialize it.
-    core: z.string().min(1).optional(),
     archetype: projectArchetypeSchema.default("study"),
     mode: projectModeSchema.default("learning"),
     // Capability modules enabled after init by `assay capability add`. The
@@ -119,46 +116,7 @@ export const systemsRegistrySchema = z
   })
   .strict();
 
-// --- ADR index (layout v3) ---------------------------------------------------
-
-export const adrStatusSchema = z.enum(["proposed", "accepted", "superseded", "deprecated"]);
-
-export const adrRecordSchema = z
-  .object({
-    id: z.string().regex(/^ADR-\d{4}-.+/),
-    number: z.number().int().positive(),
-    title: z.string().min(1),
-    slug: z.string().min(1),
-    status: adrStatusSchema,
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    path: z.string().min(1),
-    supersedes: z.array(z.string().min(1)),
-    superseded_by: z.string().min(1).nullable(),
-    related_analysis: z.string().min(1).nullable(),
-    related_iteration: z.string().min(1).nullable(),
-    // Written only by `assay intent promote --to decision`. Optional rather
-    // than nullable-required so an ADR index created before the intent module
-    // keeps validating and is not rewritten with empty fields.
-    related_intent: z.string().min(1).optional(),
-    system: z.string().min(1).optional(),
-  })
-  .strict();
-
-export const adrIndexSchema = z
-  .object({
-    __schema: z.literal(1),
-    next_number: z.number().int().positive(),
-    adrs: z.record(adrRecordSchema),
-    updated_at: z.string().min(1),
-  })
-  .strict();
-
-// --- Workspace layout (layout v4) -------------------------------------------
-//
-// The layout block tells every command where Assay-owned state and work
-// folders live for this workspace. Layout v3 manifests carry no `layout`
-// block; `resolveWorkspaceLayout` supplies a standalone-compatible fallback
-// when reading them, so v3 workspaces keep working until migrated.
+// --- Workspace layout (layout v5) -------------------------------------------
 
 export const workspaceLayoutModeSchema = z.enum(["standalone", "overlay"]);
 export const workspacePrivacySchema = z.enum(["tracked", "private", "private-git"]);
@@ -169,7 +127,6 @@ export const workspaceLayoutPathsSchema = z
     events: z.string().min(1),
     backups: z.string().min(1),
     systems_registry: z.string().min(1),
-    adrs_index: z.string().min(1),
     references: z.string().min(1),
     analyses: z.string().min(1),
     iterations: z.string().min(1),
@@ -180,24 +137,67 @@ export const workspaceLayoutPathsSchema = z
 
 export const workspaceLayoutSchema = z
   .object({
-    version: z.literal(4),
+    version: z.literal(5),
     mode: workspaceLayoutModeSchema,
-    // `.assay` for v4 workspaces; `.framework` only appears in the in-memory
-    // fallback for v3 manifests being read before migration and is never
-    // written to a fresh manifest.
-    state_root: z.enum([".assay", ".framework"]),
+    state_root: z.literal(".assay"),
     work_root: z.enum([".", ".assay"]),
     privacy: workspacePrivacySchema,
     paths: workspaceLayoutPathsSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((layout, context) => {
+    const standalone = {
+      manifest: ".assay/manifest.json",
+      events: ".assay/events",
+      backups: ".assay/backups",
+      systems_registry: ".assay/systems-registry.json",
+      references: "references",
+      analyses: "analyses",
+      iterations: "iterations",
+      knowledge: "knowledge",
+      systems_contracts: "systems",
+    } as const;
+    const overlay = {
+      ...standalone,
+      references: ".assay/references",
+      analyses: ".assay/analyses",
+      iterations: ".assay/iterations",
+      knowledge: ".assay/knowledge",
+      systems_contracts: ".assay/systems",
+    } as const;
+    const expected = layout.mode === "standalone" ? standalone : overlay;
+    const expectedWorkRoot = layout.mode === "standalone" ? "." : ".assay";
+    if (layout.work_root !== expectedWorkRoot) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["work_root"],
+        message: `layout v5 ${layout.mode} work_root must be '${expectedWorkRoot}'`,
+      });
+    }
+    if (layout.mode === "standalone" && layout.privacy !== "tracked") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["privacy"],
+        message: "layout v5 standalone privacy must be 'tracked'",
+      });
+    }
+    for (const [key, value] of Object.entries(expected)) {
+      if (layout.paths[key as keyof typeof expected] !== value) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["paths", key],
+          message: `layout v5 ${layout.mode} path '${key}' must be '${value}'`,
+        });
+      }
+    }
+  });
 
 export const frameworkManifestSchema = z
   .object({
-    __schema: z.union([z.literal(1), z.literal(2)]),
+    __schema: z.literal(2),
     framework_version: z.string().min(1),
-    minimum_assay_version: z.string().min(1).optional(),
-    layout_version: z.number().int().nonnegative(),
+    minimum_assay_version: z.string().min(1),
+    layout_version: z.literal(5),
     created_at: z.string().min(1),
     updated_at: z.string().min(1),
     project: frameworkProjectSchema,
@@ -212,26 +212,9 @@ export const frameworkManifestSchema = z
     // a responsibility binding replaces the native owner for that semantic
     // area and therefore fail-closes while its provider is unavailable.
     bindings: z.record(z.string().trim().min(1), responsibilityBindingSchema).optional(),
-    // Layout v4+: path map and privacy policy. Optional so v3 manifests (which
-    // have no layout block) still validate; resolveWorkspaceLayout fills in a
-    // standalone fallback when this is absent.
-    layout: workspaceLayoutSchema.optional(),
+    layout: workspaceLayoutSchema,
   })
-  .strict()
-  .superRefine((manifest, context) => {
-    if (manifest.__schema === 1 && (manifest.minimum_assay_version || manifest.bindings)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "manifest schema 1 cannot carry minimum_assay_version or provider bindings",
-      });
-    }
-    if (manifest.__schema === 2 && !manifest.minimum_assay_version) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "manifest schema 2 requires minimum_assay_version",
-      });
-    }
-  });
+  .strict();
 
 export const pluginInstallReceiptSchema = z
   .object({
@@ -361,39 +344,6 @@ export const updatePlanSchema = z
   })
   .strict();
 
-export const migrationStepTypeSchema = z.enum([
-  "copy-dir",
-  "copy",
-  "manual-review",
-  "create-systems-registry",
-  "generate-contract",
-  "mark-user-deleted",
-  "upgrade-manifest",
-]);
-
-export const migrationStepSchema = z
-  .object({
-    type: migrationStepTypeSchema,
-    from: z.string().min(1),
-    to: z.string().min(1),
-    reason: z.string().optional(),
-    action: z
-      .enum(["copy", "manual-review", "skip", "create", "generate", "mark", "upgrade"])
-      .optional(),
-  })
-  .strict();
-
-export const migrationPlanSchema = z
-  .object({
-    root: z.string(),
-    dry_run: z.boolean(),
-    apply: z.boolean(),
-    steps: z.array(migrationStepSchema),
-    backup_dir: z.string().optional(),
-    notes: z.array(z.string()).default([]),
-  })
-  .strict();
-
 export type ManagedFileRecord = z.infer<typeof managedFileRecordSchema>;
 export type ProjectArchetype = z.infer<typeof projectArchetypeSchema>;
 export type ProjectMode = z.infer<typeof projectModeSchema>;
@@ -415,10 +365,5 @@ export type SystemIntentAuthorityMode = z.infer<typeof systemIntentAuthorityMode
 export type SystemIntentAuthority = z.infer<typeof systemIntentAuthoritySchema>;
 export type SystemRecord = z.infer<typeof systemRecordSchema>;
 export type SystemsRegistry = z.infer<typeof systemsRegistrySchema>;
-export type AdrStatus = z.infer<typeof adrStatusSchema>;
-export type AdrRecord = z.infer<typeof adrRecordSchema>;
-export type AdrIndex = z.infer<typeof adrIndexSchema>;
 export type EventEntry = z.input<typeof eventEntrySchema>;
 export type PersistedEventEntry = z.infer<typeof persistedEventEntrySchema>;
-export type MigrationStep = z.infer<typeof migrationStepSchema>;
-export type MigrationPlan = z.infer<typeof migrationPlanSchema>;
