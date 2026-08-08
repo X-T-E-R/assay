@@ -16,7 +16,10 @@ function Invoke-Checked {
   }
 }
 
-Invoke-Checked "pnpm" @("check")
+# Windows filesystem-heavy suites are deterministic when test files run one at
+# a time. Test-local Promise concurrency remains intact, while Linux keeps the
+# ordinary parallel `pnpm check` path in check.sh.
+Invoke-Checked "pnpm" @("check:windows")
 
 $tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "assay-smoke-" + [System.Guid]::NewGuid().ToString("N")))
 $previousRegistryRoot = $env:ASSAY_WORKSPACES_ROOT

@@ -10,10 +10,12 @@
   "scripts": {
     "build": "pnpm -r build",
     "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm test && pnpm smoke",
+    "check:windows": "pnpm build && pnpm typecheck && pnpm lint && pnpm test:windows && pnpm smoke",
     "format": "biome format --write .",
     "lint": "biome check .",
     "smoke": "node scripts/cli-smoke.mjs",
     "test": "pnpm -r test",
+    "test:windows": "pnpm --filter assay-core test:serial && pnpm --filter assay-cli test",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
