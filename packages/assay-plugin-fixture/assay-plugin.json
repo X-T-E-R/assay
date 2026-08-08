@@ -4,7 +4,7 @@
   "adapter_version": "1.0.0",
   "assay": {
     "spi_version": 1,
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "provenance": {
     "source": "npm:@assay/plugin-fixture",

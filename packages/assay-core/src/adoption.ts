@@ -267,15 +267,15 @@ function failureMessage(error: unknown): string {
  */
 function suggestDestination(entryName: string): string {
   const lower = entryName.toLowerCase();
-  if (lower === "readme.md" || lower.startsWith("readme")) return "references/ or problem/";
+  if (lower === "readme.md" || lower.startsWith("readme")) return "sources/ or problem/";
   if (lower.endsWith(".md") || lower === "docs" || lower === "documentation")
-    return "references/ or knowledge/guides/";
+    return "sources/ or knowledge/guides/";
   if (lower === "src" || lower === "source" || lower === "lib") return "systems/";
   if (lower === "test" || lower === "tests" || lower === "spec") return "systems/ or tests/";
   if (lower === "data" || lower === "datasets") return "data/";
   if (lower === "scripts" || lower === "tools") return "systems/ or releases/";
   if (lower === ".git") return "preserved at root";
-  return "systems/ or references/";
+  return "systems/ or sources/";
 }
 
 /**

@@ -25,8 +25,6 @@ Thumbs.db
 **/.assay/events/*
 !**/.assay/events/.gitkeep
 **/.assay/.runtime/
-**/references/frozen/*
-!**/references/frozen/README.md
 
 # Local sidecar names, if copied into the repo by mistake
 metasystem_kit_private_materials/

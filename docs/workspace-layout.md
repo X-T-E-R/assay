@@ -13,7 +13,7 @@ systems/    registered systems and system metadata
 knowledge/  accepted reusable patterns, guides, and troubleshooting notes
 ```
 
-Reference and Analysis are native, lazy work areas for every archetype. `study` scaffolds them eagerly; `solve`, `explore`, and custom archetypes create `references/` or `analyses/` on the first source/reference/analysis command. Their absence is healthy and `status` still reports both zones.
+Source and Analysis are native, lazy work areas for every archetype. `study` scaffolds them eagerly; `solve`, `explore`, and custom archetypes create `sources/` or `analyses/` on the first source/analysis command. Their absence is healthy and `status` still reports both zones.
 
 Archetype-specific working directories sit alongside this base.
 
@@ -63,7 +63,7 @@ Suggested fields are `run_id`, `started_at`, `benchmark`, `attempt`, `score`,
 reports the record count once the file exists. The solve `README.md` carries
 the same convention.
 
-Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`.
+Each Source stores its observation ledger under `sources/<alias>/` as `observations/`, `manifests/`, and `captures/`; frozen Sources force archive capture and cannot sync or switch.
 
 ## Native Task records
 
@@ -142,9 +142,9 @@ The `project.name`, `project.archetype`, and `project.mode` fields in
 `.assay/manifest.json` remain workspace presentation/settings compatibility
 data; the manifest is not a second Project charter or identity record.
 
-## Donor state
+## Source adoption operational receipts
 
-Donor adoption records live under the Assay state directory in both layout modes:
+Source adoption receipts live under the Assay state directory in both layout modes:
 
 ```text
 .assay/donors/<adoption-id>/
@@ -155,9 +155,9 @@ Donor adoption records live under the Assay state directory in both layout modes
   state.json
 ```
 
-No archetype scaffolds `.assay/donors/`. The storage layer creates the directory and each adoption folder on demand, the first time `assay donor register` runs, so a workspace that never records a donor relationship has no donor directory at all. `assay check` validates these records only when they exist.
+No archetype scaffolds the codec-stable internal `.assay/donors/` receipt store. The storage layer creates the directory and each adoption folder on demand, the first time `assay source adoption register` runs, so a workspace that never records a Source adoption relationship has no receipt directory at all. `assay check` validates these records only when they exist.
 
-Definitions, inspections, evidence, and decisions are immutable content-addressed files; `state.json` is the current pointer (active definition, per-target baselines, committed decisions, generation). Use `assay donor` commands rather than editing them by hand. For the record semantics see [Donor Adoption](donor-adoption.md).
+Definitions, inspections, evidence, and decisions are immutable content-addressed files; `state.json` is the current pointer (active definition, per-target baselines, committed decisions, generation). Use `assay source adoption` commands rather than editing them by hand. For the record semantics see [Source Adoption](source-adoption.md).
 
 ## Overlay mode
 
@@ -171,17 +171,17 @@ Use overlay when an existing product repo root should be the primary system. Ass
   events/
   backups/
   systems/root.yaml
-  references/
+  sources/
   analyses/
   knowledge/
   tasks/
 ```
 
-Overlay does not create root-level `references/`, `analyses/`, `knowledge/`, `tasks/`, or `systems/` folders. It does not modify tracked root files by default.
+Overlay does not create root-level `sources/`, `analyses/`, `knowledge/`, `tasks/`, or `systems/` folders. It does not modify tracked root files by default.
 
 ## Runtime paths
 
-Commands resolve paths through the manifest `layout` block. Do not hard-code `references/` or `analyses/` at root. In standalone, those paths resolve to root-level folders. In overlay, they resolve under `.assay/`.
+Commands resolve paths through the manifest `layout` block. Do not hard-code `sources/` or `analyses/` at root. In standalone, those paths resolve to root-level folders. In overlay, they resolve under `.assay/`.
 
 ## Git expectations
 
@@ -189,4 +189,4 @@ Standalone Git is optional and belongs to the Assay workbench. Overlay Git belon
 
 ## Conversion
 
-Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/references` to `references`, `.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`, and `.assay/project` to `project`, carrying `.assay/task-contexts.json` and `.assay/trellis` runtime state, and registering the original product repo as an external independent primary system. Managed-file paths are rewritten to match, so nothing stays behind pointing at the old location. Unknown directories under `.assay/` are not interpreted, copied, rewritten, or deleted; their presence keeps the source state directory in place after a move. Task and native Project directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.
+Overlay can be detached into standalone by creating a sibling workbench, hoisting `.assay/sources` to `sources`, `.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`, and `.assay/project` to `project`, carrying `.assay/task-contexts.json`, the Source-owned adoption receipt store, and `.assay/trellis` runtime state. Managed Source and System paths are rewritten to match, and conversion fails before writing if any Source adoption or System target would stop resolving. Unknown directories under `.assay/` are not interpreted, copied, rewritten, or deleted; their presence keeps the source state directory in place after a move. Task and native Project directories are never merged into non-empty targets. Use `assay convert --to standalone --target <sibling>`. Avoid in-place conversion unless explicitly requested with a destructive flag.

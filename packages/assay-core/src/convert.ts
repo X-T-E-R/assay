@@ -1,6 +1,7 @@
 import type { Stats } from "node:fs";
 import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
   CURRENT_VERSION,
@@ -22,10 +23,17 @@ import { loadManifest, saveManifest } from "./manifest.js";
 import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
 import { dirsForArchetype, loadArchetype } from "./profile.js";
 import { withRoadmapGlobalCoordination } from "./roadmap.js";
-import type { FrameworkManifest, SystemRecord, WorkspaceLayout } from "./schemas/index.js";
-import { toPosixPath } from "./serialization.js";
+import type {
+  FrameworkManifest,
+  SystemRecord,
+  SystemsRegistry,
+  WorkspaceLayout,
+} from "./schemas/index.js";
+import { stringifySortedJson, toPosixPath } from "./serialization.js";
+import { getSourceAdoption, listSourceAdoptions } from "./source-adoptions.js";
+import { resolveSourceObservation } from "./sources.js";
 import { withSpecGlobalCoordination } from "./spec.js";
-import { defaultSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
+import { requireSystemsRegistry, saveSystemsRegistry } from "./systems-registry.js";
 import { withWorkspaceConversionCoordination } from "./tasks/task-storage.js";
 import { nowIso } from "./time.js";
 
@@ -35,6 +43,154 @@ export interface ConvertOverlayOptions {
   readonly move?: boolean;
   readonly keepOverlay?: boolean;
   readonly now?: Date;
+}
+
+interface ConversionSemanticPreflight {
+  readonly sourceRoot: string;
+  readonly targetRoot: string;
+  readonly sourceLayout: WorkspaceLayout;
+  readonly targetLayout: WorkspaceLayout;
+  readonly sourceRegistry: SystemsRegistry;
+  readonly additionalWorkDirectories: readonly string[];
+}
+
+async function preflightConversionSemantics(
+  input: ConversionSemanticPreflight,
+): Promise<SystemsRegistry> {
+  const systems = Object.fromEntries(
+    Object.entries(input.sourceRegistry.systems).map(([name, record]) => [
+      name,
+      rewriteSystemRecord(record, input),
+    ]),
+  );
+  const targetRegistry: SystemsRegistry = { ...input.sourceRegistry, systems };
+
+  const adoptions = await listSourceAdoptions({ root: input.sourceRoot });
+  for (const entry of adoptions.adoptions) {
+    const { definition } = await getSourceAdoption({
+      root: input.sourceRoot,
+      adoptionId: entry.id,
+    });
+    await resolveSourceObservation({
+      root: input.sourceRoot,
+      alias: definition.source.alias,
+      observation: definition.source.observation,
+    });
+    for (const target of definition.targets) {
+      const sourceSystem = input.sourceRegistry.systems[target.system];
+      const targetSystem = targetRegistry.systems[target.system];
+      if (!sourceSystem || !targetSystem) {
+        throw new FrameworkError(
+          `source adoption '${definition.id}' targets unknown system '${target.system}'`,
+        );
+      }
+      const current = path.resolve(input.sourceRoot, sourceSystem.path);
+      let info: Stats;
+      try {
+        info = await lstat(current);
+      } catch {
+        throw new FrameworkError(
+          `source adoption '${definition.id}' target system '${target.system}' does not resolve before conversion: ${sourceSystem.path}`,
+        );
+      }
+      if (!info.isDirectory() || info.isSymbolicLink()) {
+        throw new FrameworkError(
+          `source adoption '${definition.id}' target system '${target.system}' is not a real directory: ${sourceSystem.path}`,
+        );
+      }
+      const predicted = predictedConvertedSystemAbsolutePath(sourceSystem, targetSystem, input);
+      if (!predicted) {
+        throw new FrameworkError(
+          `source adoption '${definition.id}' target system '${target.system}' cannot preserve its semantic path during conversion`,
+        );
+      }
+    }
+  }
+  return targetRegistry;
+}
+
+function rewriteSystemRecord(
+  record: SystemRecord,
+  input: ConversionSemanticPreflight,
+): SystemRecord {
+  const relayout = relayoutWorkPath(
+    toPosixPath(record.path),
+    input.sourceLayout,
+    input.targetLayout,
+    input.additionalWorkDirectories,
+  );
+  const rewrittenPath =
+    relayout !== toPosixPath(record.path)
+      ? relayout
+      : toPosixPath(path.relative(input.targetRoot, path.resolve(input.sourceRoot, record.path))) ||
+        ".";
+  const contractFile = record.contract_file
+    ? relayoutWorkPath(
+        toPosixPath(record.contract_file),
+        input.sourceLayout,
+        input.targetLayout,
+        input.additionalWorkDirectories,
+      )
+    : null;
+  return { ...record, path: rewrittenPath, contract_file: contractFile };
+}
+
+function predictedConvertedSystemAbsolutePath(
+  source: SystemRecord,
+  target: SystemRecord,
+  input: ConversionSemanticPreflight,
+): string | null {
+  const current = path.resolve(input.sourceRoot, source.path);
+  const predicted = path.resolve(input.targetRoot, target.path);
+  const relayout = relayoutWorkPath(
+    toPosixPath(source.path),
+    input.sourceLayout,
+    input.targetLayout,
+    input.additionalWorkDirectories,
+  );
+  if (relayout !== toPosixPath(source.path)) return predicted;
+  return path.normalize(predicted) === path.normalize(current) ? predicted : null;
+}
+
+async function rewriteCurrentSourceSemanticPaths(
+  targetRoot: string,
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetLayout: WorkspaceLayout,
+): Promise<void> {
+  const targetSources = workspacePath(targetRoot, targetLayout, "sources");
+  if (!(await exists(targetSources))) return;
+  const sourceSources = workspacePath(sourceRoot, sourceLayout, "sources");
+  for (const entry of await readdir(targetSources, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const targetEntry = path.join(targetSources, entry.name);
+    const sourceEntry = path.join(sourceSources, entry.name);
+    const observations = path.join(targetEntry, "observations");
+    if (await exists(observations)) {
+      for (const file of await readdir(observations, { withFileTypes: true })) {
+        if (!file.isFile() || !file.name.endsWith(".yaml")) continue;
+        const absolute = path.join(observations, file.name);
+        const parsed = parseYaml(await readFile(absolute, "utf8")) as Record<string, unknown>;
+        parsed.source_path = toPosixPath(path.relative(targetRoot, targetEntry));
+        await writeFile(absolute, stringifyYaml(parsed), "utf8");
+      }
+    }
+    const manifests = path.join(targetEntry, "manifests");
+    if (await exists(manifests)) {
+      for (const file of await readdir(manifests, { withFileTypes: true })) {
+        if (!file.isFile() || !file.name.endsWith(".json")) continue;
+        const absolute = path.join(manifests, file.name);
+        const parsed = JSON.parse(await readFile(absolute, "utf8")) as Record<string, unknown>;
+        if (typeof parsed.root === "string") {
+          const relative = path.relative(sourceEntry, parsed.root);
+          if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+            parsed.root = path.resolve(targetEntry, relative);
+          }
+        }
+        await writeFile(absolute, stringifySortedJson(parsed), "utf8");
+      }
+    }
+  }
 }
 
 export interface ConvertOverlayResult {
@@ -52,7 +208,7 @@ export interface ConvertOverlayResult {
 }
 
 /** Work areas hoisted out of `.assay/` when detaching an overlay. */
-const OVERLAY_WORK_AREAS = ["references", "analyses", "knowledge"] as const;
+const OVERLAY_WORK_AREAS = ["sources", "analyses", "knowledge"] as const;
 
 /**
  * Work folders that live under the work root without a `layout.paths` key, so
@@ -68,7 +224,7 @@ const OVERLAY_WORK_DIRECTORIES = ["project", "tasks"] as const;
  * contracts directory, which is relocated separately from the work folders.
  */
 const RELOCATED_PATH_KEYS = [
-  "references",
+  "sources",
   "analyses",
   "knowledge",
   "systems_contracts",
@@ -193,7 +349,17 @@ async function convertOverlayToStandaloneLocked(
       !OVERLAY_WORK_DIRECTORIES.includes(directory as (typeof OVERLAY_WORK_DIRECTORIES)[number]) &&
       directory !== "systems",
   );
+  await assertSourceAdoptionStoreTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   const systemName = sourceManifest.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const sourceRegistry = await requireSystemsRegistry(sourceRoot);
+  const targetRegistry = await preflightConversionSemantics({
+    sourceRoot,
+    targetRoot,
+    sourceLayout,
+    targetLayout,
+    sourceRegistry,
+    additionalWorkDirectories,
+  });
   const targetExists = await exists(targetRoot);
   await assertTaskContextTransferSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
   await assertTaskTransferPathsSafe(sourceRoot, sourceLayout, targetRoot, targetLayout);
@@ -271,6 +437,7 @@ async function convertOverlayToStandaloneLocked(
       await copyOrMoveDir(from, to, move);
     }
   }
+  await rewriteCurrentSourceSemanticPaths(targetRoot, sourceRoot, sourceLayout, targetLayout);
 
   for (const directory of OVERLAY_WORK_DIRECTORIES) {
     const from = path.join(sourceRoot, workspaceWorkRelativePath(sourceLayout, directory));
@@ -326,44 +493,14 @@ async function convertOverlayToStandaloneLocked(
   };
   await saveManifest(targetRoot, targetManifest);
 
-  // Register the original product repo as the primary independent system.
-  // Use a real relative path so the sibling product repo is referenced
-  // portably (e.g. ../attach-smoke). relativeDisplayPath falls back to
-  // absolute when the path leaves the root, which we do not want here.
-  const relativeSourcePath = toPosixPath(path.relative(targetRoot, sourceRoot));
-  const registry = defaultSystemsRegistry();
-  const systemRecord: SystemRecord = {
-    name: systemName,
-    path: relativeSourcePath,
-    status: "primary",
-    vcs: "independent-git",
-    vcs_ref: "",
-    version: "0.1.0",
-    contract_file: `${MANAGED_DIR}/systems/${systemName}.yaml`,
-    supersedes: [],
-    absorbed_on: nowIso(now).slice(0, 10),
-    archived_on: null,
-    archive_path: null,
-  };
-  registry.systems[systemName] = systemRecord;
-  registry.primary = systemName;
-  await saveSystemsRegistry(targetRoot, registry);
-
-  // Write the sidecar contract for the original repo.
-  const contractPath = path.join(targetRoot, MANAGED_DIR, "systems", `${systemName}.yaml`);
-  await mkdir(path.dirname(contractPath), { recursive: true });
-  await writeFile(
-    contractPath,
-    [
-      `name: ${systemName}`,
-      "kind: primary-system",
-      `path: ${relativeSourcePath}`,
-      "vcs: independent-git",
-      "notes: Original product repository detached from overlay into this standalone workbench.",
-      "",
-    ].join("\n"),
-    "utf8",
-  );
+  await saveSystemsRegistry(targetRoot, targetRegistry);
+  const primaryName = targetRegistry.primary;
+  const systemRecord =
+    (primaryName ? targetRegistry.systems[primaryName] : undefined) ??
+    targetRegistry.systems[systemName];
+  if (!systemRecord) {
+    throw new FrameworkError("converted systems registry has no primary system");
+  }
 
   const eventFile = await appendEvent(
     targetRoot,
@@ -372,7 +509,7 @@ async function convertOverlayToStandaloneLocked(
       from: sourceRoot,
       to: targetRoot,
       mode: "standalone",
-      primary_system: systemName,
+      primary_system: systemRecord.name,
       moved: move,
     },
     now,
@@ -610,6 +747,66 @@ async function assertRealDirectoryTree(directory: string, label: string): Promis
       await assertRealDirectoryTree(entryPath, label);
     }
   }
+}
+
+/**
+ * The codec-stable Source adoption store is opaque conversion state. Validate
+ * its complete physical tree before semantic readers or target creation so
+ * `cp` cannot follow a redirect outside either workspace. Unknown ordinary
+ * files and directories remain portable; only redirects and special entries
+ * are rejected. `.lock` files are validated here but remain excluded from the
+ * transferred store by copyOrMoveDirWithoutLocks.
+ */
+async function assertSourceAdoptionStoreTransferSafe(
+  sourceRoot: string,
+  sourceLayout: WorkspaceLayout,
+  targetRoot: string,
+  targetLayout: WorkspaceLayout,
+): Promise<void> {
+  const sourceStore = path.join(sourceRoot, sourceLayout.state_root, "donors");
+  if (await assertRealDirectory(sourceStore, "source Source adoption receipt store", true)) {
+    await assertContainedRealTree(sourceStore, "source Source adoption receipt store");
+  }
+
+  const targetStore = path.join(targetRoot, targetLayout.state_root, "donors");
+  const targetAncestor = await nearestExistingAncestor(targetStore);
+  await assertRealDirectory(targetAncestor, "Source adoption target ancestor", false);
+  if (await assertRealDirectory(targetStore, "target Source adoption receipt store", true)) {
+    await assertContainedRealTree(targetStore, "target Source adoption receipt store");
+  }
+}
+
+async function assertContainedRealTree(directory: string, label: string): Promise<void> {
+  const realRoot = await realpath(directory);
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    const stats = await lstat(entryPath);
+    if (stats.isSymbolicLink()) {
+      throw new FrameworkError(
+        `${label} contains a symlink, junction, or reparse point: ${entryPath}`,
+      );
+    }
+    const entryRealPath = await realpath(entryPath);
+    if (!isContainedRealPath(realRoot, entryRealPath)) {
+      throw new FrameworkError(`${label} entry resolves outside its store: ${entryPath}`);
+    }
+    if (stats.isDirectory()) {
+      await assertRealDirectory(entryPath, label, false);
+      await assertContainedRealTree(entryPath, label);
+      continue;
+    }
+    if (!stats.isFile()) {
+      throw new FrameworkError(`${label} contains a non-regular entry: ${entryPath}`);
+    }
+  }
+}
+
+function isContainedRealPath(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
 }
 
 async function transferStateRootFiles(

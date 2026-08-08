@@ -1,14 +1,16 @@
 # Study archetype: source absorption is the main product.
 # It keeps the shared core, the four-way analyses split, and the learning-mode
-# frozen-reference outlet. Solve intake/problem/attempt structures are not part
+# Source outlet. Solve intake/problem/attempt structures are not part
 # of this archetype.
 
 extends: base
 mode: learning
 
-description: Absorb external systems as the main product, converting what survives analysis into reusable knowledge.
+description: Study external systems as the main product, converting what survives analysis into reusable knowledge.
 
 dirs:
+  - path: sources
+    purpose: Living and frozen external evidence
   - path: analyses/references
     purpose: Analysis cards for external systems
   - path: analyses/gaps
@@ -18,19 +20,16 @@ dirs:
   - path: analyses/templates
     purpose: Blank analysis forms
 
-dirs_learning:
-  - path: references/frozen
-    purpose: Read-only full captures of external systems, by month
+dirs_learning: []
 
 dirs_absorption: []
 
 templates:
-  - { path: "references/README.md", templateId: "references.readme" }
-  - { path: "references/frozen/README.md", templateId: "references.frozen.readme" }
+  - { path: "sources/README.md", templateId: "sources.readme" }
   - { path: "analyses/README.md", templateId: "analyses.readme" }
   - { path: "analyses/references/.gitkeep", templateId: "analyses.references.gitkeep" }
   - { path: "analyses/gaps/.gitkeep", templateId: "analyses.gaps.gitkeep" }
   - { path: "analyses/patterns/.gitkeep", templateId: "analyses.patterns.gitkeep" }
-  - { path: "analyses/templates/reference-analysis-card.md", templateId: "analysis.template.reference" }
+  - { path: "analyses/templates/source-analysis-card.md", templateId: "analysis.template.source" }
   - { path: "analyses/templates/gap-analysis.md", templateId: "analysis.template.gap" }
   - { path: "analyses/templates/pattern-card.md", templateId: "analysis.template.pattern" }

@@ -138,16 +138,12 @@ function templateContentById(
     case "analyses.gaps.gitkeep":
     case "analyses.patterns.gitkeep":
       return "";
-    case "references.readme":
-      return referencesReadme();
-    case "references.intake.readme":
-      return referencesIntakeReadme();
-    case "references.frozen.readme":
-      return referencesFrozenReadme();
+    case "sources.readme":
+      return sourcesReadme();
     case "analyses.readme":
       return analysesReadme();
-    case "analysis.template.reference":
-      return referenceAnalysisTemplate();
+    case "analysis.template.source":
+      return sourceAnalysisTemplate();
     case "analysis.template.gap":
       return gapAnalysisTemplate();
     case "analysis.template.pattern":
@@ -251,51 +247,39 @@ export function migrationsReadme(): string {
   return "# migrations/\n\nHuman-readable migration plans and generated migration logs.\n";
 }
 
-export function referencesReadme(): string {
+export function sourcesReadme(): string {
   return dedent(`
-    # references/
+    # sources/
 
-    Store external systems here. References are evidence inputs, not local implementations.
+    Store external systems here. Sources are evidence inputs, not local implementations.
 
-    - \`<source>/\`: living source card with \`source.yaml\`, current \`checkout/\`, bounded \`materials/\`, \`history.md\`, and the observation ledger (\`observations/\`, \`manifests/\`, \`comparisons/\`, \`captures/\`).
-    - \`frozen/YYYYMM/<name>/\`: legacy or explicit full-capture snapshots, default read-only.
+    - \`<source>/\`: one Source with explicit \`mode: living|frozen\`, \`source.yaml\`, bounded \`materials/\`, and the observation ledger (\`observations/\`, \`manifests/\`, \`captures/\`).
+    - Living Sources may sync or switch; frozen Sources are immutable and always use archive capture.
     `);
-}
-
-export function referencesIntakeReadme(): string {
-  return "# references/intake/\n\nCandidate references, search coverage, and intake decisions.\n";
-}
-
-export function referencesFrozenReadme(): string {
-  return "# references/frozen/\n\nLegacy and explicit full-capture external systems by month. Prefer `assay source add` for living sources that should be synced over time.\n";
-}
-
-export function monthReferenceIndex(month: string): string {
-  return `# references/frozen/${month}\n\n| Name | Source | Commit/version | Freeze mode | Analysis |\n| --- | --- | --- | --- | --- |\n`;
 }
 
 export function analysesReadme(): string {
   return dedent(`
     # analyses/
 
-    Analysis is the conversion layer from external references to local decisions.
+    Analysis is the conversion layer from external Sources to local decisions.
 
     | Subdir | Purpose |
     | --- | --- |
-    | \`references/\` | Analysis cards for external systems |
+    | \`references/\` | Analysis cards for external systems (retained Analysis subtype) |
     | \`gaps/\` | Gaps between an external system and the current workspace |
     | \`patterns/\` | Candidate reusable patterns that need validation |
     | \`templates/\` | Analysis templates |
     `);
 }
 
-export function referenceAnalysisTemplate(): string {
+export function sourceAnalysisTemplate(): string {
   return dedent(`
-    # Reference Analysis Card
+    # Source Analysis Card
 
-    - Reference:
-    - Source:
-    - Freeze path:
+    - Source alias:
+    - Source observation:
+    - Source materials:
     - Date:
 
     ## Problem it solves
@@ -386,8 +370,8 @@ export function artifactModelDoc(): string {
 
     | Artifact | Path | Exit |
     | --- | --- | --- |
-    | Living source | \`references/<source>/\` | sync / delta analysis / revalidation |
-    | Frozen reference | \`references/frozen/YYYYMM/<name>/\` | legacy/full-capture analysis |
+    | Living source | \`sources/<source>/\` | sync / delta analysis / revalidation |
+    | Frozen source | \`sources/<source>/\` | immutable full-capture analysis |
     | Analysis | \`analyses/\` | adopt / reject / experiment |
     | Knowledge entry | \`knowledge/\` | future reuse |
     `);

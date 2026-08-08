@@ -1,7 +1,7 @@
-# Donor Adoption
+# Source Adoption
 
-Assay can remember how selected material from a living source became part of
-one or more registered systems. The donor lifecycle connects source
+Assay can remember how selected material from a Source became part of
+one or more registered systems. The Source adoption lifecycle connects source
 observations, target artifacts, evidence, and decisions without taking control
 of target code or its release process.
 
@@ -21,9 +21,9 @@ not have to reconstruct the relationship from prose.
 
 ## Complete V1 Boundary
 
-Donor Adoption v1 supports:
+Source Adoption v1 supports:
 
-- one living source per adoption definition;
+- one living or frozen Source per adoption definition;
 - one or more independently accepted target systems;
 - source and target locators for code, prompts, schemas, workflows,
   documentation, UI assets, license files, and other artifacts;
@@ -44,12 +44,12 @@ Most adoptions are a single file or folder that landed in a single place. State
 that in one command, without writing a definition file first:
 
 ```bash
-assay donor take readseek:packages/pi-readseek/src/hashline.ts \
+assay source adoption take readseek:packages/pi-readseek/src/hashline.ts \
   --into pipi:packages/pipi-readseek/src/anchor.ts --mode adapt
 ```
 
 `take` synthesizes the definition below and registers it, so the result is an
-ordinary adoption: `donor show`, `donor inspect`, `donor decide`, and the
+ordinary adoption: `source adoption show`, `source adoption inspect`, `source adoption decide`, and the
 `Upstream` section of `assay status` all read it the same way.
 
 - Both arguments are `<name>:<path>`. The name is everything before the **first**
@@ -132,7 +132,7 @@ be declared before target implementation begins.
 Install a later immutable definition revision with:
 
 ```bash
-assay donor update readseek-pipi --file donor.yaml
+assay source adoption update readseek-pipi --file source-adoption.yaml
 ```
 
 Changing the source lineage requires a new adoption ID. Prior definitions and
@@ -160,7 +160,7 @@ non-Git, and in-progress targets alike.
 
 ## Inspection Facts
 
-`assay donor inspect` captures an immutable inspection. `assay donor status`
+`assay source adoption inspect` captures an immutable inspection. `assay source adoption status`
 computes the same facts without writing a record.
 
 Each mapping reports source and target facts independently:
@@ -215,16 +215,16 @@ Inspection and verification are useful tools, not mandatory steps.
 
 ```bash
 # Capture an inspection for review or evidence attachment.
-assay donor inspect readseek-pipi --target pipi
+assay source adoption inspect readseek-pipi --target pipi
 
 # Attach evidence to that inspection.
-assay donor evidence add readseek-pipi <inspection-id> --file evidence.yaml
+assay source adoption evidence add readseek-pipi <inspection-id> --file evidence.yaml
 
 # Evaluate freshness and explicitly declared required policy.
-assay donor verify readseek-pipi <inspection-id>
+assay source adoption verify readseek-pipi <inspection-id>
 
 # Decide against an existing inspection.
-assay donor decide readseek-pipi \
+assay source adoption decide readseek-pipi \
   --target pipi \
   --outcome accept \
   --inspection <inspection-id> \
@@ -234,9 +234,9 @@ assay donor decide readseek-pipi \
 For low-ceremony work, decide directly:
 
 ```bash
-assay donor decide readseek-pipi --target pipi --outcome accept
-assay donor decide readseek-pipi --target pipi --outcome reject --reason "Not applicable"
-assay donor decide readseek-pipi --target pipi --outcome defer --reason "Review next cycle"
+assay source adoption decide readseek-pipi --target pipi --outcome accept
+assay source adoption decide readseek-pipi --target pipi --outcome reject --reason "Not applicable"
+assay source adoption decide readseek-pipi --target pipi --outcome defer --reason "Review next cycle"
 ```
 
 A direct decision captures a fresh inspection inside the decision operation.
@@ -251,7 +251,7 @@ Assay does not restore target files. After a target project restores mapped
 artifacts outside Assay, record the result:
 
 ```bash
-assay donor rollback record readseek-pipi \
+assay source adoption rollback record readseek-pipi \
   --to-decision <prior-accepted-decision> \
   --reason "External rollback completed"
 ```
@@ -262,7 +262,10 @@ unchanged.
 
 ## Storage And Integrity
 
-State is created lazily:
+State is created lazily. The on-disk `.assay/donors` path and
+`assay.donor-*/v1` schema tokens are codec-stable internal serialization: they
+form a Source-owned operational receipt store, not a public product entity or
+command namespace.
 
 ```text
 .assay/donors/<adoption-id>/
@@ -285,15 +288,15 @@ If an interrupted run left a record behind that `state.json` never came to
 reference, re-running replaces it. A record that committed history does point at
 is never rewritten.
 
-`assay check` validates only donor persistence integrity. Ordinary upstream
+`assay check` validates only Source adoption receipt integrity. Ordinary upstream
 changes, target drift, dirty targets, and advisory evidence gaps do not become
 global workspace warnings. Each reported problem names the record file that
 failed, and a record outside committed history is reported without invalidating
 the rest of the adoption. `assay status` shows only compact adoption and
-baseline counts. Use `assay donor status <adoption>` for live relationship
+baseline counts. Use `assay source adoption status <adoption>` for live relationship
 details.
 
-A donor command that dies mid-operation can leave its adoption lock in place.
+A Source adoption command that dies mid-operation can leave its adoption lock in place.
 The next command reclaims a lock whose holder is gone, and reclaims one whose
 holder cannot be confirmed — an interrupted acquisition, another host, a
 pre-reboot process ID — once it is a minute old. A lock whose holder is
@@ -316,17 +319,17 @@ local changes explicitly, then run the source command again.
 ## Command Reference
 
 ```text
-assay donor register --file <definition.json|yaml> [--json]
-assay donor update <adoption> --file <definition.json|yaml> [--json]
-assay donor list [--json]
-assay donor show <adoption> [--json]
-assay donor status [adoption] [--target <id>] [--json]
-assay donor inspect <adoption> --target <id> [--to <observation>] [--json]
-assay donor evidence add <adoption> <inspection> --file <evidence.json|yaml> [--json]
-assay donor verify <adoption> <inspection> [--json]
-assay donor decide <adoption> --target <id> --outcome accept|reject|defer
+assay source adoption register --file <definition.json|yaml> [--json]
+assay source adoption update <adoption> --file <definition.json|yaml> [--json]
+assay source adoption list [--json]
+assay source adoption show <adoption> [--json]
+assay source adoption status [adoption] [--target <id>] [--json]
+assay source adoption inspect <adoption> --target <id> [--to <observation>] [--json]
+assay source adoption evidence add <adoption> <inspection> --file <evidence.json|yaml> [--json]
+assay source adoption verify <adoption> <inspection> [--json]
+assay source adoption decide <adoption> --target <id> --outcome accept|reject|defer
   [--inspection <id>] [--to <observation>] [--reason <text>] [--json]
-assay donor history <adoption> [--target <id>] [--json]
-assay donor rollback record <adoption> --to-decision <id>
+assay source adoption history <adoption> [--target <id>] [--json]
+assay source adoption rollback record <adoption> --to-decision <id>
   [--reason <text>] [--json]
 ```

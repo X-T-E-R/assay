@@ -1,6 +1,6 @@
 # Commands
 
-Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`. Pass `--root <dir>` to operate on another workspace. Any workspace outside the exact `0.9.0+s3+l6` envelope fails closed with a cutover locator and requires a separate external tool.
+Run workspace commands from inside an Assay workspace. Commands discover the workspace by looking for `.assay/manifest.json`. Pass `--root <dir>` to operate on another workspace. Any workspace outside the exact `0.10.0+s3+l7` envelope fails closed with a cutover locator and requires a separate external tool.
 
 ## Workspace lifecycle
 
@@ -27,11 +27,11 @@ plugin later with an explicit `assay plugin ...` command.
 If `AGENTS.md` contains incomplete `<!-- ASSAY:START -->` / `<!-- ASSAY:END -->` markers, Assay leaves the file unchanged and reports the malformed block so you can fix or remove it manually.
 
 `assay check` validates required structure, registries, managed-file state,
-source observation integrity, and donor persistence. It exits non-zero
+source observation integrity, and Source adoption receipt. It exits non-zero
 only for missing required structure or invalid persisted state. Add
 `--advisories` to request non-blocking workflow reminders such as unfinished
 draft analyses, pending queue entries, lingering
-adoption archives, frozen references with no `reference.yaml`, and major source
+adoption archives, incomplete Analysis drafts, and major Source
 changes that have not been re-reviewed.
 
 `--advisories` also reports placement: a top-level directory the archetype does
@@ -49,13 +49,13 @@ emits the same data, zones and purposes included.
 
 ### Upstream drift in `status`
 
-When the workspace has living sources, `status` adds an `Upstream` section
+When the workspace has living Sources, `status` adds an `Upstream` section
 answering the two questions a source exists to raise — did it move, and does
 that reach anything adopted from it:
 
 ```text
 Upstream
-  - qwen-agent   3 new upstream commits   affects 2 donor mappings
+  - qwen-agent   3 new upstream commits   affects 2 Source adoption mappings
   - langgraph    local checkout modified (1 uncommitted file); not recorded — preserve or discard it before the next sync
   - autogen      no change
 Next: assay source sync qwen-agent
@@ -70,7 +70,7 @@ Next: assay source sync qwen-agent
 - `--fetch` also compares the remote tip. Failures — offline, expired
   credentials, a deleted remote — annotate that source with `upstream not
   checked this run` and leave the exit code at 0.
-- When donor adoptions exist, the changed paths are intersected with their
+- When Source adoptions exist, the changed paths are intersected with their
   source locators, so the line says how many adopted mappings the change
   reaches.
 - `Next:` appears only for an upstream move, which is the case `source sync`
@@ -366,7 +366,7 @@ cd /path/to/existing-repo
 assay convert --to standalone --target ../existing-repo-assay
 ```
 
-The new workbench hoists `.assay/references` to `references`,
+The new workbench hoists `.assay/sources` to `sources`,
 `.assay/analyses` to `analyses`, `.assay/tasks` to `tasks`,
 `.assay/project` to `project`, and so on. Assay state travels
 with it, including `.assay/task-contexts.json` and the legacy
@@ -374,8 +374,9 @@ with it, including `.assay/task-contexts.json` and the legacy
 
 Task and native Project directories are copied or moved without merging.
 Conversion refuses a non-empty target `tasks/` or `project/` before
-writing any target state. The original product repo is registered as the
-primary independent system by relative path (`../existing-repo`).
+writing any target state. The complete systems registry is rewritten so every
+Source-adoption target keeps resolving to the same System; conversion fails
+before target writes rather than dropping a secondary target.
 
 Use `--move` to move instead of copy. `--no-keep-overlay` removes the emptied
 `.assay/` from the source and requires `--move`; with a copy the overlay still
@@ -387,53 +388,43 @@ are never modified.
 ## Sources, analyses, and knowledge
 
 ```bash
-assay source add <repo-or-dir> [alias] [--root <dir>] [--branch <branch>] [--capture checkout|archive]
+assay source add <repo-or-dir> [alias] [--root <dir>] [--mode living|frozen] [--branch <branch>] [--capture checkout|archive]
 assay source sync [alias] [--root <dir>] [--branch <branch>] [--ref <ref>] [--class same|patch|normal|major|replacement]
 assay source switch <alias> <branch-or-ref> [--root <dir>] [--sync]
 assay source status [alias] [--root <dir>]
 assay source diff <alias> [--root <dir>] [--since <observation>]
 assay source log <alias> [--root <dir>]
-assay absorb <source-dir> [--name <name>] [--root <dir>] [--as problem|intake]
-assay reference add <source-dir> <name> [--root <dir>]
-assay reference backfill <path> [--source <origin>] [--root <dir>]
-assay analysis new <title> [--root <dir>] [--for-source <alias>] [--observation <id-or-path>] [--for-reference <path>]
+assay analysis new <title> [--root <dir>] [--for-source <alias>] [--observation <id-or-path>]
 assay analysis close <path> --exit adopt|reject|experiment [--note <note>] [--root <dir>]
 assay event capture --kind observation|analysis|decision|gotcha|note --text <text> [--root <dir>]
 assay knowledge add <type> <title> [--from-analysis <path>] [--root <dir>]
 ```
 
-Each living source stores its observation ledger flat under `references/<alias>/` as `observations/`, `manifests/`, `comparisons/`, and `captures/`.
+Every Source stores its observation ledger under `sources/<alias>/` as `observations/`, `manifests/`, and `captures/`. `mode: frozen` forces archive capture and rejects sync or switch. Diffs are derived from manifests; Assay does not persist comparison or history documents.
 
-`analysis close` records the caller's explicit exit, updates bound source
-metadata, and writes an event. It does not block on section-content heuristics.
+`analysis close` records the caller's explicit exit and writes an event. Source
+observations remain immutable; Analysis owns its own lifecycle state.
 Use `assay check --advisories` before closing when unfinished-draft reminders
 are useful.
 
-`reference add` writes a `reference.yaml` recording where the frozen material
-came from and when. `reference backfill` writes that file for a frozen
-directory that has none — a freeze made by hand, or by a version of Assay that
-predates the case file. It never overwrites provenance that is already there,
-and `check --advisories` prints the exact command for each directory missing
-one.
+## Source adoption
 
-## Donor adoption
-
-Use donor commands when selected material from a living source has been
+Use Source adoption commands when selected material from a living Source has been
 implemented, adapted, or otherwise carried into a registered target system:
 
 ```bash
-assay donor take <alias>:<source-path> --into <system>:<target-path> [--mode adapt|copy] [--to <observation>] [--id <adoption-id>] [--title <title>] [--root <dir>] [--json]
-assay donor register --file <definition.json|yaml> [--root <dir>] [--json]
-assay donor update <adoption> --file <definition.json|yaml> [--root <dir>] [--json]
-assay donor list [--root <dir>] [--json]
-assay donor show <adoption> [--root <dir>] [--json]
-assay donor status [adoption] [--target <id>] [--root <dir>] [--json]
-assay donor inspect <adoption> --target <id> [--to <observation>] [--root <dir>] [--json]
-assay donor evidence add <adoption> <inspection> --file <evidence.json|yaml> [--root <dir>] [--json]
-assay donor verify <adoption> <inspection> [--root <dir>] [--json]
-assay donor decide <adoption> --target <id> --outcome accept|reject|defer [--inspection <id>] [--to <observation>] [--reason <text>] [--root <dir>] [--json]
-assay donor history <adoption> [--target <id>] [--root <dir>] [--json]
-assay donor rollback record <adoption> --to-decision <id> [--reason <text>] [--root <dir>] [--json]
+assay source adoption take <alias>:<source-path> --into <system>:<target-path> [--mode adapt|copy] [--to <observation>] [--id <adoption-id>] [--title <title>] [--root <dir>] [--json]
+assay source adoption register --file <definition.json|yaml> [--root <dir>] [--json]
+assay source adoption update <adoption> --file <definition.json|yaml> [--root <dir>] [--json]
+assay source adoption list [--root <dir>] [--json]
+assay source adoption show <adoption> [--root <dir>] [--json]
+assay source adoption status [adoption] [--target <id>] [--root <dir>] [--json]
+assay source adoption inspect <adoption> --target <id> [--to <observation>] [--root <dir>] [--json]
+assay source adoption evidence add <adoption> <inspection> --file <evidence.json|yaml> [--root <dir>] [--json]
+assay source adoption verify <adoption> <inspection> [--root <dir>] [--json]
+assay source adoption decide <adoption> --target <id> --outcome accept|reject|defer [--inspection <id>] [--to <observation>] [--reason <text>] [--root <dir>] [--json]
+assay source adoption history <adoption> [--target <id>] [--root <dir>] [--json]
+assay source adoption rollback record <adoption> --to-decision <id> [--reason <text>] [--root <dir>] [--json]
 ```
 
 `take` covers the common case — one source path carried into one system path —
@@ -449,9 +440,10 @@ it reach this adoption" without any inspection at all. Evidence is advisory by
 default and blocks `accept` only when the definition explicitly marks it
 `required`.
 
-Donor records live under `.assay/donors/`. They do not edit target files,
-execute target tests, create commits, or restore revisions. See
-[Donor Adoption](donor-adoption.md) for the definition schema, baseline model,
+The Source-owned operational receipt store retains the codec-stable internal
+path `.assay/donors/`; this is not a public entity or command namespace. These
+operations do not edit target files, execute target tests, create commits, or restore revisions. See
+[Source Adoption](source-adoption.md) for the definition schema, baseline model,
 and integrity behavior.
 
 

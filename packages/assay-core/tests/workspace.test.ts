@@ -12,12 +12,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MANIFEST_FILE,
-  absorbReference,
   addKnowledge,
-  addReference,
   addSource,
   attachExistingRepo,
-  backfillReferenceCaseFile,
   captureEvent,
   checkFramework,
   closeAnalysis,
@@ -328,7 +325,7 @@ describe("checkFramework and getFrameworkStatus", () => {
       "project",
       "systems",
       "knowledge",
-      "references",
+      "sources",
       "analyses",
     ]);
     expect(solve.zones.find((zone) => zone.path === "problem")?.purpose).toBe(
@@ -344,12 +341,7 @@ describe("checkFramework and getFrameworkStatus", () => {
     const studyZones = study.zones.map((zone) => zone.path);
 
     expect(studyZones).toEqual(
-      expect.arrayContaining([
-        "analyses/references",
-        "analyses/patterns",
-        "references/frozen",
-        "knowledge",
-      ]),
+      expect.arrayContaining(["analyses/references", "analyses/patterns", "sources", "knowledge"]),
     );
     expect(studyZones.some((zone) => zone.startsWith("problem"))).toBe(false);
     expect(study.zones.every((zone) => zone.purpose !== "")).toBe(true);
@@ -564,29 +556,6 @@ describe("checkFramework semantic validation", () => {
     );
   });
 
-  it("reports a frozen reference only for missing provenance, not for missing citations", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-
-    // A properly frozen reference no analysis mentions. Nothing to report:
-    // whether a reference was read is not something the tool can observe.
-    const frozen = await addReference({ root, source, name: "Lonely Ref" });
-    // A hand-made freeze with no case file: real, checkable, and reported.
-    await mkdir(path.join(root, "references", "frozen", "202606", "handmade"), {
-      recursive: true,
-    });
-
-    const result = await checkFramework({ root, includeAdvisories: true });
-
-    expect(result.rows.filter((row) => row.path === frozen.path)).toEqual([]);
-    expect(
-      result.rows.find((row) => row.path === "references/frozen/202606/handmade"),
-    ).toMatchObject({ status: "warning" });
-  });
-
   it("warns on a draft analysis with empty Key observations", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
@@ -594,7 +563,7 @@ describe("checkFramework semantic validation", () => {
     // A draft analysis whose Key observations section is empty.
     await writeFile(
       path.join(root, "analyses", "references", "2026-06-20-shell.md"),
-      "# Shell\n\n- Status: draft\n\n## Reference\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Decision exit\n\n- [ ] adopt\n",
+      "# Shell\n\n- Status: draft\n\n## Source\n\n## Key observations\n\n## Adopt\n\n## Reject\n\n## Decision exit\n\n- [ ] adopt\n",
       "utf8",
     );
 
@@ -702,12 +671,11 @@ describe("getFrameworkStatus systems section", () => {
     });
 
     let status = await getFrameworkStatus({ root });
-    expect(status.livingSources).toEqual({
+    expect(status.sources).toEqual({
       total: 1,
-      openObservations: 1,
-      suggestedAnalyses: 0,
-      closedObservations: 0,
-      majorRevalidations: 0,
+      living: 1,
+      frozen: 0,
+      majorChanges: 0,
     });
 
     await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
@@ -719,10 +687,10 @@ describe("getFrameworkStatus systems section", () => {
     });
 
     status = await getFrameworkStatus({ root });
-    expect(status.livingSources).toMatchObject({
+    expect(status.sources).toMatchObject({
       total: 1,
-      openObservations: 1,
-      majorRevalidations: 1,
+      living: 1,
+      majorChanges: 1,
     });
   });
 });
@@ -769,17 +737,15 @@ describe("workspace operations", () => {
     const check = await checkFramework({ root });
 
     expect(analysis.path).toBe(".assay/analyses/references/2026-07-06-overlay-analysis.md");
-    expect(sourceResult.path).toBe(".assay/references/sample");
+    expect(sourceResult.path).toBe(".assay/sources/sample");
     expect(knowledge.path).toBe(".assay/knowledge/patterns/2026-07-06-overlay-pattern.md");
     expect(await exists(path.join(root, "analyses"))).toBe(false);
-    expect(await exists(path.join(root, "references"))).toBe(false);
+    expect(await exists(path.join(root, "sources"))).toBe(false);
     expect(await exists(path.join(root, "knowledge"))).toBe(false);
     expect(await exists(path.join(root, ".assay", "analyses"))).toBe(true);
-    expect(await exists(path.join(root, ".assay", "references", "sample", "source.yaml"))).toBe(
-      true,
-    );
+    expect(await exists(path.join(root, ".assay", "sources", "sample", "source.yaml"))).toBe(true);
     expect(check.ok).toBe(true);
-    expect(check.rows.some((row) => row.path === ".assay/references" && row.status === "ok")).toBe(
+    expect(check.rows.some((row) => row.path === ".assay/sources" && row.status === "ok")).toBe(
       true,
     );
     expect((await git(root, ["status", "--short"])).trim()).toBe("");
@@ -823,245 +789,6 @@ describe("workspace operations", () => {
     }
   });
 
-  it("adds references while ignoring common generated directories and appending an event", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(path.join(source, "src"), { recursive: true });
-    await mkdir(path.join(source, "node_modules", "pkg"), { recursive: true });
-    await mkdir(path.join(source, "dist"), { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-    await writeFile(path.join(source, "src", "index.ts"), "export {};\n", "utf8");
-    await writeFile(
-      path.join(source, "node_modules", "pkg", "index.js"),
-      "module.exports = {};\n",
-      "utf8",
-    );
-    await writeFile(path.join(source, "dist", "bundle.js"), "bundle\n", "utf8");
-
-    const result = await addReference({
-      root,
-      source,
-      name: "Source Project",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    expect(result.path).toBe("references/frozen/202606/source-project");
-    expect(await exists(path.join(result.absolutePath, "README.md"))).toBe(true);
-    expect(await exists(path.join(result.absolutePath, "src", "index.ts"))).toBe(true);
-    expect(await exists(path.join(result.absolutePath, "node_modules"))).toBe(false);
-    expect(await exists(path.join(result.absolutePath, "dist"))).toBe(false);
-    expect(await readFile(path.join(root, result.eventFile), "utf8")).toContain("reference.frozen");
-  });
-
-  it("writes a reference.yaml case file recording provenance on freeze", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-
-    const result = await addReference({
-      root,
-      source,
-      name: "Source Project",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    const yamlPath = path.join(result.absolutePath, "reference.yaml");
-    expect(await exists(yamlPath)).toBe(true);
-    const yaml = await readFile(yamlPath, "utf8");
-    expect(yaml).toContain("name: Source Project");
-    expect(yaml).toContain("freeze_path: references/frozen/202606/source-project");
-    // The removed gate must not come back as a field nothing reads.
-    expect(yaml).not.toContain("analyzed:");
-
-    const event = await readFile(path.join(root, result.eventFile), "utf8");
-    expect(event).toContain('"reference.frozen"');
-    expect(event).not.toContain('"analyzed"');
-  });
-
-  it("createAnalysis --forReference pre-fills provenance from reference.yaml", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-
-    const ref = await addReference({
-      root,
-      source,
-      name: "Source Project",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Source Project",
-      forReference: ref.path,
-      now: new Date("2026-06-15T10:00:00"),
-    });
-
-    const content = await readFile(analysis.absolutePath, "utf8");
-    expect(content).toContain("- Reference: Source Project");
-    expect(content).toContain("- Freeze path: references/frozen/202606/source-project");
-  });
-
-  it("closeAnalysis leaves a bound reference case file untouched", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-
-    const ref = await addReference({
-      root,
-      source,
-      name: "Source Project",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    const yamlPath = path.join(ref.absolutePath, "reference.yaml");
-    const before = await readFile(yamlPath, "utf8");
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Source Project",
-      forReference: ref.path,
-      now: new Date("2026-06-15T10:00:00"),
-    });
-    await fillAnalysisSections(analysis.absolutePath, {
-      key: "- Source Project keeps the useful pattern.",
-      adopt: "- Adopt the pattern.",
-    });
-
-    const closed = await closeAnalysis({
-      root,
-      path: analysis.path,
-      exit: "adopt",
-      now: new Date("2026-06-16T10:00:00"),
-    });
-
-    expect(await readFile(yamlPath, "utf8")).toBe(before);
-    const content = await readFile(analysis.absolutePath, "utf8");
-    expect(content).toContain("- Status: applied");
-    expect(content).not.toContain("- Source analysis status:");
-    expect(await readFile(path.join(root, closed.eventFile), "utf8")).not.toContain(
-      "marked_reference_analyzed",
-    );
-  });
-
-  it("reads a legacy reference.yaml that still carries the removed analyzed flag", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-
-    const ref = await addReference({
-      root,
-      source,
-      name: "Legacy Ref",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    const yamlPath = path.join(ref.absolutePath, "reference.yaml");
-    await writeFile(yamlPath, `${await readFile(yamlPath, "utf8")}analyzed: false\n`, "utf8");
-
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Legacy Ref",
-      forReference: ref.path,
-      now: new Date("2026-06-15T10:00:00"),
-    });
-    const content = await readFile(analysis.absolutePath, "utf8");
-    expect(content).toContain("- Reference: Legacy Ref");
-    expect(content).toContain(`- Freeze path: ${ref.path}`);
-
-    const check = await checkFramework({ root, includeAdvisories: true });
-    expect(check.ok).toBe(true);
-    expect(check.rows.some((row) => row.message?.includes("analyzed"))).toBe(false);
-  });
-
-  it("reports a frozen reference with no case file and names the backfill command", async () => {
-    const root = path.join(await tempDir(), "demo");
-    await initFramework({ target: root, name: "Demo" });
-    const legacyPath = "references/frozen/202512/hand-frozen";
-    await mkdir(path.join(root, legacyPath), { recursive: true });
-    await writeFile(path.join(root, legacyPath, "README.md"), "# Hand frozen\n", "utf8");
-
-    const check = await checkFramework({ root, includeAdvisories: true });
-    const row = check.rows.find((candidate) => candidate.path === legacyPath);
-    expect(row?.status).toBe("warning");
-    expect(row?.message).toContain(`assay reference backfill ${legacyPath}`);
-    // Advisories never fail the check.
-    expect(check.ok).toBe(true);
-
-    const backfilled = await backfillReferenceCaseFile({ root, path: legacyPath });
-    expect(backfilled.created).toBe(true);
-    const yaml = await readFile(path.join(root, backfilled.referenceFile), "utf8");
-    expect(yaml).toContain("name: hand-frozen");
-    expect(yaml).toContain(`freeze_path: ${legacyPath}`);
-
-    const after = await checkFramework({ root, includeAdvisories: true });
-    expect(after.rows.some((candidate) => candidate.path === legacyPath)).toBe(false);
-    // Re-running never overwrites recorded provenance.
-    expect((await backfillReferenceCaseFile({ root, path: legacyPath })).created).toBe(false);
-  });
-
-  it("absorbReference freezes, opens a bound analysis, and pre-fills it", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(source, { recursive: true });
-    await writeFile(
-      path.join(source, "README.md"),
-      "# Source Project\n\nA short description of the source.\n",
-      "utf8",
-    );
-    await mkdir(path.join(source, "src"), { recursive: true });
-    await writeFile(path.join(source, "src", "index.ts"), "export {};\n", "utf8");
-
-    const result = await absorbReference({
-      root,
-      source,
-      name: "Source Project",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    // Reference frozen with a case file.
-    expect(result.referencePath).toBe("references/frozen/202606/source-project");
-    const yaml = await readFile(path.join(root, result.referencePath, "reference.yaml"), "utf8");
-    expect(yaml).toContain("freeze_path: references/frozen/202606/source-project");
-
-    // An analysis was opened and bound.
-    expect(result.analysisPath).toBe("analyses/references/2026-06-14-absorb-source-project.md");
-    const analysis = await readFile(path.join(root, result.analysisPath), "utf8");
-    expect(analysis).toContain("- Freeze path: references/frozen/202606/source-project");
-
-    // The analysis is pre-filled with a README lead and a top-level layout.
-    expect(analysis).toContain("## Architecture / structure");
-    expect(analysis).toContain("A short description of the source.");
-    expect(analysis).toContain("src/");
-    expect(analysis).toContain("README.md");
-
-    // The freeze wrote a case file, so no provenance advisory fires for it.
-    const check = await checkFramework({ root, includeAdvisories: true });
-    expect(
-      check.rows.some(
-        (row) => row.path === result.referencePath && row.message?.includes("no reference.yaml"),
-      ),
-    ).toBe(false);
-  });
-
-  it("absorbReference rejects a file source (expects a directory)", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source.txt");
-    await initFramework({ target: root, name: "Demo" });
-    await writeFile(source, "not a dir\n", "utf8");
-
-    await expect(
-      absorbReference({ root, source, now: new Date("2026-06-14T10:00:00") }),
-    ).rejects.toThrow(/directory source/);
-  });
-
   it("init writes the mode declared by each built-in archetype yaml", async () => {
     const expectedModes = {
       study: "learning",
@@ -1080,73 +807,6 @@ describe("workspace operations", () => {
       });
       expect(await readFrameworkMode(root)).toBe(expectedModes[archetype]);
     }
-  });
-
-  it("absorbReference routes to problem/ (not references/frozen/) in absorption mode", async () => {
-    const root = path.join(await tempDir(), "absorb-mode-ws");
-    const source = path.join(await tempDir(), "absorb-src");
-    await initFramework({ target: root, name: "AbsorbProj", archetype: "solve" });
-    await mkdir(source, { recursive: true });
-    await writeFile(
-      path.join(source, "README.md"),
-      "# Real Project\n\nThe project itself.\n",
-      "utf8",
-    );
-    await mkdir(path.join(source, "src"), { recursive: true });
-
-    const result = await absorbReference({
-      root,
-      source,
-      name: "Real Project",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    // Landed under problem/, not references/frozen/.
-    expect(result.referencePath).toBe("problem/real-project");
-    expect(await exists(path.join(root, "problem", "real-project", "README.md"))).toBe(true);
-    expect(await exists(path.join(root, "problem", "real-project", "source.yaml"))).toBe(true);
-    expect(await exists(path.join(root, "references", "frozen", "202606", "real-project"))).toBe(
-      false,
-    );
-
-    // No reference.yaml (it is not a reference), but an analysis was opened.
-    expect(await exists(path.join(root, "problem", "real-project", "reference.yaml"))).toBe(false);
-    expect(result.analysisPath).toBe("analyses/references/2026-06-14-absorb-real-project.md");
-
-    // The analysis is pre-filled with the README lead.
-    const analysis = await readFile(path.join(root, result.analysisPath), "utf8");
-    expect(analysis).toContain("The project itself.");
-    expect(analysis).toContain("src/");
-  });
-
-  it("absorbReference can route absorption mode to intake/ explicitly", async () => {
-    const root = path.join(await tempDir(), "absorb-intake-ws");
-    const source = path.join(await tempDir(), "intake-src");
-    await initFramework({ target: root, name: "AbsorbIntake", archetype: "solve" });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Candidate\n\nNeeds triage.\n", "utf8");
-
-    const result = await absorbReference({
-      root,
-      source,
-      name: "Candidate Source",
-      outlet: "intake",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    expect(result.referencePath).toBe("intake/candidate-source");
-    expect(await exists(path.join(root, "intake", "candidate-source", "README.md"))).toBe(true);
-    expect(await exists(path.join(root, "intake", "candidate-source", "source.yaml"))).toBe(true);
-    expect(await exists(path.join(root, "problem", "candidate-source"))).toBe(false);
-    expect(
-      await exists(path.join(root, "references", "frozen", "202606", "candidate-source")),
-    ).toBe(false);
-
-    const sourceYaml = await readFile(
-      path.join(root, "intake", "candidate-source", "source.yaml"),
-      "utf8",
-    );
-    expect(sourceYaml).toContain("absorb_path: intake/candidate-source");
   });
 
   it("solve archetype scaffolds problem/ + intake/benchmarks/attempts + tools", async () => {
@@ -1168,7 +828,7 @@ describe("workspace operations", () => {
 
     // Solve does not inherit study analyses or frozen-reference outlets.
     expect(await exists(path.join(root, "analyses"))).toBe(false);
-    expect(await exists(path.join(root, "references"))).toBe(false);
+    expect(await exists(path.join(root, "sources"))).toBe(false);
     expect(await exists(path.join(root, ".assay", ["hand", "offs"].join("")))).toBe(false);
 
     // Mode + archetype are manifest-owned.
@@ -1306,38 +966,6 @@ describe("workspace operations", () => {
     }
   });
 
-  it("allows explicit event capture while internal audit events still write", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await writeBareArchetype(root);
-    await initFramework({ target: root, name: "Demo", archetype: BARE_ARCHETYPE });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n\nUseful material.\n", "utf8");
-
-    const captured = await captureEvent({
-      root,
-      kind: "note",
-      text: "Captured from test",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    expect(captured.eventFile).toBe(".assay/events/2026-06.jsonl");
-
-    const result = await absorbReference({
-      root,
-      source,
-      name: "Source",
-      now: new Date("2026-06-14T10:00:00"),
-    });
-
-    const lines = (await readFile(path.join(root, result.eventFile), "utf8")).trim().split("\n");
-    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
-      event: "reference.absorbed",
-      name: "Source",
-    });
-  });
-});
-
-describe("closeAnalysis", () => {
   it("records an explicit close without mechanically gating analysis content", async () => {
     const root = path.join(await tempDir(), "demo");
     await initFramework({ target: root, name: "Demo" });
@@ -1388,7 +1016,7 @@ describe("closeAnalysis", () => {
     expect(content).toContain("[x] adopt");
   });
 
-  it("closes a living source observation through a bound analysis", async () => {
+  it("keeps a Source observation immutable when a bound Analysis closes", async () => {
     const root = path.join(await tempDir(), "demo");
     const source = path.join(await tempDir(), "source");
     await initFramework({ target: root, name: "Demo" });
@@ -1421,10 +1049,14 @@ describe("closeAnalysis", () => {
     expect(content).toContain(`- Source observation: ${synced.observation?.observation_id}`);
     expect(content).toContain("- Source change class: major");
 
-    const before = await checkFramework({ root, includeAdvisories: true });
-    expect(before.rows.some((row) => row.message?.includes("needs revalidation analysis"))).toBe(
-      true,
+    const observationPath = path.join(
+      root,
+      "sources",
+      "source",
+      "observations",
+      `${synced.observation?.observation_id}.yaml`,
     );
+    const observationBeforeClose = await readFile(observationPath, "utf8");
 
     await fillAnalysisSections(analysis.absolutePath, {
       key: "- The major source change was reviewed.",
@@ -1437,22 +1069,11 @@ describe("closeAnalysis", () => {
       now: new Date("2026-07-01T11:00:00"),
     });
 
-    const observationPath = path.join(
-      root,
-      "references",
-      "source",
-      "observations",
-      `${synced.observation?.observation_id}.yaml`,
-    );
-    content = await readFile(observationPath, "utf8");
-    expect(content).toContain("analysis_status: closed");
-    expect(content).toContain(`analysis_path: ${analysis.path}`);
-    expect(content).toContain("analysis_exit: adopt");
-    const closedObservation = content;
+    expect(await readFile(observationPath, "utf8")).toBe(observationBeforeClose);
 
     content = await readFile(analysis.absolutePath, "utf8");
-    expect(content).toContain("- Source analysis status: closed");
-    expect(content).not.toContain("- Source analysis status: open");
+    expect(content).toContain("- Status: applied");
+    expect(content).not.toContain("Source analysis status:");
 
     await closeAnalysis({
       root,
@@ -1461,48 +1082,7 @@ describe("closeAnalysis", () => {
       now: new Date("2026-07-01T12:00:00"),
     });
     content = await readFile(analysis.absolutePath, "utf8");
-    expect(content.match(/^- Source analysis status: closed$/gm)).toHaveLength(1);
-    expect(await readFile(observationPath, "utf8")).toBe(closedObservation);
-
-    const after = await checkFramework({ root, includeAdvisories: true });
-    expect(after.rows.some((row) => row.message?.includes("needs revalidation analysis"))).toBe(
-      false,
-    );
-  });
-
-  it("does not mark a source-bound analysis closed when source closure fails", async () => {
-    const root = path.join(await tempDir(), "demo");
-    const source = path.join(await tempDir(), "source");
-    await initFramework({ target: root, name: "Demo" });
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
-    const added = await addSource({
-      root,
-      source,
-      alias: "source",
-      now: new Date("2026-07-01T08:00:00"),
-    });
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Source",
-      forSource: "source",
-      now: new Date("2026-07-01T09:00:00"),
-    });
-    await rm(path.join(root, added.observationFile));
-
-    await expect(
-      closeAnalysis({
-        root,
-        path: analysis.path,
-        exit: "adopt",
-        now: new Date("2026-07-01T10:00:00"),
-      }),
-    ).rejects.toThrow("source observation not found");
-
-    const content = await readFile(analysis.absolutePath, "utf8");
-    expect(content).toContain("- Status: draft");
-    expect(content).toContain("- Source analysis status: open");
-    expect(content).not.toContain("- Source analysis status: closed");
+    expect(await readFile(observationPath, "utf8")).toBe(observationBeforeClose);
   });
 });
 

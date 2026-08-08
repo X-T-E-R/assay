@@ -95,7 +95,7 @@ describe("git ref arguments cannot be parsed as git options", () => {
       const target = await payloadTarget("switch-payload.txt");
       const headBefore = (
         await execa("git", ["rev-parse", "HEAD"], {
-          cwd: path.join(root, "references", "gs", "checkout"),
+          cwd: path.join(root, "sources", "gs", "checkout"),
         })
       ).stdout.trim();
 
@@ -107,7 +107,7 @@ describe("git ref arguments cannot be parsed as git options", () => {
       expect(
         (
           await execa("git", ["rev-parse", "HEAD"], {
-            cwd: path.join(root, "references", "gs", "checkout"),
+            cwd: path.join(root, "sources", "gs", "checkout"),
           })
         ).stdout.trim(),
       ).toBe(headBefore);
@@ -190,7 +190,7 @@ describe("git ref arguments cannot be parsed as git options", () => {
 
       expect(switched.vcs.commit).toBe(featureCommit);
       expect(
-        await readFile(path.join(root, "references", "gs", "checkout", "README.md"), "utf8"),
+        await readFile(path.join(root, "sources", "gs", "checkout", "README.md"), "utf8"),
       ).toContain("v2");
     },
     GIT_TIMEOUT_MS,
@@ -240,16 +240,6 @@ describe("workspace path arguments stay inside the workspace", () => {
     expect(content).toContain("- Status: applied");
     expect(content).toContain("- [x] adopt");
   });
-
-  it("refuses `analysis new --for-reference` pointing above the workspace", async () => {
-    const root = await standaloneWorkspace("ReferenceEscape");
-    const outside = path.join(path.dirname(root), "outside-reference");
-    await mkdir(outside, { recursive: true });
-
-    await expect(
-      createAnalysis({ root, title: "Escaping Reference", forReference: "../outside-reference" }),
-    ).rejects.toThrow(/reference path escapes the workspace/);
-  });
 });
 
 async function overlayWorkspace(
@@ -282,7 +272,7 @@ describe("update respects the overlay layout", () => {
       "# Product\n\nReal product readme.\n",
     );
     expect(await readFile(path.join(root, ".gitignore"), "utf8")).toBe("node_modules/\n");
-    for (const directory of ["analyses", "knowledge", "references", "systems"]) {
+    for (const directory of ["analyses", "knowledge", "sources", "systems"]) {
       expect(await exists(path.join(root, directory))).toBe(false);
     }
     // Product Git must see nothing new: /.assay/ is excluded, everything else
@@ -442,17 +432,108 @@ describe("convert carries the full workspace state to the new standalone root", 
     expect(check.ok).toBe(true);
   });
 
-  it("copies donor state", async () => {
+  it("rejects malformed Source adoption receipt state before conversion writes", async () => {
     const root = await overlayWorkspace("ConvertDonors");
-    const donorDir = path.join(root, ".assay", "donors", "example");
-    await mkdir(donorDir, { recursive: true });
-    await writeFile(path.join(donorDir, "state.json"), "{}\n", "utf8");
+    const receiptDir = path.join(root, ".assay", "donors", "example");
+    await mkdir(receiptDir, { recursive: true });
+    await writeFile(path.join(receiptDir, "state.json"), "{}\n", "utf8");
 
     const target = path.join(path.dirname(root), "converted-donors");
-    await convertOverlayToStandalone({ root, target });
+    await expect(convertOverlayToStandalone({ root, target })).rejects.toThrow(
+      /Source adoption state 'example'.*failed validation/,
+    );
 
-    expect(await exists(path.join(target, ".assay", "donors", "example", "state.json"))).toBe(true);
+    expect(await exists(target)).toBe(false);
+    expect(await readFile(path.join(receiptDir, "state.json"), "utf8")).toBe("{}\n");
   });
+
+  it("rejects a redirected source Source-adoption store before conversion output", async () => {
+    const root = await overlayWorkspace("ConvertAdoptionStoreRedirect");
+    const outside = path.join(path.dirname(root), "outside-adoption-store");
+    await mkdir(outside, { recursive: true });
+    const sentinel = path.join(outside, "sentinel.bin");
+    await writeFile(sentinel, "outside-store-bytes\n", "utf8");
+    await symlink(
+      outside,
+      path.join(root, ".assay", "donors"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const manifestFile = path.join(root, ".assay", "manifest.json");
+    const manifestBytes = await readFile(manifestFile);
+    const target = path.join(path.dirname(root), "converted-adoption-store-redirect");
+
+    await expect(convertOverlayToStandalone({ root, target })).rejects.toThrow(
+      /source Source adoption receipt store.*(?:symlink|junction|reparse point)/,
+    );
+    expect(await exists(target)).toBe(false);
+    expect(await readFile(manifestFile)).toEqual(manifestBytes);
+    expect(await readFile(sentinel, "utf8")).toBe("outside-store-bytes\n");
+  });
+
+  it("rejects a nested redirect in the source Source-adoption store before conversion output", async () => {
+    const root = await overlayWorkspace("ConvertAdoptionStoreNestedRedirect");
+    const receiptRoot = path.join(root, ".assay", "donors", "example");
+    await mkdir(receiptRoot, { recursive: true });
+    await writeFile(path.join(receiptRoot, "unknown.bin"), "preserve-me\n", "utf8");
+    const outside = path.join(path.dirname(root), "outside-adoption-records");
+    await mkdir(outside, { recursive: true });
+    const sentinel = path.join(outside, "sentinel.json");
+    await writeFile(sentinel, '{"outside":true}\n', "utf8");
+    await symlink(
+      outside,
+      path.join(receiptRoot, "definitions"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const manifestFile = path.join(root, ".assay", "manifest.json");
+    const manifestBytes = await readFile(manifestFile);
+    const target = path.join(path.dirname(root), "converted-adoption-nested-redirect");
+
+    await expect(convertOverlayToStandalone({ root, target })).rejects.toThrow(
+      /source Source adoption receipt store.*(?:symlink|junction|reparse point)/,
+    );
+    expect(await exists(target)).toBe(false);
+    expect(await readFile(manifestFile)).toEqual(manifestBytes);
+    expect(await readFile(path.join(receiptRoot, "unknown.bin"), "utf8")).toBe("preserve-me\n");
+    expect(await readFile(sentinel, "utf8")).toBe('{"outside":true}\n');
+  });
+
+  it.each([
+    { label: "copy", move: false, keepOverlay: true },
+    { label: "move", move: true, keepOverlay: false },
+  ])(
+    "rejects a redirected target Source-adoption store before $label conversion writes",
+    async (mode) => {
+      const root = await overlayWorkspace(`ConvertAdoptionTargetRedirect-${mode.label}`);
+      const target = path.join(path.dirname(root), `converted-adoption-target-${mode.label}`);
+      const targetState = path.join(target, ".assay");
+      const outside = path.join(path.dirname(root), `outside-adoption-target-${mode.label}`);
+      await mkdir(targetState, { recursive: true });
+      await mkdir(outside, { recursive: true });
+      await symlink(
+        outside,
+        path.join(targetState, "donors"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const manifestFile = path.join(root, ".assay", "manifest.json");
+      const manifestBytes = await readFile(manifestFile);
+
+      await expect(
+        convertOverlayToStandalone({
+          root,
+          target,
+          move: mode.move,
+          keepOverlay: mode.keepOverlay,
+        }),
+      ).rejects.toThrow(
+        /Source adoption target (?:ancestor|receipt store).*(?:symlink|junction|reparse point)/,
+      );
+
+      expect(await readdir(targetState)).toEqual(["donors"]);
+      expect(await readdir(outside)).toEqual([]);
+      expect(await readFile(manifestFile)).toEqual(manifestBytes);
+    },
+    30_000,
+  );
 
   it("does not copy retired decision-index bytes", async () => {
     const root = await overlayWorkspace("ConvertRetiredIndex");

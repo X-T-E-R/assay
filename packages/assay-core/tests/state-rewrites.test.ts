@@ -4,7 +4,6 @@ import { createTempDirectoryFixture, pathExists as exists } from "assay-test-sup
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  addReference,
   addSource,
   archiveSystem,
   checkFramework,
@@ -60,7 +59,7 @@ async function stripObservationFingerprint(observationFile: string): Promise<voi
 }
 
 async function onlyObservation(root: string, alias: string): Promise<string> {
-  const dir = path.join(root, "references", alias, "observations");
+  const dir = path.join(root, "sources", alias, "observations");
   const entries = await readdir(dir);
   const first = entries[0];
   if (!first) throw new Error(`no observation recorded for ${alias}`);
@@ -147,103 +146,6 @@ describe("analysis close writes the header status and the real decision checkbox
     expect(await readFile(created.absolutePath, "utf8")).toContain("- Status: draft");
   });
 
-  it("records the closed source analysis status in the header, not in a body lookalike", async () => {
-    const root = await workspace("AnalysisSourceStatusDecoy");
-    const source = await directorySource("analysis-source-status");
-    await addSource({ root, source, alias: "up" });
-    await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
-    const synced = await syncSource({ root, alias: "up", changeClass: "major" });
-    expect(synced.observation).not.toBeNull();
-
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Source Status",
-      forSource: "up",
-      now: new Date("2026-07-01T10:00:00"),
-    });
-    // A card whose header no longer carries the field while a body line looks
-    // like it. The rewrite must restore the header state instead of quietly
-    // editing the body line and reporting success.
-    const original = await readFile(analysis.absolutePath, "utf8");
-    await writeFile(
-      analysis.absolutePath,
-      original
-        .replace(/^- Source analysis status:.*\n/m, "")
-        .replace(
-          "## Key observations\n",
-          "## Key observations\n\n- Source analysis status: open per the upstream tracker\n",
-        ),
-      "utf8",
-    );
-
-    await closeAnalysis({
-      root,
-      path: analysis.path,
-      exit: "adopt",
-      now: new Date("2026-07-01T11:00:00"),
-    });
-
-    const content = await readFile(analysis.absolutePath, "utf8");
-    const header = content.slice(0, content.indexOf("## "));
-    expect(header).toContain("- Source analysis status: closed");
-    expect(content).toContain("- Source analysis status: open per the upstream tracker");
-  });
-});
-
-describe("reference case files are read and written through one YAML parser", () => {
-  async function frozenReference(root: string, name: string): Promise<string> {
-    const source = await directorySource(`${name}-source`);
-    const frozen = await addReference({
-      root,
-      source,
-      name,
-      now: new Date("2026-06-14T10:00:00"),
-    });
-    return frozen.path;
-  }
-
-  it("refuses to bind an analysis to a case file that no longer parses", async () => {
-    const root = await workspace("ReferenceIndented");
-    const referencePath = await frozenReference(root, "Indented Ref");
-    const yamlPath = path.join(root, referencePath, "reference.yaml");
-    const original = await readFile(yamlPath, "utf8");
-    // A hand edit that indents a field. Reading provenance through the YAML
-    // parser is what makes this visible: a hand-rolled reader trimmed leading
-    // whitespace and reported a value the file does not actually define.
-    await writeFile(yamlPath, original.replace("freeze_path:", "  freeze_path:"), "utf8");
-
-    await expect(
-      createAnalysis({
-        root,
-        title: "Review Indented Ref",
-        forReference: referencePath,
-        now: new Date("2026-06-15T10:00:00"),
-      }),
-    ).rejects.toThrow(/reference case file cannot be parsed as YAML/);
-  });
-
-  it("leaves the case file exactly as written when the analysis closes", async () => {
-    const root = await workspace("ReferenceComments");
-    const referencePath = await frozenReference(root, "Comment Ref");
-    const yamlPath = path.join(root, referencePath, "reference.yaml");
-    const before = await readFile(yamlPath, "utf8");
-    const analysis = await createAnalysis({
-      root,
-      title: "Review Comment Ref",
-      forReference: referencePath,
-      now: new Date("2026-06-15T10:00:00"),
-    });
-    await closeAnalysis({ root, path: analysis.path, exit: "adopt" });
-
-    const updated = await readFile(yamlPath, "utf8");
-    expect(updated).toBe(before);
-    expect(updated).toContain("# Reference case file.");
-    expect(updated).toContain("analysis_points: []");
-    expect(updated).not.toContain("analyzed:");
-  });
-});
-
-describe("system archive handles systems recorded outside the workspace", () => {
   it("moves an out-of-root system to the destination it reports", async () => {
     const root = await workspace("ArchiveOutOfRoot");
     const outside = path.join(path.dirname(root), "precious");
@@ -332,7 +234,7 @@ describe("check reports any source-ledger failure instead of skipping it", () =>
     const root = await workspace("LedgerNotObject");
     const source = await directorySource("ledger-not-object");
     await addSource({ root, source, alias: "up" });
-    await writeFile(path.join(root, "references", "up", "source.yaml"), "just a string\n", "utf8");
+    await writeFile(path.join(root, "sources", "up", "source.yaml"), "just a string\n", "utf8");
 
     const check = await checkFramework({ root });
 
@@ -340,7 +242,7 @@ describe("check reports any source-ledger failure instead of skipping it", () =>
     expect(
       check.rows.some(
         (row) =>
-          row.path === "references" &&
+          row.path === "sources" &&
           row.status === "error" &&
           row.message?.includes("YAML file is not an object"),
       ),
@@ -351,14 +253,12 @@ describe("check reports any source-ledger failure instead of skipping it", () =>
     const root = await workspace("LedgerUnparseable");
     const source = await directorySource("ledger-unparseable");
     await addSource({ root, source, alias: "up" });
-    await writeFile(path.join(root, "references", "up", "source.yaml"), "a: [1,\n  b: {\n", "utf8");
+    await writeFile(path.join(root, "sources", "up", "source.yaml"), "a: [1,\n  b: {\n", "utf8");
 
     const check = await checkFramework({ root });
 
     expect(check.ok).toBe(false);
-    expect(check.rows.some((row) => row.path === "references" && row.status === "error")).toBe(
-      true,
-    );
+    expect(check.rows.some((row) => row.path === "sources" && row.status === "error")).toBe(true);
   });
 });
 
@@ -403,7 +303,7 @@ describe("source sync repairs an observation that records no fingerprint", () =>
     const source = await directorySource("fingerprint-guard-source");
     await addSource({ root, source, alias: "up", capture: "checkout" });
 
-    const checkoutFile = path.join(root, "references", "up", "checkout", "README.md");
+    const checkoutFile = path.join(root, "sources", "up", "checkout", "README.md");
     await writeFile(checkoutFile, "# Source\n\nlocal work\n", "utf8");
     await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
 

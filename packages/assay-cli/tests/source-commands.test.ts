@@ -60,10 +60,10 @@ describe("assay source CLI", () => {
 
     const add = await runCli(["source", "add", source, "Demo Source", "--root", root]);
     expect(add.exitCode).toBe(0);
-    expect(add.stdout).toContain("Added source: references/demo-source");
-    expect(add.stdout).toContain("Checkout: references/demo-source/checkout");
+    expect(add.stdout).toContain("Added source: sources/demo-source");
+    expect(add.stdout).toContain("Checkout: sources/demo-source/checkout");
     expect(
-      await pathExists(path.join(root, "references", "demo-source", "checkout", "README.md")),
+      await pathExists(path.join(root, "sources", "demo-source", "checkout", "README.md")),
     ).toBe(true);
 
     const status = await runCli(["source", "status", "demo-source", "--root", root]);
@@ -75,7 +75,7 @@ describe("assay source CLI", () => {
     const sync = await runCli(["source", "sync", "demo-source", "--root", root]);
     expect(sync.exitCode).toBe(0);
     expect(sync.stdout).toContain("Source sync: demo-source");
-    expect(sync.stdout).toContain("Observation: references/demo-source/observations/");
+    expect(sync.stdout).toContain("Observation: sources/demo-source/observations/");
 
     const diff = await runCli(["source", "diff", "demo-source", "--root", root]);
     expect(diff.exitCode).toBe(0);
@@ -137,7 +137,7 @@ describe("assay source CLI", () => {
         "main",
       ]);
       expect(add.exitCode).toBe(0);
-      expect(add.stdout).toContain("Added source: references/local-git");
+      expect(add.stdout).toContain("Added source: sources/local-git");
 
       await writeFile(path.join(repo, "README.md"), "# Local Git\n\nv2\n", "utf8");
       await git(repo, ["commit", "-am", "second"]);
@@ -146,7 +146,7 @@ describe("assay source CLI", () => {
       expect(sync.exitCode).toBe(0);
       expect(sync.stdout).toContain("Source sync: local-git");
       expect(sync.stdout).not.toContain("Change: same");
-      expect(sync.stdout).toContain("Observation: references/local-git/observations/");
+      expect(sync.stdout).toContain("Observation: sources/local-git/observations/");
 
       const diff = await runCli(["source", "diff", "local-git", "--root", root]);
       expect(diff.exitCode).toBe(0);
@@ -185,7 +185,7 @@ describe("assay source CLI", () => {
         "main",
       ]);
       expect(add.exitCode).toBe(0);
-      expect(await pathExists(path.join(root, "references", "git-proj", "checkout", ".git"))).toBe(
+      expect(await pathExists(path.join(root, "sources", "git-proj", "checkout", ".git"))).toBe(
         true,
       );
 
@@ -199,12 +199,12 @@ describe("assay source CLI", () => {
         "--sync",
       ]);
       expect(switched.exitCode).toBe(0);
-      expect(switched.stdout).toContain("Switched source: references/git-proj");
+      expect(switched.stdout).toContain("Switched source: sources/git-proj");
       expect(switched.stdout).toContain("Ref: feature");
       expect(switched.stdout).toContain("Source sync: git-proj");
 
       const sourceYaml = await readFile(
-        path.join(root, "references", "git-proj", "source.yaml"),
+        path.join(root, "sources", "git-proj", "source.yaml"),
         "utf8",
       );
       expect(sourceYaml).toContain("ref: feature");

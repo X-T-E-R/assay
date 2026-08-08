@@ -340,7 +340,7 @@ async function withTaskLockRaw<T>(
 /**
  * Serialize conversion with every mutable owner that participates in this
  * gate. Async-local reentrancy preserves the established nested lock order for
- * Task, Roadmap, Spec, donor, Trellis, and plugin operations.
+ * Task, Roadmap, Spec, Source adoption, Trellis, and plugin operations.
  */
 export async function withWorkspaceMutationCoordination<T>(
   rootValue: string,

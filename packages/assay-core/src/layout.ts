@@ -25,7 +25,7 @@ export type WorkspaceArea =
   | "events"
   | "backups"
   | "systemsRegistry"
-  | "references"
+  | "sources"
   | "analyses"
   | "knowledge"
   | "systemsContracts";
@@ -44,7 +44,7 @@ export function resolveWorkspaceLayout(manifest: FrameworkManifest | null): Work
  */
 export function defaultStandaloneLayout(): WorkspaceLayout {
   return {
-    version: 6,
+    version: 7,
     mode: "standalone",
     state_root: ".assay",
     work_root: ".",
@@ -59,7 +59,7 @@ export function defaultStandaloneLayout(): WorkspaceLayout {
  */
 export function defaultOverlayLayout(privacy: WorkspacePrivacy): WorkspaceLayout {
   return {
-    version: 6,
+    version: 7,
     mode: "overlay",
     state_root: ".assay",
     work_root: ".assay",
@@ -82,8 +82,8 @@ export function workspacePath(root: string, layout: WorkspaceLayout, area: Works
       return path.join(root, layout.paths.backups);
     case "systemsRegistry":
       return path.join(root, layout.paths.systems_registry);
-    case "references":
-      return path.join(root, layout.paths.references);
+    case "sources":
+      return path.join(root, layout.paths.sources);
     case "analyses":
       return path.join(root, layout.paths.analyses);
     case "knowledge":
@@ -120,7 +120,7 @@ export function workspaceWorkRelativePath(layout: WorkspaceLayout, relativePath:
 
 /** Work-folder areas addressable by their first path segment. */
 const WORK_AREA_BY_SEGMENT: Readonly<Record<string, WorkspaceArea>> = {
-  references: "references",
+  sources: "sources",
   analyses: "analyses",
   knowledge: "knowledge",
   systems: "systemsContracts",
@@ -167,7 +167,7 @@ function toRelativePosix(value: string): string {
 }
 
 /**
- * Relative path map for standalone layout v6. State under `.assay/`, work
+ * Relative path map for standalone layout v7. State under `.assay/`, work
  * folders at root.
  */
 export function standalonePaths() {
@@ -176,7 +176,7 @@ export function standalonePaths() {
     events: EVENTS_DIR,
     backups: BACKUPS_DIR,
     systems_registry: SYSTEMS_REGISTRY_FILE,
-    references: "references",
+    sources: "sources",
     analyses: "analyses",
     knowledge: "knowledge",
     systems_contracts: "systems",
@@ -184,7 +184,7 @@ export function standalonePaths() {
 }
 
 /**
- * Relative path map for overlay layout v6. Everything Assay-owned lives
+ * Relative path map for overlay layout v7. Everything Assay-owned lives
  * under `.assay/`.
  */
 export function overlayPaths() {
@@ -193,7 +193,7 @@ export function overlayPaths() {
     events: EVENTS_DIR,
     backups: BACKUPS_DIR,
     systems_registry: SYSTEMS_REGISTRY_FILE,
-    references: `${MANAGED_DIR}/references`,
+    sources: `${MANAGED_DIR}/sources`,
     analyses: `${MANAGED_DIR}/analyses`,
     knowledge: `${MANAGED_DIR}/knowledge`,
     systems_contracts: `${MANAGED_DIR}/systems`,

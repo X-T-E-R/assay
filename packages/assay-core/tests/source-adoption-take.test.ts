@@ -1,18 +1,18 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createTempDirectoryFixture } from "assay-test-support";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   addSource,
-  getDonorAdoption,
+  getSourceAdoption,
   initFramework,
-  registerDonorAdoption,
+  registerSourceAdoption,
   registerSystem,
-  takeDonorMaterial,
+  takeSourceAdoptionMaterial,
 } from "../src/index.js";
 
-const tempDirs = createTempDirectoryFixture("assay-core-donor-take");
+const tempDirs = createTempDirectoryFixture("assay-core-source-adoption-take");
 
 afterEach(async () => {
   await tempDirs.cleanup();
@@ -46,10 +46,35 @@ async function createFixture(name: string): Promise<Fixture> {
   return { root, observation: source.observation.observation_id };
 }
 
-describe("donor take", () => {
+describe("Source adoption take", () => {
+  it("fails an old workspace tuple before validating or writing Source adoption input", async () => {
+    const fixture = await createFixture("OldTupleAdoption");
+    const manifestFile = path.join(fixture.root, ".assay", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8")) as {
+      framework_version: string;
+      minimum_assay_version: string;
+      layout_version: number;
+      layout: { version: number; paths: Record<string, string> };
+    };
+    manifest.framework_version = "0.9.0";
+    manifest.minimum_assay_version = "0.9.0";
+    manifest.layout_version = 6;
+    manifest.layout.version = 6;
+    const { sources: _currentSources, ...oldPaths } = manifest.layout.paths;
+    manifest.layout.paths = { ...oldPaths, references: "references" };
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    await expect(
+      registerSourceAdoption({ root: fixture.root, definition: {} }),
+    ).rejects.toMatchObject({ code: "WORKSPACE_CUTOVER_REQUIRED" });
+    await expect(stat(path.join(fixture.root, ".assay", "coordination"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("registers the same definition a hand-written single mapping would", async () => {
-    const taken = await createFixture("DonorTakeSynth");
-    const takeResult = await takeDonorMaterial({
+    const taken = await createFixture("AdoptionTakeSynth");
+    const takeResult = await takeSourceAdoptionMaterial({
       root: taken.root,
       sourceAlias: "upstream",
       sourcePath: "src/alpha.txt",
@@ -64,8 +89,8 @@ describe("donor take", () => {
     expect(takeResult.observation).toBe(taken.observation);
 
     // The same relationship, written out by hand in a second workspace.
-    const handWritten = await createFixture("DonorTakeHandWritten");
-    const registered = await registerDonorAdoption({
+    const handWritten = await createFixture("AdoptionTakeHandWritten");
+    const registered = await registerSourceAdoption({
       root: handWritten.root,
       definition: {
         schema: "assay.donor-adoption/v1",
@@ -87,8 +112,8 @@ describe("donor take", () => {
     expect(takeResult.definitionDigest).toBe(registered.definitionDigest);
     expect(takeResult.definition).toEqual(registered.definition);
 
-    // And it is a real adoption, readable by the ordinary donor commands.
-    const stored = await getDonorAdoption({
+    // And it is a real adoption, readable by the ordinary Source adoption commands.
+    const stored = await getSourceAdoption({
       root: taken.root,
       adoptionId: takeResult.adoptionId,
     });
@@ -97,8 +122,8 @@ describe("donor take", () => {
   });
 
   it("records the requested mode and infers a directory locator", async () => {
-    const fixture = await createFixture("DonorTakeDirectory");
-    const result = await takeDonorMaterial({
+    const fixture = await createFixture("AdoptionTakeDirectory");
+    const result = await takeSourceAdoptionMaterial({
       root: fixture.root,
       sourceAlias: "upstream",
       sourcePath: "src/agents",
@@ -119,9 +144,9 @@ describe("donor take", () => {
   });
 
   it("refuses a source path the observation does not contain", async () => {
-    const fixture = await createFixture("DonorTakeMissing");
+    const fixture = await createFixture("AdoptionTakeMissing");
     await expect(
-      takeDonorMaterial({
+      takeSourceAdoptionMaterial({
         root: fixture.root,
         sourceAlias: "upstream",
         sourcePath: "src/nowhere.txt",
@@ -132,9 +157,9 @@ describe("donor take", () => {
   });
 
   it("refuses a target path that is not relative to the registered system", async () => {
-    const fixture = await createFixture("DonorTakeAbsolute");
+    const fixture = await createFixture("AdoptionTakeAbsolute");
     await expect(
-      takeDonorMaterial({
+      takeSourceAdoptionMaterial({
         root: fixture.root,
         sourceAlias: "upstream",
         sourcePath: "src/alpha.txt",

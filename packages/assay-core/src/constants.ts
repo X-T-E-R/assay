@@ -1,14 +1,14 @@
-export const CURRENT_VERSION = "0.9.0";
+export const CURRENT_VERSION = "0.10.0";
 
 /**
  * Layout version written by this build of Assay. New workspaces always carry
  * this version in their manifest. Older layouts require an external cutover
  * tool and are never loaded or rewritten by this package.
  */
-export const LAYOUT_VERSION = 6;
+export const LAYOUT_VERSION = 7;
 
 /**
- * Assay-owned workspace state directory (layout v6). Holds the manifest,
+ * Assay-owned workspace state directory (layout v7). Holds the manifest,
  * version, events, backups, systems registry, and (in overlay
  * mode) the work folders.
  */

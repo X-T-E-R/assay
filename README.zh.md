@@ -29,7 +29,7 @@ Assay 适配你代码现有的存在方式。
 
 | 模式 | 什么时候用 | Assay 写在哪里 | Git 策略 |
 | --- | --- | --- | --- |
-| `standalone` | 你想要一个独立的研究 / 评估 / 攻关工作区。 | `.assay/` 存 Assay 状态，`tasks/`、`references/`、`analyses/`、`knowledge/`、`systems/` 在工作区根目录。 | 工作区 Git 可选。独立系统保留自己的 Git。 |
+| `standalone` | 你想要一个独立的研究 / 评估 / 攻关工作区。 | `.assay/` 存 Assay 状态，`tasks/`、`sources/`、`analyses/`、`knowledge/`、`systems/` 在工作区根目录。 | 工作区 Git 可选。独立系统保留自己的 Git。 |
 | `overlay` | 你已经有产品仓库，想让它的根目录作为主系统。 | 一个私有的 `.assay/` 文件夹，包含 Assay 状态和工作目录。产品文件不动。 | 产品 Git 默认忽略 `.assay/`；Assay 状态可选地在 `.assay/` 里建自己的 Git。 |
 
 ## 选择要构建的工作区
@@ -63,7 +63,7 @@ none。Assay 不按 active 数量、创建时间或标题推断。文件合同�
 
 ## 明确 Project、Roadmap 与 Spec 的 authority
 
-每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。Project 使用 `project-<slug>`。Roadmap Item 位于 `roadmap/<roadmap-id>/`：`item.yaml` 保存封闭机器状态，`outcome.md` 保存读者可直接编辑且生命周期命令不会重写的结果说明；根 `roadmap/README.md` 只作说明，不生成动态索引。原生 Spec 按需位于 `specs/<spec-id>/{spec.yaml,specification.md}`，可从 Analysis 或 Task 显式提升当前约束而不修改来源。Project 选择的 `relay/` 与 `extensions/` 也按需创建。Reference、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。详见 [Native specifications](docs/spec.md)。
+每个工作区都恰有一个原生 Project：standalone 位于 `project/`，overlay 位于 `.assay/project/`。Project 使用 `project-<slug>`。Roadmap Item 位于 `roadmap/<roadmap-id>/`：`item.yaml` 保存封闭机器状态，`outcome.md` 保存读者可直接编辑且生命周期命令不会重写的结果说明；根 `roadmap/README.md` 只作说明，不生成动态索引。原生 Spec 按需位于 `specs/<spec-id>/{spec.yaml,specification.md}`，可从 Analysis 或 Task 显式提升当前约束而不修改来源。Project 选择的 `relay/` 与 `extensions/` 也按需创建。Source、Analysis、Task、System 与 `.assay/` 运行时状态继续拥有各自独立的 authority。详见 [Native specifications](docs/spec.md)。
 
 
 ## 用插件扩展工作区，不增加新的 setup 生命周期
@@ -143,7 +143,7 @@ node scripts/install.mjs
 ```
 
 
-安装参数和调用细节见 `skills/assay-builder/references/cli-setup.zh.md`。
+安装参数和调用细节见 `skills/assay-builder/sources/cli-setup.zh.md`。
 
 ## Git 模型
 
@@ -160,7 +160,7 @@ Assay 把系统代码和 Assay 记忆分开。
 - [布局模式](docs/layout-modes.md)
 - [命令参考](docs/commands.md)
 - [Task 记录](docs/task.md)
-- [Donor Adoption](docs/donor-adoption.md)
+- [Source Adoption](docs/source-adoption.md)
 - [工作区结构](docs/workspace-layout.md)
 - [贡献指南](CONTRIBUTING.md)
 

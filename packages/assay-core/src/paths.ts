@@ -14,7 +14,7 @@ import { toPosixPath } from "./serialization.js";
 // retired workspace reach `loadManifest`, whose raw envelope probe returns the
 // stable cutover error; no legacy path is parsed or treated as active state.
 const AUTHORITY_MARKERS = [`${MANAGED_DIR}/manifest.json`, ".framework/manifest.json"] as const;
-const WEAK_ROOT_MARKERS = ["references", "analyses", "systems"] as const;
+const WEAK_ROOT_MARKERS = ["sources", "analyses", "systems"] as const;
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -78,7 +78,7 @@ export function isContainedPath(root: string, target: string): boolean {
 /**
  * Resolve a caller-supplied workspace-relative path and refuse anything that
  * leaves `root`. Commands that accept a path argument (`analysis close`,
- * `analysis close`, `analysis new --for-reference`, ...) must route through
+ * `analysis new --for-source`, ...) must route through
  * this before reading or writing, otherwise `../outside.md` lets a workspace
  * command rewrite files above its own root.
  *

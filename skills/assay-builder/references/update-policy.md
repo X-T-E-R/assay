@@ -26,7 +26,7 @@ When `assay update` runs, it compares each managed file's current on-disk hash a
 
 The following are always treated as user-owned and are never auto-overwritten:
 
-- Frozen references under `references/frozen/`
+- Frozen Sources under `sources/`
 - Analysis cards under `analyses/`
 - Native Task contracts and handoffs under `tasks/`
 - Knowledge documents under `knowledge/`

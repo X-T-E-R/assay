@@ -1,10 +1,10 @@
 import path from "node:path";
 
 import {
-  type DonorSourceMapping,
-  donorLocatorMatchesPath,
-  listDonorSourceMappings,
-} from "./donors/index.js";
+  type SourceAdoptionSourceMapping,
+  listSourceAdoptionSourceMappings,
+  sourceAdoptionLocatorMatchesPath,
+} from "./source-adoptions.js";
 import {
   type SourceChangeClass,
   type SourceKind,
@@ -36,7 +36,7 @@ export type UpstreamSignal =
   | "not-checked";
 
 export interface UpstreamImpact {
-  /** Donor mappings whose source locator the changed paths touch. */
+  /** Source adoption mappings whose source locator the changed paths touch. */
   readonly mappings: number;
   readonly adoptions: readonly string[];
 }
@@ -91,7 +91,7 @@ export interface CollectUpstreamStatusOptions {
  * - L2 fetches and compares the remote tip. Only with `fetch`, never implicit,
  *   and a failure annotates the source instead of failing the command.
  * - L3 intersects the changed paths with the source locators of the
- *   workspace's donor adoptions, turning "the source moved" into "it reaches N
+ *   workspace's Source adoptions, turning "the source moved" into "it reaches N
  *   places you adopted".
  *
  * Non-Git checkouts report "not checked (no cheap signal)" rather than hashing
@@ -108,9 +108,9 @@ export async function collectUpstreamStatus(
     return { fetched: fetch, total: 0, changedSources: 0, sources: [], nextCommand: null };
   }
 
-  const donorMappings = await listDonorSourceMappings(root);
+  const adoptionMappings = await listSourceAdoptionSourceMappings(root);
   const states = await Promise.all(
-    sources.map((source) => inspectSource(root, source, donorMappings, fetch)),
+    sources.map((source) => inspectSource(root, source, adoptionMappings, fetch)),
   );
 
   const changedSources = states.filter((state) => isChanged(state)).length;
@@ -135,7 +135,7 @@ function isChanged(state: UpstreamSourceState): boolean {
 async function inspectSource(
   root: string,
   source: SourceStatusEntry,
-  donorMappings: readonly DonorSourceMapping[],
+  adoptionMappings: readonly SourceAdoptionSourceMapping[],
   fetch: boolean,
 ): Promise<UpstreamSourceState> {
   const checkout = path.join(root, source.path, "checkout");
@@ -191,7 +191,7 @@ async function inspectSource(
     }
   }
 
-  const impact = impactFor(source.alias, [...changedPaths], donorMappings);
+  const impact = impactFor(source.alias, [...changedPaths], adoptionMappings);
   const dirtyFiles = signals.dirtyPaths.length;
   const signal: UpstreamSignal =
     dirtyFiles > 0
@@ -255,14 +255,14 @@ function baseState(
 function impactFor(
   alias: string,
   changedPaths: readonly string[],
-  donorMappings: readonly DonorSourceMapping[],
+  adoptionMappings: readonly SourceAdoptionSourceMapping[],
 ): UpstreamImpact | null {
-  const forAlias = donorMappings.filter((mapping) => mapping.sourceAlias === alias);
+  const forAlias = adoptionMappings.filter((mapping) => mapping.sourceAlias === alias);
   if (forAlias.length === 0) {
     return null;
   }
   const hit = forAlias.filter((mapping) =>
-    changedPaths.some((changed) => donorLocatorMatchesPath(mapping.locator, changed)),
+    changedPaths.some((changed) => sourceAdoptionLocatorMatchesPath(mapping.locator, changed)),
   );
   return {
     mappings: hit.length,

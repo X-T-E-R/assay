@@ -9,9 +9,9 @@ import {
 } from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const tempDirs = createTempDirectoryFixture("assay-donor-cli");
+const tempDirs = createTempDirectoryFixture("assay-source-adoption-cli");
 let cliRunner: BuiltCliRunner;
-const DONOR_CLI_TIMEOUT_MS = 90_000;
+const SOURCE_ADOPTION_CLI_TIMEOUT_MS = 90_000;
 
 beforeEach(async () => {
   cliRunner = createBuiltCliRunner({
@@ -54,7 +54,7 @@ async function createFixture(name: string, requiredEvidence = false) {
   ]);
   expect(registeredSystem.exitCode).toBe(0);
 
-  const definition = path.join(await tempDirs.createTempDir(), "donor.json");
+  const definition = path.join(await tempDirs.createTempDir(), "source-adoption.json");
   await writeFile(
     definition,
     `${JSON.stringify(
@@ -81,13 +81,14 @@ async function createFixture(name: string, requiredEvidence = false) {
   return { root, definition };
 }
 
-describe("assay donor CLI", () => {
+describe("assay source adoption CLI", () => {
   it(
     "registers, inspects, decides, reports status, and keeps history",
     async () => {
-      const fixture = await createFixture("DonorCli");
+      const fixture = await createFixture("SourceAdoptionCli");
       const registered = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "register",
         "--file",
         fixture.definition,
@@ -99,7 +100,8 @@ describe("assay donor CLI", () => {
       expect(JSON.parse(registered.stdout).adoptionId).toBe("upstream-product");
 
       const inspected = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "inspect",
         "upstream-product",
         "--target",
@@ -113,7 +115,8 @@ describe("assay donor CLI", () => {
       expect(inspectionId).toMatch(/^inspection-/);
 
       const decision = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "decide",
         "upstream-product",
         "--target",
@@ -130,7 +133,8 @@ describe("assay donor CLI", () => {
       expect(JSON.parse(decision.stdout).decision.outcome).toBe("accept");
 
       const status = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "status",
         "upstream-product",
         "--root",
@@ -141,7 +145,8 @@ describe("assay donor CLI", () => {
       expect(status.stdout).toContain("target=unchanged");
 
       const history = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "history",
         "upstream-product",
         "--root",
@@ -150,15 +155,16 @@ describe("assay donor CLI", () => {
       expect(history.exitCode).toBe(0);
       expect(history.stdout).toContain("accept");
     },
-    DONOR_CLI_TIMEOUT_MS,
+    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
   );
 
   it(
     "blocks only explicitly required evidence and accepts a bound receipt",
     async () => {
-      const fixture = await createFixture("DonorCliEvidence", true);
+      const fixture = await createFixture("SourceAdoptionCliEvidence", true);
       await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "register",
         "--file",
         fixture.definition,
@@ -166,7 +172,8 @@ describe("assay donor CLI", () => {
         fixture.root,
       ]);
       const inspected = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "inspect",
         "upstream-product",
         "--target",
@@ -178,7 +185,8 @@ describe("assay donor CLI", () => {
       const inspectionId = JSON.parse(inspected.stdout).inspection.id as string;
 
       const blocked = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "decide",
         "upstream-product",
         "--target",
@@ -191,7 +199,7 @@ describe("assay donor CLI", () => {
         fixture.root,
       ]);
       expect(blocked.exitCode).toBe(1);
-      expect(blocked.stderr).toContain("required donor evidence has not passed");
+      expect(blocked.stderr).toContain("required Source adoption evidence has not passed");
 
       const evidenceFile = path.join(await tempDirs.createTempDir(), "evidence.yaml");
       await writeFile(
@@ -207,7 +215,8 @@ describe("assay donor CLI", () => {
         "utf8",
       );
       const evidence = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "evidence",
         "add",
         "upstream-product",
@@ -221,7 +230,8 @@ describe("assay donor CLI", () => {
       expect(evidence.stdout).toContain("Result: passed");
 
       const verified = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "verify",
         "upstream-product",
         inspectionId,
@@ -231,16 +241,17 @@ describe("assay donor CLI", () => {
       expect(verified.exitCode).toBe(0);
       expect(verified.stdout).toContain("Required policy: satisfied");
     },
-    DONOR_CLI_TIMEOUT_MS,
+    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
   );
 
   it(
     "takes a single mapping without a definition file and parses colons safely",
     async () => {
-      const fixture = await createFixture("DonorTakeCli");
+      const fixture = await createFixture("SourceAdoptionTakeCli");
 
       const taken = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "take",
         "upstream:src/alpha.txt",
         "--into",
@@ -262,7 +273,8 @@ describe("assay donor CLI", () => {
 
       // The adoption is a first-class one: the ordinary verbs read it.
       const shown = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "show",
         payload.adoptionId,
         "--root",
@@ -274,7 +286,8 @@ describe("assay donor CLI", () => {
       // A Windows-style absolute path is refused by name, never split at its
       // drive colon into a different alias and path.
       const windowsTarget = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "take",
         "upstream:src/alpha.txt",
         "--into",
@@ -287,7 +300,8 @@ describe("assay donor CLI", () => {
       expect(windowsTarget.stderr).toContain("C:/absolute/alpha.txt");
 
       const windowsSource = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "take",
         "C:\\repo\\src\\alpha.txt",
         "--into",
@@ -299,7 +313,8 @@ describe("assay donor CLI", () => {
       expect(windowsSource.stderr).toContain("looks like a Windows absolute path");
 
       const missingSeparator = await cliRunner.runCli([
-        "donor",
+        "source",
+        "adoption",
         "take",
         "upstream/src/alpha.txt",
         "--into",
@@ -308,31 +323,32 @@ describe("assay donor CLI", () => {
         fixture.root,
       ]);
       expect(missingSeparator.exitCode).not.toBe(0);
-      expect(missingSeparator.stderr).toContain("donor source must be <name>:<path>");
+      expect(missingSeparator.stderr).toContain("Source adoption input must be <name>:<path>");
     },
-    DONOR_CLI_TIMEOUT_MS,
+    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
   );
 
   it(
-    "exposes donor commands in help",
+    "exposes Source adoption commands in help",
     async () => {
       const root = await createInitializedCliWorkspace({
         tempDirs,
         runner: cliRunner,
-        directoryName: "DonorHelp",
+        directoryName: "SourceAdoptionHelp",
       });
       const rootHelp = await cliRunner.runCli(["--help"]);
       expect(rootHelp.exitCode).toBe(0);
-      expect(rootHelp.stdout).toContain("donor");
+      expect(rootHelp.stdout).not.toContain("donor");
+      expect(rootHelp.stdout).toContain("source");
 
       expect(root).toBeTruthy();
-      const donorHelp = await cliRunner.runCli(["donor", "--help"]);
-      expect(donorHelp.exitCode).toBe(0);
-      expect(donorHelp.stdout).toContain("take");
-      expect(donorHelp.stdout).toContain("inspect");
-      expect(donorHelp.stdout).toContain("decide");
-      expect(donorHelp.stdout).toContain("evidence");
+      const adoptionHelp = await cliRunner.runCli(["source", "adoption", "--help"]);
+      expect(adoptionHelp.exitCode).toBe(0);
+      expect(adoptionHelp.stdout).toContain("take");
+      expect(adoptionHelp.stdout).toContain("inspect");
+      expect(adoptionHelp.stdout).toContain("decide");
+      expect(adoptionHelp.stdout).toContain("evidence");
     },
-    DONOR_CLI_TIMEOUT_MS,
+    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
   );
 });

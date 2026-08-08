@@ -4,20 +4,20 @@ import {
   type AnalysisExit,
   type AssayProjectRegistryStatus,
   CURRENT_VERSION,
-  DONOR_TAKE_MODES,
-  type DonorDecisionOutcome,
-  type DonorTakeMode,
   type KnowledgeType,
+  SOURCE_ADOPTION_TAKE_MODES,
   SOURCE_CAPTURE_MODES,
   SOURCE_CHANGE_CLASSES,
+  SOURCE_MODES,
+  type SourceAdoptionDecisionOutcome,
+  type SourceAdoptionTakeMode,
   type SourceCaptureMode,
   type SourceChangeClass,
+  type SourceMode,
   type SystemVcs,
   type WorkspacePrivacy,
-  absorbReference,
   addKnowledge,
   addPlugin,
-  addReference,
   addSource,
   adoptExistingProject,
   appendTrellisJournal,
@@ -27,7 +27,6 @@ import {
   archiveSystem,
   archiveTrellisTask,
   attachExistingRepo,
-  backfillReferenceCaseFile,
   captureEvent,
   checkFramework,
   checkPlugins,
@@ -40,7 +39,7 @@ import {
   createTrellisChannel,
   createTrellisTask,
   currentTrellisSession,
-  decideDonorAdoption,
+  decideSourceAdoption,
   diffSource,
   discoverFrameworkRoot,
   endTrellisSession,
@@ -49,22 +48,22 @@ import {
   finishTrellisWorker,
   forgetProject,
   getCurrentTrellisTask,
-  getDonorAdoption,
-  getDonorHistory,
-  getDonorStatus,
   getFrameworkStatus,
+  getSourceAdoption,
+  getSourceAdoptionHistory,
+  getSourceAdoptionStatus,
   getSourceLog,
   getSourceStatus,
   getTrellisContext,
   getTrellisProtocol,
   heartbeatTrellisWorker,
   initFramework,
-  inspectDonorAdoption,
+  inspectSourceAdoption,
   installTrellisHook,
   listAvailableArchetypes,
-  listDonorAdoptions,
   listPlugins,
   listProjectRecords,
+  listSourceAdoptions,
   listSystems,
   listTrellisJournal,
   listTrellisMemory,
@@ -82,10 +81,10 @@ import {
   readTrellisSessionIdFromStdin,
   rebindTrellisSession,
   reconcilePlugins,
-  recordDonorEvidenceFromFile,
-  recordDonorRollback,
-  registerDonorAdoptionFromFile,
+  recordSourceAdoptionEvidenceFromFile,
+  recordSourceAdoptionRollback,
   registerExternalPluginFromFile,
+  registerSourceAdoptionFromFile,
   registerSystem,
   registerTrellisWorker,
   removeExternalPlugin,
@@ -108,11 +107,11 @@ import {
   startTrellisSession,
   switchSource,
   syncSource,
-  takeDonorMaterial,
+  takeSourceAdoptionMaterial,
   transitionTrellisTask,
-  updateDonorAdoptionFromFile,
+  updateSourceAdoptionFromFile,
   updateSystem,
-  verifyDonorInspection,
+  verifySourceAdoptionInspection,
 } from "assay-core";
 
 import { recordCommandProjectLifecycle } from "./command-lifecycle.js";
@@ -122,13 +121,6 @@ import {
   formatAttachResult,
   formatCheckResult,
   formatConvertResult,
-  formatDonorAdoption,
-  formatDonorDecision,
-  formatDonorHistory,
-  formatDonorInspection,
-  formatDonorList,
-  formatDonorStatus,
-  formatDonorVerification,
   formatInitResult,
   formatPluginAdd,
   formatPluginCheck,
@@ -136,6 +128,13 @@ import {
   formatPluginReconcile,
   formatProjectList,
   formatProjectRecord,
+  formatSourceAdoption,
+  formatSourceAdoptionDecision,
+  formatSourceAdoptionHistory,
+  formatSourceAdoptionInspection,
+  formatSourceAdoptionList,
+  formatSourceAdoptionStatus,
+  formatSourceAdoptionVerification,
   formatSourceDiffResult,
   formatSourceLogResult,
   formatSourceStatusResult,
@@ -252,11 +251,11 @@ function parseStatusFilter(status?: string): AssayProjectRegistryStatus | undefi
  *
  * The name is everything before the **first** colon, so the remainder keeps a
  * Windows-style path intact instead of being cut at its drive colon. A path
- * like that is not a valid donor locator — locators are relative to the source
+ * like that is not a valid Source adoption locator — locators are relative to the source
  * observation or the registered system — and it is refused by name below or by
  * the path schema, rather than being silently rewritten into something else.
  */
-function splitDonorLocatorArgument(
+function splitSourceAdoptionLocatorArgument(
   value: string,
   label: string,
 ): { readonly name: string; readonly path: string } {
@@ -1686,55 +1685,23 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       }
     });
 
-  const reference = program.command("reference").description("Reference operations");
-  reference
-    .command("add")
-    .description("Copy a local source directory into references/frozen/YYYYMM")
-    .argument("<source-dir>", "local source directory to freeze")
-    .argument("<name>", "reference name")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (sourceDir, name, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await addReference({ root, source: sourceDir, name });
-      writeLine(output, "stdout", `Frozen reference: ${result.path}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-    });
-
-  reference
-    .command("backfill")
-    .description("Write the missing reference.yaml for an existing frozen reference")
-    .argument("<path>", "frozen reference directory, relative to the workspace root")
-    .option("--source <origin>", "where the material came from, when it is known")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .action(async (referencePath, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await backfillReferenceCaseFile({
-        root,
-        path: referencePath,
-        ...(commandOptions.source === undefined ? {} : { source: commandOptions.source }),
-      });
-      if (!result.created) {
-        writeLine(output, "stdout", `Reference already has a case file: ${result.referenceFile}`);
-        return;
-      }
-      writeLine(output, "stdout", `Wrote reference case file: ${result.referenceFile}`);
-      if (result.eventFile) {
-        writeLine(output, "stdout", `Event: ${result.eventFile}`);
-      }
-    });
-
-  const source = program.command("source").description("Living external source operations");
+  const source = program.command("source").description("External Source operations");
   source
     .command("add")
-    .description("Add a living external source under references/<alias>/")
+    .description("Add an external Source under sources/<alias>/")
     .argument("<repo-or-dir>", "local source directory or git repository URL")
     .argument("[alias]", "short filesystem-safe source alias")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--branch <branch>", "branch to check out for Git-backed sources")
     .addOption(
-      new Option("--capture <mode>", `capture mode (${SOURCE_CAPTURE_MODES.join("|")})`)
-        .choices([...SOURCE_CAPTURE_MODES])
-        .default("checkout"),
+      new Option("--mode <mode>", `Source mode (${SOURCE_MODES.join("|")})`)
+        .choices([...SOURCE_MODES])
+        .default("living"),
+    )
+    .addOption(
+      new Option("--capture <mode>", `capture mode (${SOURCE_CAPTURE_MODES.join("|")})`).choices([
+        ...SOURCE_CAPTURE_MODES,
+      ]),
     )
     .action(async (repoOrDir, alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -1743,7 +1710,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         source: repoOrDir,
         ...(alias === undefined ? {} : { alias }),
         ...(commandOptions.branch === undefined ? {} : { branch: commandOptions.branch }),
-        capture: commandOptions.capture as SourceCaptureMode,
+        mode: commandOptions.mode as SourceMode,
+        ...(commandOptions.capture === undefined
+          ? {}
+          : { capture: commandOptions.capture as SourceCaptureMode }),
       });
       writeLine(output, "stdout", `Added source: ${result.path}`);
       writeLine(output, "stdout", `Observation: ${result.observationFile}`);
@@ -1812,7 +1782,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   source
     .command("status")
-    .description("Show living source status")
+    .description("Show Source status")
     .argument("[alias]", "source alias")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .action(async (alias, commandOptions) => {
@@ -1857,19 +1827,19 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       );
     });
 
-  const donor = program
-    .command("donor")
-    .description("Track adopted donor material, evidence, and decisions");
+  const sourceAdoption = source
+    .command("adoption")
+    .description("Track Source adoption material, evidence, and decisions");
 
-  donor
+  sourceAdoption
     .command("register")
-    .description("Register a complete donor adoption definition")
-    .requiredOption("--file <path>", "JSON or YAML donor definition")
+    .description("Register a complete source adoption definition")
+    .requiredOption("--file <path>", "JSON or YAML source adoption definition")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await registerDonorAdoptionFromFile({
+      const result = await registerSourceAdoptionFromFile({
         root,
         file: commandOptions.file,
       });
@@ -1877,7 +1847,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", `Registered donor adoption: ${result.adoptionId}`);
+      writeLine(output, "stdout", `Registered source adoption: ${result.adoptionId}`);
       writeLine(output, "stdout", `Definition: ${result.definitionDigest}`);
       writeLine(
         output,
@@ -1889,14 +1859,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       }
     });
 
-  donor
+  sourceAdoption
     .command("take")
     .description("Register a single-source, single-target adoption without a definition file")
     .argument("<source>", "<source-alias>:<path-in-source>")
     .requiredOption("--into <target>", "<target-system>:<path-in-system>")
     .addOption(
       new Option("--mode <mode>", "how the material was carried over")
-        .choices([...DONOR_TAKE_MODES])
+        .choices([...SOURCE_ADOPTION_TAKE_MODES])
         .default("adapt"),
     )
     .addOption(
@@ -1911,15 +1881,15 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--json", "emit JSON")
     .action(async (sourceArgument, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const from = splitDonorLocatorArgument(sourceArgument, "donor source");
-      const into = splitDonorLocatorArgument(commandOptions.into, "--into");
-      const result = await takeDonorMaterial({
+      const from = splitSourceAdoptionLocatorArgument(sourceArgument, "Source adoption input");
+      const into = splitSourceAdoptionLocatorArgument(commandOptions.into, "--into");
+      const result = await takeSourceAdoptionMaterial({
         root,
         sourceAlias: from.name,
         sourcePath: from.path,
         targetSystem: into.name,
         targetPath: into.path,
-        mode: commandOptions.mode as DonorTakeMode,
+        mode: commandOptions.mode as SourceAdoptionTakeMode,
         ...(commandOptions.match === undefined
           ? {}
           : { match: commandOptions.match as "exact" | "prefix" }),
@@ -1931,7 +1901,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", `Registered donor adoption: ${result.adoptionId}`);
+      writeLine(output, "stdout", `Registered source adoption: ${result.adoptionId}`);
       writeLine(output, "stdout", `Definition: ${result.definitionDigest}`);
       writeLine(
         output,
@@ -1949,16 +1919,16 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       );
     });
 
-  donor
+  sourceAdoption
     .command("update")
     .description("Install a new immutable definition revision")
-    .argument("<adoption>", "donor adoption id")
-    .requiredOption("--file <path>", "JSON or YAML donor definition")
+    .argument("<adoption>", "source adoption id")
+    .requiredOption("--file <path>", "JSON or YAML source adoption definition")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await updateDonorAdoptionFromFile({
+      const result = await updateSourceAdoptionFromFile({
         root,
         adoptionId,
         file: commandOptions.file,
@@ -1967,63 +1937,63 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", `Updated donor adoption: ${result.adoptionId}`);
+      writeLine(output, "stdout", `Updated source adoption: ${result.adoptionId}`);
       writeLine(output, "stdout", `Definition: ${result.definitionDigest}`);
       if (result.eventFile) {
         writeLine(output, "stdout", `Event: ${result.eventFile}`);
       }
     });
 
-  donor
+  sourceAdoption
     .command("list")
-    .description("List donor adoption definitions without inspecting targets")
+    .description("List source adoption definitions without inspecting targets")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await listDonorAdoptions({ root });
+      const result = await listSourceAdoptions({ root });
       if (commandOptions.json) {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", formatDonorList(result));
+      writeLine(output, "stdout", formatSourceAdoptionList(result));
     });
 
-  donor
+  sourceAdoption
     .command("show")
-    .description("Show a donor definition and its target baselines")
-    .argument("<adoption>", "donor adoption id")
+    .description("Show a source adoption definition and its target baselines")
+    .argument("<adoption>", "source adoption id")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await getDonorAdoption({ root, adoptionId });
+      const result = await getSourceAdoption({ root, adoptionId });
       if (commandOptions.json) {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", formatDonorAdoption(result));
+      writeLine(output, "stdout", formatSourceAdoption(result));
     });
 
-  donor
+  sourceAdoption
     .command("status")
     .description("Inspect current source and target facts, or list adoptions")
-    .argument("[adoption]", "donor adoption id")
+    .argument("[adoption]", "source adoption id")
     .option("--target <id>", "inspect one target")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       if (!adoptionId) {
-        const result = await listDonorAdoptions({ root });
+        const result = await listSourceAdoptions({ root });
         if (commandOptions.json) {
           writeJson(output, result);
           return;
         }
-        writeLine(output, "stdout", formatDonorList(result));
+        writeLine(output, "stdout", formatSourceAdoptionList(result));
         return;
       }
-      const result = await getDonorStatus({
+      const result = await getSourceAdoptionStatus({
         root,
         adoptionId,
         ...(commandOptions.target === undefined ? {} : { targetId: commandOptions.target }),
@@ -2032,20 +2002,20 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", formatDonorStatus(result));
+      writeLine(output, "stdout", formatSourceAdoptionStatus(result));
     });
 
-  donor
+  sourceAdoption
     .command("inspect")
     .description("Capture current direct-change facts for one target")
-    .argument("<adoption>", "donor adoption id")
+    .argument("<adoption>", "source adoption id")
     .requiredOption("--target <id>", "target id")
     .option("--to <observation>", "source observation id; defaults to latest")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await inspectDonorAdoption({
+      const result = await inspectSourceAdoption({
         root,
         adoptionId,
         targetId: commandOptions.target,
@@ -2055,21 +2025,23 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", formatDonorInspection(result));
+      writeLine(output, "stdout", formatSourceAdoptionInspection(result));
     });
 
-  const donorEvidence = donor.command("evidence").description("Attach version-bound evidence");
-  donorEvidence
+  const sourceAdoptionEvidence = sourceAdoption
+    .command("evidence")
+    .description("Attach version-bound evidence");
+  sourceAdoptionEvidence
     .command("add")
-    .description("Attach evidence to a donor inspection")
-    .argument("<adoption>", "donor adoption id")
+    .description("Attach evidence to a source adoption inspection")
+    .argument("<adoption>", "source adoption id")
     .argument("<inspection>", "inspection id")
     .requiredOption("--file <path>", "JSON or YAML evidence input")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, inspectionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await recordDonorEvidenceFromFile({
+      const result = await recordSourceAdoptionEvidenceFromFile({
         root,
         adoptionId,
         inspectionId,
@@ -2079,36 +2051,36 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", `Recorded donor evidence: ${result.evidence.id}`);
+      writeLine(output, "stdout", `Recorded source adoption evidence: ${result.evidence.id}`);
       writeLine(output, "stdout", `Check: ${result.evidence.check_id}`);
       writeLine(output, "stdout", `Result: ${result.evidence.result}`);
       writeLine(output, "stdout", `Record: ${result.path}`);
     });
 
-  donor
+  sourceAdoption
     .command("verify")
     .description("Evaluate explicit evidence policy and inspection freshness")
-    .argument("<adoption>", "donor adoption id")
+    .argument("<adoption>", "source adoption id")
     .argument("<inspection>", "inspection id")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, inspectionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await verifyDonorInspection({ root, adoptionId, inspectionId });
+      const result = await verifySourceAdoptionInspection({ root, adoptionId, inspectionId });
       if (commandOptions.json) {
         writeJson(output, result);
       } else {
-        writeLine(output, "stdout", formatDonorVerification(result));
+        writeLine(output, "stdout", formatSourceAdoptionVerification(result));
       }
       if (!result.ok) {
         output.setExitCode(1);
       }
     });
 
-  donor
+  sourceAdoption
     .command("decide")
     .description("Record accept, reject, or defer against a current snapshot")
-    .argument("<adoption>", "donor adoption id")
+    .argument("<adoption>", "source adoption id")
     .requiredOption("--target <id>", "target id")
     .addOption(
       new Option("--outcome <outcome>", "decision outcome")
@@ -2122,11 +2094,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--json", "emit JSON")
     .action(async (adoptionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await decideDonorAdoption({
+      const result = await decideSourceAdoption({
         root,
         adoptionId,
         targetId: commandOptions.target,
-        outcome: commandOptions.outcome as Exclude<DonorDecisionOutcome, "rollback">,
+        outcome: commandOptions.outcome as Exclude<SourceAdoptionDecisionOutcome, "rollback">,
         ...(commandOptions.inspection === undefined
           ? {}
           : { inspectionId: commandOptions.inspection }),
@@ -2137,19 +2109,19 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", formatDonorDecision(result));
+      writeLine(output, "stdout", formatSourceAdoptionDecision(result));
     });
 
-  donor
+  sourceAdoption
     .command("history")
-    .description("Show committed donor decisions")
-    .argument("<adoption>", "donor adoption id")
+    .description("Show committed source adoption decisions")
+    .argument("<adoption>", "source adoption id")
     .option("--target <id>", "filter by target id")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await getDonorHistory({
+      const result = await getSourceAdoptionHistory({
         root,
         adoptionId,
         ...(commandOptions.target === undefined ? {} : { targetId: commandOptions.target }),
@@ -2158,21 +2130,23 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", formatDonorHistory(result));
+      writeLine(output, "stdout", formatSourceAdoptionHistory(result));
     });
 
-  const donorRollback = donor.command("rollback").description("Record an external restoration");
-  donorRollback
+  const sourceAdoptionRollback = sourceAdoption
+    .command("rollback")
+    .description("Record an external restoration");
+  sourceAdoptionRollback
     .command("record")
     .description("Record that mapped artifacts match a prior accepted baseline")
-    .argument("<adoption>", "donor adoption id")
+    .argument("<adoption>", "source adoption id")
     .requiredOption("--to-decision <id>", "accepted decision whose baseline was restored")
     .option("--reason <text>", "rollback rationale")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")
     .action(async (adoptionId, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
-      const result = await recordDonorRollback({
+      const result = await recordSourceAdoptionRollback({
         root,
         adoptionId,
         decisionId: commandOptions.toDecision,
@@ -2182,58 +2156,22 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         writeJson(output, result);
         return;
       }
-      writeLine(output, "stdout", formatDonorDecision(result));
-    });
-
-  program
-    .command("absorb")
-    .description("Absorb a source using the workspace manifest mode and open a pre-filled analysis")
-    .argument("<source-dir>", "local source directory to absorb")
-    .option("--name <name>", "reference name (defaults to source directory basename)")
-    .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .addOption(
-      new Option("--as <outlet>", "absorption-mode outlet: problem (default) or intake").choices([
-        ...ABSORPTION_OUTLETS,
-      ]),
-    )
-    .action(async (sourceDir, commandOptions) => {
-      const root = await discoveredRoot(commandOptions.root);
-      const result = await absorbReference({
-        root,
-        source: sourceDir,
-        ...(commandOptions.name === undefined ? {} : { name: commandOptions.name }),
-        ...(commandOptions.as === undefined ? {} : { outlet: commandOptions.as }),
-      });
-      writeLine(output, "stdout", `Absorbed source: ${result.referencePath}`);
-      writeLine(output, "stdout", `Opened analysis: ${result.analysisPath}`);
-      writeLine(output, "stdout", `Event: ${result.eventFile}`);
-      writeLine(
-        output,
-        "stdout",
-        "Next: fill ## Key observations in the analysis, then `assay analysis close <path> --exit ...`.",
-      );
+      writeLine(output, "stdout", formatSourceAdoptionDecision(result));
     });
 
   const analysis = program.command("analysis").description("Analysis operations");
   analysis
     .command("new")
-    .description("Create a reference analysis draft")
+    .description("Create an analysis draft")
     .argument("<title>", "analysis title")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
-    .option(
-      "--for-reference <path>",
-      "frozen reference path to bind (pre-fills Reference/Source/Freeze path)",
-    )
-    .option("--for-source <alias>", "living source alias to bind")
+    .option("--for-source <alias>", "Source alias to bind")
     .option("--observation <id-or-path>", "source observation id/path; defaults to latest")
     .action(async (title, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await createAnalysis({
         root,
         title,
-        ...(commandOptions.forReference === undefined
-          ? {}
-          : { forReference: commandOptions.forReference }),
         ...(commandOptions.forSource === undefined ? {} : { forSource: commandOptions.forSource }),
         ...(commandOptions.observation === undefined
           ? {}

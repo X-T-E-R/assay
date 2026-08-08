@@ -41,8 +41,8 @@ async function tree(root: string): Promise<string[]> {
   return result.sort();
 }
 
-describe("0.9 capability and native Intent removal", () => {
-  it("writes the closed 0.9.0+s3+l6 envelope without capability or plugin state", async () => {
+describe("capability and native Intent removal", () => {
+  it("writes the closed 0.10.0+s3+l7 envelope without capability or plugin state", async () => {
     const root = path.join(await tempDirs.createTempDir(), "fresh");
     await initFramework({ target: root, name: "Fresh" });
     await applyUpdate({ root, dryRun: false });
@@ -51,9 +51,9 @@ describe("0.9 capability and native Intent removal", () => {
     const manifest = JSON.parse(manifestText) as Record<string, unknown>;
     expect(manifest).toMatchObject({
       __schema: 3,
-      framework_version: "0.9.0",
-      minimum_assay_version: "0.9.0",
-      layout_version: 6,
+      framework_version: "0.10.0",
+      minimum_assay_version: "0.10.0",
+      layout_version: 7,
     });
     expect((manifest.project as Record<string, unknown>).capabilities).toBeUndefined();
     expect(manifest.plugins).toBeUndefined();

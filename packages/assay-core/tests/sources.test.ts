@@ -9,9 +9,14 @@ import {
   SOURCE_CAPTURE_MODES,
   addSource,
   checkFramework,
+  createAnalysis,
   diffSource,
+  getSourceLog,
   getSourceStatus,
   initFramework,
+  registerSourceAdoption,
+  registerSystem,
+  resolveSourceObservation,
   switchSource,
   syncSource,
 } from "../src/index.js";
@@ -57,7 +62,7 @@ describe("source observations", () => {
     expect(SOURCE_CAPTURE_MODES).toEqual(["checkout", "archive"]);
   });
 
-  it("adds a checkout-backed local directory source at a shallow reference path", async () => {
+  it("adds a checkout-backed local directory source at a shallow Source path", async () => {
     const root = await initAssayWorkspace("SourceAdd");
     const source = path.join(await tempDir(), "source-project");
     await mkdir(path.join(source, "src"), { recursive: true });
@@ -74,16 +79,16 @@ describe("source observations", () => {
       now: new Date("2026-07-01T08:00:00"),
     });
 
-    expect(result.path).toBe("references/source-project");
-    expect(result.checkoutPath).toBe("references/source-project/checkout");
+    expect(result.path).toBe("sources/source-project");
+    expect(result.checkoutPath).toBe("sources/source-project/checkout");
     expect(
-      await exists(path.join(root, "references", "source-project", "checkout", "README.md")),
+      await exists(path.join(root, "sources", "source-project", "checkout", "README.md")),
     ).toBe(true);
     expect(
       await exists(
         path.join(
           root,
-          "references",
+          "sources",
           "source-project",
           "checkout",
           "node_modules",
@@ -93,14 +98,14 @@ describe("source observations", () => {
       ),
     ).toBe(false);
     expect(
-      await exists(path.join(root, "references", "source-project", "checkout", "source-project")),
+      await exists(path.join(root, "sources", "source-project", "checkout", "source-project")),
     ).toBe(false);
     expect(
-      await exists(path.join(root, "references", "source-project", "materials", "structure.md")),
+      await exists(path.join(root, "sources", "source-project", "materials", "structure.md")),
     ).toBe(true);
 
     const sourceYaml = await readFile(
-      path.join(root, "references", "source-project", "source.yaml"),
+      path.join(root, "sources", "source-project", "source.yaml"),
       "utf8",
     );
     expect(sourceYaml).toContain("lineage_id: source-project");
@@ -109,7 +114,7 @@ describe("source observations", () => {
     const observationYaml = await readFile(
       path.join(
         root,
-        "references",
+        "sources",
         "source-project",
         "observations",
         `${result.observation.observation_id}.yaml`,
@@ -122,7 +127,7 @@ describe("source observations", () => {
     const manifest = await readFile(
       path.join(
         root,
-        "references",
+        "sources",
         "source-project",
         "manifests",
         `${result.observation.observation_id}.json`,
@@ -135,7 +140,7 @@ describe("source observations", () => {
     const check = await checkFramework({ root });
     expect(
       check.rows.filter(
-        (row) => row.path.includes("references/source-project") && row.status === "warning",
+        (row) => row.path.includes("sources/source-project") && row.status === "warning",
       ),
     ).toEqual([]);
   });
@@ -155,20 +160,20 @@ describe("source observations", () => {
       now: new Date("2026-07-01T08:00:00"),
     });
 
-    expect(result.path).toBe("references/archive-source");
+    expect(result.path).toBe("sources/archive-source");
     expect(result.checkoutPath).toBeNull();
     expect(result.observation.capture_mode).toBe("archive");
     expect(result.observation.capture_path).toBe(
       `captures/${result.observation.observation_id}/source`,
     );
     expect(
-      await exists(path.join(root, "references", "archive-source", "checkout", "README.md")),
+      await exists(path.join(root, "sources", "archive-source", "checkout", "README.md")),
     ).toBe(false);
     expect(
       await exists(
         path.join(
           root,
-          "references",
+          "sources",
           "archive-source",
           "captures",
           result.observation.observation_id,
@@ -181,7 +186,7 @@ describe("source observations", () => {
     const observationYaml = await readFile(
       path.join(
         root,
-        "references",
+        "sources",
         "archive-source",
         "observations",
         `${result.observation.observation_id}.yaml`,
@@ -200,9 +205,119 @@ describe("source observations", () => {
     const check = await checkFramework({ root });
     expect(
       check.rows.filter(
-        (row) => row.path.includes("references/archive-source") && row.status === "warning",
+        (row) => row.path.includes("sources/archive-source") && row.status === "warning",
       ),
     ).toEqual([]);
+  });
+
+  it("creates immutable frozen Sources in the same namespace without derived history", async () => {
+    const root = await initAssayWorkspace("FrozenSource");
+    const source = path.join(await tempDir(), "frozen-source");
+    await mkdir(source, { recursive: true });
+    await git(source, ["init"]);
+    await git(source, ["config", "user.email", "assay@example.test"]);
+    await git(source, ["config", "user.name", "Assay Test"]);
+    await writeFile(path.join(source, "README.md"), "# Frozen\n", "utf8");
+    await git(source, ["add", "README.md"]);
+    await git(source, ["commit", "-m", "frozen"]);
+
+    const added = await addSource({
+      root,
+      source,
+      alias: "Frozen Source",
+      mode: "frozen",
+      now: new Date("2026-07-01T08:00:00"),
+    });
+
+    expect(added.path).toBe("sources/frozen-source");
+    expect(added.observation.capture_mode).toBe("archive");
+    expect(added.observation.vcs?.commit).toMatch(/^[0-9a-f]{40,64}$/);
+    const frozenStatus = (await getSourceStatus({ root, alias: "frozen-source" })).sources[0];
+    expect(frozenStatus?.mode).toBe("frozen");
+    expect(frozenStatus?.checkout).toBeUndefined();
+    const frozenLineage = await readFile(
+      path.join(root, "sources", "frozen-source", "source.yaml"),
+      "utf8",
+    );
+    expect(frozenLineage).not.toContain("checkout:");
+    expect(await readFile(path.join(root, added.observationFile), "utf8")).toContain("vcs:");
+    expect((await getSourceLog({ root, alias: "frozen-source" })).entries).toHaveLength(1);
+    expect((await diffSource({ root, alias: "frozen-source" })).added).toContain("README.md");
+    expect(
+      (
+        await resolveSourceObservation({
+          root,
+          alias: "frozen-source",
+          observation: added.observation.observation_id,
+        })
+      ).observation.observation_id,
+    ).toBe(added.observation.observation_id);
+    const analysis = await createAnalysis({
+      root,
+      title: "Frozen evidence",
+      forSource: "frozen-source",
+      observation: added.observation.observation_id,
+    });
+    expect(await readFile(analysis.absolutePath, "utf8")).toContain("Source alias: frozen-source");
+    const systemRoot = path.join(root, "systems", "product");
+    await mkdir(systemRoot, { recursive: true });
+    await writeFile(path.join(systemRoot, "README.md"), "# Product\n", "utf8");
+    await registerSystem(root, { name: "product", path: "systems/product", vcs: "none" });
+    const adoption = await registerSourceAdoption({
+      root,
+      definition: {
+        schema: "assay.donor-adoption/v1",
+        id: "frozen-product",
+        source: { alias: "frozen-source", observation: added.observation.observation_id },
+        targets: [{ id: "product", system: "product" }],
+        mappings: [
+          {
+            id: "readme",
+            source: { path: "README.md" },
+            target: { target_id: "product", path: "README.md" },
+            evidence: [],
+          },
+        ],
+        evidence: [],
+      },
+    });
+    expect(adoption.definition.source.alias).toBe("frozen-source");
+    expect(await exists(path.join(root, added.path, "history.md"))).toBe(false);
+    expect(await exists(path.join(root, added.path, "comparisons"))).toBe(false);
+    await expect(syncSource({ root, alias: "frozen-source" })).rejects.toThrow(/frozen.*sync/i);
+    await expect(switchSource({ root, alias: "frozen-source", target: "main" })).rejects.toThrow(
+      /frozen.*switch/i,
+    );
+    await expect(
+      addSource({ root, source, alias: "Invalid Frozen", mode: "frozen", capture: "checkout" }),
+    ).rejects.toThrow(/require archive/i);
+  });
+
+  it("requires explicit Source mode and rejects retired lineage and observation fields", async () => {
+    const root = await initAssayWorkspace("SourceStrictLedger");
+    const source = path.join(await tempDir(), "strict-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Strict Source\n", "utf8");
+    const added = await addSource({ root, source, alias: "strict-source" });
+    const lineageFile = path.join(root, "sources", "strict-source", "source.yaml");
+    const lineage = await readFile(lineageFile, "utf8");
+
+    await writeFile(lineageFile, `${lineage}status: active\n`, "utf8");
+    await expect(getSourceStatus({ root, alias: "strict-source" })).rejects.toThrow(
+      /retired field 'status'/,
+    );
+    await writeFile(lineageFile, lineage.replace(/^mode: living\r?\n/m, ""), "utf8");
+    await expect(getSourceStatus({ root, alias: "strict-source" })).rejects.toThrow(
+      /lineage mode must be one of/,
+    );
+
+    await writeFile(lineageFile, lineage, "utf8");
+    const observationFile = path.join(root, added.observationFile);
+    const observation = await readFile(observationFile, "utf8");
+    await writeFile(observationFile, `${observation}analysis_status: closed\n`, "utf8");
+    await expect(getSourceStatus({ root, alias: "strict-source" })).rejects.toThrow(
+      /retired field 'analysis_status'/,
+    );
   });
 
   it("fails the structural check when a latest source manifest is missing", async () => {
@@ -247,6 +362,75 @@ describe("source observations", () => {
     }
   });
 
+  it("rejects an old workspace tuple before Source coordination or data writes", async () => {
+    const root = await initAssayWorkspace("OldTupleSource");
+    const source = path.join(await tempDir(), "old-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Old\n", "utf8");
+    const manifestFile = path.join(root, ".assay", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+    manifest.framework_version = "0.9.0";
+    manifest.minimum_assay_version = "0.9.0";
+    manifest.layout_version = 6;
+    manifest.layout.version = 6;
+    const { sources: _currentSources, ...oldPaths } = manifest.layout.paths;
+    manifest.layout.paths = { ...oldPaths, references: "references" };
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    await expect(addSource({ root, source, alias: "old" })).rejects.toMatchObject({
+      code: "WORKSPACE_CUTOVER_REQUIRED",
+      required: "0.10.0+s3+l7",
+    });
+    expect(await exists(path.join(root, ".assay", "coordination"))).toBe(false);
+    expect(await exists(path.join(root, "sources", "old"))).toBe(false);
+  });
+
+  it("rejects a custom retired Source path before the first Source write", async () => {
+    const root = await initAssayWorkspace("RetiredSourcePath");
+    const source = path.join(await tempDir(), "custom-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Custom\n", "utf8");
+    await mkdir(path.join(root, ".assay", "archetypes"), { recursive: true });
+    await writeFile(
+      path.join(root, ".assay", "archetypes", "retired.yaml"),
+      "extends: base\nmode: learning\ndirs:\n  - references\ntemplates: []\n",
+      "utf8",
+    );
+    const manifestFile = path.join(root, ".assay", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+    manifest.project.archetype = "retired";
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    await expect(addSource({ root, source, alias: "custom" })).rejects.toMatchObject({
+      code: "RETIRED_ARCHETYPE_PATH",
+    });
+    expect(await exists(path.join(root, ".assay", "coordination"))).toBe(false);
+    expect(await exists(path.join(root, "sources", "custom"))).toBe(false);
+  });
+
+  it("rejects a custom retired path before diff reads Source ledger bytes", async () => {
+    const root = await initAssayWorkspace("RetiredSourceDiff");
+    const source = path.join(await tempDir(), "diff-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "README.md"), "# Diff Source\n", "utf8");
+    await addSource({ root, source, alias: "diff-source" });
+    await mkdir(path.join(root, ".assay", "archetypes"), { recursive: true });
+    await writeFile(
+      path.join(root, ".assay", "archetypes", "retired-diff.yaml"),
+      "extends: base\nmode: learning\ndirs:\n  - references\ntemplates: []\n",
+      "utf8",
+    );
+    const manifestFile = path.join(root, ".assay", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+    manifest.project.archetype = "retired-diff";
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    await writeFile(path.join(root, "sources", "diff-source", "source.yaml"), "not: [yaml", "utf8");
+
+    await expect(diffSource({ root, alias: "diff-source" })).rejects.toMatchObject({
+      code: "RETIRED_ARCHETYPE_PATH",
+    });
+  });
+
   it("syncs a directory source without duplicating same observations and diffs changed files", async () => {
     const root = await initAssayWorkspace("SourceSync");
     const source = path.join(await tempDir(), "sync-source");
@@ -282,7 +466,7 @@ describe("source observations", () => {
       await exists(
         path.join(
           root,
-          "references",
+          "sources",
           "sync-source",
           "observations",
           `${added.observation.observation_id}.yaml`,
@@ -297,10 +481,10 @@ describe("source observations", () => {
     expect(
       check.rows.some(
         (row) =>
-          row.path.includes("references/sync-source/observations/") &&
+          row.path.includes("sources/sync-source/observations/") &&
           row.message?.includes("needs revalidation analysis"),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it(
@@ -324,6 +508,12 @@ describe("source observations", () => {
         branch: "main",
         now: new Date("2026-07-01T08:00:00"),
       });
+      expect(
+        await readFile(path.join(root, "sources", "local-git", "source.yaml"), "utf8"),
+      ).toContain("checkout:");
+      expect((await getSourceStatus({ root, alias: "local-git" })).sources[0]?.checkout?.path).toBe(
+        "checkout",
+      );
 
       await writeFile(path.join(repo, "README.md"), "# Local Git\n\nv2\n", "utf8");
       await git(repo, ["commit", "-am", "second"]);
@@ -349,7 +539,7 @@ describe("source observations", () => {
       expect(sourceHeadAfterSync).toBe(sourceHeadBeforeSync);
 
       const checkoutReadme = await readFile(
-        path.join(root, "references", "local-git", "checkout", "README.md"),
+        path.join(root, "sources", "local-git", "checkout", "README.md"),
         "utf8",
       );
       expect(checkoutReadme).toContain("v2");
@@ -429,7 +619,7 @@ describe("source observations", () => {
         now: new Date("2026-07-01T08:00:00"),
       });
 
-      const checkout = path.join(root, "references", "git-project", "checkout");
+      const checkout = path.join(root, "sources", "git-project", "checkout");
       expect(await exists(path.join(checkout, ".git"))).toBe(true);
 
       const switched = await switchSource({
@@ -456,7 +646,7 @@ describe("source observations", () => {
     await writeFile(path.join(source, "README.md"), "# Source\n\nv1\n", "utf8");
     await addSource({ root, source, alias: "directory-source" });
 
-    const checkoutFile = path.join(root, "references", "directory-source", "checkout", "README.md");
+    const checkoutFile = path.join(root, "sources", "directory-source", "checkout", "README.md");
     await writeFile(checkoutFile, "# Source\n\nlocal work\n", "utf8");
     await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
 
@@ -481,7 +671,7 @@ describe("source observations", () => {
       await git(repo, ["branch", "-M", "main"]);
       await addSource({ root, source: repo, alias: "git-safety", branch: "main" });
 
-      const checkout = path.join(root, "references", "git-safety", "checkout");
+      const checkout = path.join(root, "sources", "git-safety", "checkout");
       const checkoutFile = path.join(checkout, "README.md");
       await writeFile(checkoutFile, "# Git safety\n\nlocal dirty\n", "utf8");
       await expect(syncSource({ root, alias: "git-safety" })).rejects.toThrow(

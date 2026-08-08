@@ -15,19 +15,19 @@ import {
   DONOR_EVIDENCE_SCHEMA,
   DONOR_INSPECTION_SCHEMA,
   DONOR_STATE_SCHEMA,
-  type DonorAcceptedBaseline,
-  type DonorAdoptionDefinition,
-  type DonorDecision,
-  type DonorDecisionOutcome,
-  type DonorDiagnostic,
-  type DonorEvidence,
-  type DonorEvidenceInput,
-  type DonorInspection,
-  type DonorLocatorSnapshot,
-  type DonorMappingInspection,
-  type DonorPathLocator,
-  type DonorPolicyEvaluation,
-  type DonorState,
+  type SourceAdoptionAcceptedBaseline,
+  type SourceAdoptionDecision,
+  type SourceAdoptionDecisionOutcome,
+  type SourceAdoptionDefinition,
+  type SourceAdoptionDiagnostic,
+  type SourceAdoptionEvidence,
+  type SourceAdoptionEvidenceInput,
+  type SourceAdoptionInspection,
+  type SourceAdoptionLocatorSnapshot,
+  type SourceAdoptionMappingInspection,
+  type SourceAdoptionPathLocator,
+  type SourceAdoptionPolicyEvaluation,
+  type SourceAdoptionState,
   donorAdoptionDefinitionSchema,
   donorDecisionSchema,
   donorEvidenceInputSchema,
@@ -53,16 +53,16 @@ import {
   donorWorkspaceRoot,
   evidenceFile,
   inspectionFile,
-  listDonorEvidence,
-  listDonorInspections,
-  listDonorStateIds,
-  listDonorDecisions as listStoredDecisions,
+  listSourceAdoptionEvidence,
+  listSourceAdoptionInspections,
+  listSourceAdoptionStateIds,
+  listSourceAdoptionDecisions as listStoredDecisions,
   parseDonorValue,
-  readDonorDecision,
   readDonorDefinition,
-  readDonorInspection,
-  readDonorState,
-  readDonorStateFromDirectory,
+  readSourceAdoptionDecision,
+  readSourceAdoptionInspection,
+  readSourceAdoptionState,
+  readSourceAdoptionStateFromDirectory,
   readStructuredFile,
   stateFile,
   withAdoptionLock,
@@ -93,15 +93,19 @@ function uniqueIds(values: readonly string[], label: string): void {
   for (const value of values) {
     if (seen.has(value)) {
       throw new FrameworkError(`duplicate ${label} identifier: ${value}`, {
-        code: "INVALID_DONOR",
+        code: "INVALID_SOURCE_ADOPTION",
       });
     }
     seen.add(value);
   }
 }
 
-function normalizeDefinition(value: unknown): DonorAdoptionDefinition {
-  const parsed = parseDonorValue(donorAdoptionDefinitionSchema, value, "donor adoption definition");
+function normalizeDefinition(value: unknown): SourceAdoptionDefinition {
+  const parsed = parseDonorValue(
+    donorAdoptionDefinitionSchema,
+    value,
+    "Source adoption definition",
+  );
   const normalized = {
     ...parsed,
     targets: [...parsed.targets].sort((a, b) => a.id.localeCompare(b.id)),
@@ -115,7 +119,7 @@ function normalizeDefinition(value: unknown): DonorAdoptionDefinition {
 
 async function validateDefinition(
   root: string,
-  definition: DonorAdoptionDefinition,
+  definition: SourceAdoptionDefinition,
 ): Promise<void> {
   uniqueIds(
     definition.targets.map((target) => target.id),
@@ -134,8 +138,8 @@ async function validateDefinition(
   const requirementIds = new Set(definition.evidence.map((requirement) => requirement.id));
   for (const target of definition.targets) {
     if (!definition.mappings.some((mapping) => mapping.target.target_id === target.id)) {
-      throw new FrameworkError(`donor target '${target.id}' has no mappings`, {
-        code: "INVALID_DONOR",
+      throw new FrameworkError(`Source adoption target '${target.id}' has no mappings`, {
+        code: "INVALID_SOURCE_ADOPTION",
       });
     }
   }
@@ -143,14 +147,14 @@ async function validateDefinition(
     if (!targetIds.has(mapping.target.target_id)) {
       throw new FrameworkError(
         `mapping '${mapping.id}' references unknown target '${mapping.target.target_id}'`,
-        { code: "INVALID_DONOR" },
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     for (const requirement of mapping.evidence) {
       if (!requirementIds.has(requirement)) {
         throw new FrameworkError(
           `mapping '${mapping.id}' references unknown evidence '${requirement}'`,
-          { code: "INVALID_DONOR" },
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
     }
@@ -167,7 +171,7 @@ async function validateDefinition(
       if (snapshot.state !== "present") {
         throw new FrameworkError(
           `source locator for mapping '${mappingId}' does not resolve in observation '${definition.source.observation}'`,
-          { code: "INVALID_DONOR" },
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
     }
@@ -189,30 +193,30 @@ async function appendDonorEventBestEffort(
   }
 }
 
-export interface RegisterDonorAdoptionOptions {
+export interface RegisterSourceAdoptionOptions {
   readonly root: string;
   readonly definition: unknown;
   readonly now?: Date;
 }
 
-export interface RegisterDonorAdoptionFileOptions {
+export interface RegisterSourceAdoptionFileOptions {
   readonly root: string;
   readonly file: string;
   readonly now?: Date;
 }
 
-export interface DonorDefinitionResult {
+export interface SourceAdoptionDefinitionResult {
   readonly root: string;
   readonly adoptionId: string;
   readonly definitionDigest: string;
-  readonly definition: DonorAdoptionDefinition;
-  readonly state: DonorState;
+  readonly definition: SourceAdoptionDefinition;
+  readonly state: SourceAdoptionState;
   readonly eventFile: string | null;
 }
 
 export async function registerDonorAdoption(
-  options: RegisterDonorAdoptionOptions,
-): Promise<DonorDefinitionResult> {
+  options: RegisterSourceAdoptionOptions,
+): Promise<SourceAdoptionDefinitionResult> {
   const root = path.resolve(options.root);
   const definition = normalizeDefinition(options.definition);
   const now = options.now ?? new Date();
@@ -238,7 +242,7 @@ export async function registerDonorAdoption(
     const eventFile = await appendDonorEventBestEffort(
       root,
       {
-        event: "donor.registered",
+        event: "source.adoption.registered",
         adoption: definition.id,
         definition_digest: digest,
         targets: definition.targets.map((target) => target.id),
@@ -257,8 +261,8 @@ export async function registerDonorAdoption(
 }
 
 export async function registerDonorAdoptionFromFile(
-  options: RegisterDonorAdoptionFileOptions,
-): Promise<DonorDefinitionResult> {
+  options: RegisterSourceAdoptionFileOptions,
+): Promise<SourceAdoptionDefinitionResult> {
   return registerDonorAdoption({
     root: options.root,
     definition: await readStructuredFile(path.resolve(options.file)),
@@ -266,13 +270,13 @@ export async function registerDonorAdoptionFromFile(
   });
 }
 
-export interface UpdateDonorAdoptionOptions extends RegisterDonorAdoptionOptions {
+export interface UpdateSourceAdoptionOptions extends RegisterSourceAdoptionOptions {
   readonly adoptionId: string;
 }
 
 export async function updateDonorAdoption(
-  options: UpdateDonorAdoptionOptions,
-): Promise<DonorDefinitionResult> {
+  options: UpdateSourceAdoptionOptions,
+): Promise<SourceAdoptionDefinitionResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
   const definition = normalizeDefinition(options.definition);
@@ -280,19 +284,19 @@ export async function updateDonorAdoption(
   if (definition.id !== adoptionId) {
     throw new FrameworkError(
       `definition id '${definition.id}' does not match adoption '${adoptionId}'`,
-      { code: "INVALID_DONOR" },
+      { code: "INVALID_SOURCE_ADOPTION" },
     );
   }
   await validateDefinition(root, definition);
   const digest = recordDigest(definition);
 
   return withAdoptionLock(root, adoptionId, async (directory) => {
-    const state = await readDonorStateFromDirectory(directory, adoptionId);
+    const state = await readSourceAdoptionStateFromDirectory(directory, adoptionId);
     const previous = await readDonorDefinition(root, adoptionId, state.current_definition);
     if (previous.definition.source.alias !== definition.source.alias) {
       throw new FrameworkError(
-        "a donor adoption cannot change source lineage; register a new adoption instead",
-        { code: "INVALID_DONOR" },
+        "a Source adoption cannot change source lineage; register a new adoption instead",
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     const targets = { ...state.targets };
@@ -311,7 +315,7 @@ export async function updateDonorAdoption(
     const eventFile = await appendDonorEventBestEffort(
       root,
       {
-        event: "donor.definition.updated",
+        event: "source.adoption.definition.updated",
         adoption: adoptionId,
         previous_definition: state.current_definition,
         definition_digest: digest,
@@ -334,7 +338,7 @@ export async function updateDonorAdoptionFromFile(options: {
   readonly adoptionId: string;
   readonly file: string;
   readonly now?: Date;
-}): Promise<DonorDefinitionResult> {
+}): Promise<SourceAdoptionDefinitionResult> {
   return updateDonorAdoption({
     root: options.root,
     adoptionId: options.adoptionId,
@@ -343,10 +347,10 @@ export async function updateDonorAdoptionFromFile(options: {
   });
 }
 
-export const DONOR_TAKE_MODES = ["adapt", "copy"] as const;
-export type DonorTakeMode = (typeof DONOR_TAKE_MODES)[number];
+export const SOURCE_ADOPTION_TAKE_MODES_CODEC = ["adapt", "copy"] as const;
+export type SourceAdoptionTakeMode = (typeof SOURCE_ADOPTION_TAKE_MODES_CODEC)[number];
 
-export interface TakeDonorMaterialOptions {
+export interface TakeSourceAdoptionMaterialOptions {
   readonly root: string;
   /** Living source alias the material came from. */
   readonly sourceAlias: string;
@@ -356,7 +360,7 @@ export interface TakeDonorMaterialOptions {
   readonly targetSystem: string;
   /** Path inside that system. */
   readonly targetPath: string;
-  readonly mode?: DonorTakeMode;
+  readonly mode?: SourceAdoptionTakeMode;
   /** Locator shape; inferred from the observation when omitted. */
   readonly match?: "exact" | "prefix";
   /** Source observation id or path; defaults to the latest. */
@@ -367,7 +371,7 @@ export interface TakeDonorMaterialOptions {
   readonly now?: Date;
 }
 
-export interface TakeDonorMaterialResult extends DonorDefinitionResult {
+export interface TakeSourceAdoptionMaterialResult extends SourceAdoptionDefinitionResult {
   readonly targetId: string;
   readonly mappingId: string;
   readonly match: "exact" | "prefix";
@@ -389,7 +393,7 @@ function donorSlug(value: string): string {
  * Validate one endpoint of a take before it becomes a definition. Doing it
  * here rather than leaving it to definition validation is what lets the error
  * name the argument the caller typed — an absolute or drive-prefixed path is
- * the likely mistake, and "donor adoption definition failed validation" would
+ * the likely mistake, and "Source adoption definition failed validation" would
  * not say which half of the command produced it.
  */
 function normalizeTakePath(value: string, label: string): string {
@@ -397,7 +401,7 @@ function normalizeTakePath(value: string, label: string): string {
   if (!parsed.success) {
     throw new FrameworkError(
       `${label} must be a contained relative path (no leading '/', drive letter, or '..'): ${value}`,
-      { code: "INVALID_DONOR" },
+      { code: "INVALID_SOURCE_ADOPTION" },
     );
   }
   return parsed.data;
@@ -442,8 +446,8 @@ async function inferSourceMatch(
  * target, multi-mapping, or evidence-bearing adoptions.
  */
 export async function takeDonorMaterial(
-  options: TakeDonorMaterialOptions,
-): Promise<TakeDonorMaterialResult> {
+  options: TakeSourceAdoptionMaterialOptions,
+): Promise<TakeSourceAdoptionMaterialResult> {
   const root = path.resolve(options.root);
   const sourcePath = normalizeTakePath(options.sourcePath, "source path");
   const targetPath = normalizeTakePath(options.targetPath, "target path");
@@ -495,15 +499,15 @@ export async function takeDonorMaterial(
   };
 }
 
-export interface DonorSourceMapping {
+export interface SourceAdoptionSourceMapping {
   readonly adoptionId: string;
   readonly mappingId: string;
   readonly sourceAlias: string;
-  readonly locator: DonorPathLocator;
+  readonly locator: SourceAdoptionPathLocator;
 }
 
 /**
- * Every declared source locator across the workspace's donor adoptions.
+ * Every declared source locator across the workspace's Source adoptions.
  *
  * `assay status` intersects these with the paths an upstream change touched,
  * so "the source moved" is reported together with "it reaches N adopted
@@ -511,14 +515,14 @@ export interface DonorSourceMapping {
  * record integrity is reported, and status must not stop answering because one
  * adoption is unreadable.
  */
-export async function listDonorSourceMappings(
+export async function listSourceAdoptionSourceMappings(
   root: string,
-): Promise<readonly DonorSourceMapping[]> {
+): Promise<readonly SourceAdoptionSourceMapping[]> {
   const resolvedRoot = path.resolve(root);
-  const mappings: DonorSourceMapping[] = [];
-  for (const adoptionId of await listDonorStateIds(resolvedRoot)) {
+  const mappings: SourceAdoptionSourceMapping[] = [];
+  for (const adoptionId of await listSourceAdoptionStateIds(resolvedRoot)) {
     try {
-      const state = await readDonorState(resolvedRoot, adoptionId);
+      const state = await readSourceAdoptionState(resolvedRoot, adoptionId);
       const { definition } = await readDonorDefinition(
         resolvedRoot,
         adoptionId,
@@ -540,18 +544,18 @@ export async function listDonorSourceMappings(
 }
 
 function sourceChange(
-  baseline: DonorLocatorSnapshot | null,
-  candidate: DonorLocatorSnapshot,
-): DonorMappingInspection["source"]["change"] {
+  baseline: SourceAdoptionLocatorSnapshot | null,
+  candidate: SourceAdoptionLocatorSnapshot,
+): SourceAdoptionMappingInspection["source"]["change"] {
   if (!baseline) return "activation";
   if (sameLocatorSnapshot(baseline, candidate)) return "no-direct-change";
   return candidate.state === "missing" ? "missing" : "direct-change";
 }
 
 function targetChange(
-  baseline: DonorLocatorSnapshot | null,
-  candidate: DonorLocatorSnapshot,
-): DonorMappingInspection["target"]["change"] {
+  baseline: SourceAdoptionLocatorSnapshot | null,
+  candidate: SourceAdoptionLocatorSnapshot,
+): SourceAdoptionMappingInspection["target"]["change"] {
   if (!baseline) {
     if (candidate.state === "missing") return "missing";
     if (candidate.state === "unresolvable") return "unresolvable";
@@ -564,10 +568,10 @@ function targetChange(
 }
 
 function mappingFacts(
-  source: DonorMappingInspection["source"]["change"],
-  target: DonorMappingInspection["target"]["change"],
-): DonorMappingInspection["facts"] {
-  const facts: DonorMappingInspection["facts"][number][] = [];
+  source: SourceAdoptionMappingInspection["source"]["change"],
+  target: SourceAdoptionMappingInspection["target"]["change"],
+): SourceAdoptionMappingInspection["facts"] {
+  const facts: SourceAdoptionMappingInspection["facts"][number][] = [];
   if (source === "activation" || target === "activation") facts.push("activation");
   if (source === "direct-change") facts.push("source-direct-change");
   if (source === "missing") facts.push("source-missing");
@@ -580,10 +584,10 @@ function mappingFacts(
 
 function diagnosticsForMapping(
   mappingId: string,
-  source: DonorMappingInspection["source"]["change"],
-  target: DonorMappingInspection["target"]["change"],
-): DonorDiagnostic[] {
-  const diagnostics: DonorDiagnostic[] = [];
+  source: SourceAdoptionMappingInspection["source"]["change"],
+  target: SourceAdoptionMappingInspection["target"]["change"],
+): SourceAdoptionDiagnostic[] {
+  const diagnostics: SourceAdoptionDiagnostic[] = [];
   if (source === "direct-change") {
     diagnostics.push({
       code: "donor.source.direct_change",
@@ -624,19 +628,19 @@ function diagnosticsForMapping(
   return diagnostics;
 }
 
-async function buildDonorInspection(input: {
+async function buildSourceAdoptionInspection(input: {
   readonly root: string;
-  readonly state: DonorState;
-  readonly definition: DonorAdoptionDefinition;
+  readonly state: SourceAdoptionState;
+  readonly definition: SourceAdoptionDefinition;
   readonly definitionDigest: string;
   readonly targetId: string;
   readonly observation?: string;
   readonly now: Date;
-}): Promise<DonorInspection> {
+}): Promise<SourceAdoptionInspection> {
   const target = input.definition.targets.find((candidate) => candidate.id === input.targetId);
   if (!target) {
     throw new FrameworkNotFoundError(
-      `target '${input.targetId}' is not active in donor adoption '${input.definition.id}'`,
+      `target '${input.targetId}' is not active in Source adoption '${input.definition.id}'`,
     );
   }
   const targetState = input.state.targets[input.targetId] ?? { baseline: null };
@@ -647,8 +651,8 @@ async function buildDonorInspection(input: {
     input.observation,
   );
   const targetSnapshot = await snapshotDonorTarget(input.root, input.definition, input.targetId);
-  const mappings: DonorMappingInspection[] = [];
-  const diagnostics: DonorDiagnostic[] = [];
+  const mappings: SourceAdoptionMappingInspection[] = [];
+  const diagnostics: SourceAdoptionDiagnostic[] = [];
 
   for (const mapping of input.definition.mappings.filter(
     (candidate) => candidate.target.target_id === input.targetId,
@@ -657,7 +661,7 @@ async function buildDonorInspection(input: {
     const candidateTarget = targetSnapshot.locators[mapping.id];
     if (!candidateSource || !candidateTarget) {
       throw new FrameworkError(`snapshot missing mapping '${mapping.id}'`, {
-        code: "INVALID_DONOR",
+        code: "INVALID_SOURCE_ADOPTION",
       });
     }
     const baselineSource = targetState.baseline?.source.locators[mapping.id] ?? null;
@@ -724,7 +728,7 @@ async function buildDonorInspection(input: {
   });
 }
 
-export interface InspectDonorAdoptionOptions {
+export interface InspectSourceAdoptionOptions {
   readonly root: string;
   readonly adoptionId: string;
   readonly targetId: string;
@@ -733,25 +737,25 @@ export interface InspectDonorAdoptionOptions {
   readonly persist?: boolean;
 }
 
-export interface InspectDonorAdoptionResult {
+export interface InspectSourceAdoptionResult {
   readonly root: string;
-  readonly inspection: DonorInspection;
+  readonly inspection: SourceAdoptionInspection;
   readonly path: string | null;
   readonly created: boolean;
 }
 
 export async function inspectDonorAdoption(
-  options: InspectDonorAdoptionOptions,
-): Promise<InspectDonorAdoptionResult> {
+  options: InspectSourceAdoptionOptions,
+): Promise<InspectSourceAdoptionResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
-  const state = await readDonorState(root, adoptionId);
+  const state = await readSourceAdoptionState(root, adoptionId);
   const { definition, digest } = await readDonorDefinition(
     root,
     adoptionId,
     state.current_definition,
   );
-  const inspection = await buildDonorInspection({
+  const inspection = await buildSourceAdoptionInspection({
     root,
     state,
     definition,
@@ -774,7 +778,7 @@ export async function inspectDonorAdoption(
   };
 }
 
-export interface RecordDonorEvidenceOptions {
+export interface RecordSourceAdoptionEvidenceOptions {
   readonly root: string;
   readonly adoptionId: string;
   readonly inspectionId: string;
@@ -782,20 +786,24 @@ export interface RecordDonorEvidenceOptions {
   readonly now?: Date;
 }
 
-export interface RecordDonorEvidenceResult {
+export interface RecordSourceAdoptionEvidenceResult {
   readonly root: string;
-  readonly evidence: DonorEvidence;
+  readonly evidence: SourceAdoptionEvidence;
   readonly path: string;
   readonly created: boolean;
 }
 
-export async function recordDonorEvidence(
-  options: RecordDonorEvidenceOptions,
-): Promise<RecordDonorEvidenceResult> {
+export async function recordSourceAdoptionEvidence(
+  options: RecordSourceAdoptionEvidenceOptions,
+): Promise<RecordSourceAdoptionEvidenceResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
-  const inspection = await readDonorInspection(root, adoptionId, options.inspectionId);
-  const input = parseDonorValue(donorEvidenceInputSchema, options.evidence, "donor evidence input");
+  const inspection = await readSourceAdoptionInspection(root, adoptionId, options.inspectionId);
+  const input = parseDonorValue(
+    donorEvidenceInputSchema,
+    options.evidence,
+    "Source adoption evidence input",
+  );
   const recordedAt = nowIso(options.now ?? new Date());
   const content = {
     schema: DONOR_EVIDENCE_SCHEMA,
@@ -822,14 +830,14 @@ export async function recordDonorEvidence(
   return { root, evidence, path: relativeDisplayPath(file, root), created };
 }
 
-export async function recordDonorEvidenceFromFile(options: {
+export async function recordSourceAdoptionEvidenceFromFile(options: {
   readonly root: string;
   readonly adoptionId: string;
   readonly inspectionId: string;
   readonly file: string;
   readonly now?: Date;
-}): Promise<RecordDonorEvidenceResult> {
-  return recordDonorEvidence({
+}): Promise<RecordSourceAdoptionEvidenceResult> {
+  return recordSourceAdoptionEvidence({
     root: options.root,
     adoptionId: options.adoptionId,
     inspectionId: options.inspectionId,
@@ -839,10 +847,10 @@ export async function recordDonorEvidenceFromFile(options: {
 }
 
 function evaluatePolicy(
-  inspection: DonorInspection,
-  evidence: readonly DonorEvidence[],
-): DonorPolicyEvaluation {
-  const latest = new Map<string, DonorEvidence>();
+  inspection: SourceAdoptionInspection,
+  evidence: readonly SourceAdoptionEvidence[],
+): SourceAdoptionPolicyEvaluation {
+  const latest = new Map<string, SourceAdoptionEvidence>();
   for (const item of evidence) {
     latest.set(item.check_id, item);
   }
@@ -860,22 +868,22 @@ function evaluatePolicy(
   };
 }
 
-export interface VerifyDonorInspectionResult {
+export interface VerifySourceAdoptionInspectionResult {
   readonly root: string;
-  readonly inspection: DonorInspection;
+  readonly inspection: SourceAdoptionInspection;
   readonly current: boolean;
   readonly ok: boolean;
-  readonly policy: DonorPolicyEvaluation;
-  readonly evidence: readonly DonorEvidence[];
-  readonly diagnostics: readonly DonorDiagnostic[];
+  readonly policy: SourceAdoptionPolicyEvaluation;
+  readonly evidence: readonly SourceAdoptionEvidence[];
+  readonly diagnostics: readonly SourceAdoptionDiagnostic[];
 }
 
 async function verifyInspectionWithState(
   root: string,
-  state: DonorState,
-  inspection: DonorInspection,
-): Promise<VerifyDonorInspectionResult> {
-  const diagnostics: DonorDiagnostic[] = [];
+  state: SourceAdoptionState,
+  inspection: SourceAdoptionInspection,
+): Promise<VerifySourceAdoptionInspectionResult> {
+  const diagnostics: SourceAdoptionDiagnostic[] = [];
   const { definition } = await readDonorDefinition(
     root,
     inspection.adoption_id,
@@ -919,7 +927,7 @@ async function verifyInspectionWithState(
     diagnostics.push({
       code: "donor.inspection.definition_stale",
       severity: "warning",
-      message: "the donor definition changed after the inspection",
+      message: "the Source adoption definition changed after the inspection",
     });
   }
   if ((currentTargetState.baseline?.decision_id ?? null) !== inspection.baseline_decision_id) {
@@ -930,7 +938,7 @@ async function verifyInspectionWithState(
     });
   }
 
-  const evidence = await listDonorEvidence(root, inspection.adoption_id, inspection.id);
+  const evidence = await listSourceAdoptionEvidence(root, inspection.adoption_id, inspection.id);
   const policy = evaluatePolicy(inspection, evidence);
   return {
     root,
@@ -943,55 +951,55 @@ async function verifyInspectionWithState(
   };
 }
 
-export async function verifyDonorInspection(options: {
+export async function verifySourceAdoptionInspection(options: {
   readonly root: string;
   readonly adoptionId: string;
   readonly inspectionId: string;
-}): Promise<VerifyDonorInspectionResult> {
+}): Promise<VerifySourceAdoptionInspectionResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
-  const state = await readDonorState(root, adoptionId);
-  const inspection = await readDonorInspection(root, adoptionId, options.inspectionId);
+  const state = await readSourceAdoptionState(root, adoptionId);
+  const inspection = await readSourceAdoptionInspection(root, adoptionId, options.inspectionId);
   return verifyInspectionWithState(root, state, inspection);
 }
 
-export interface DecideDonorAdoptionOptions {
+export interface DecideSourceAdoptionOptions {
   readonly root: string;
   readonly adoptionId: string;
   readonly targetId: string;
-  readonly outcome: Exclude<DonorDecisionOutcome, "rollback">;
+  readonly outcome: Exclude<SourceAdoptionDecisionOutcome, "rollback">;
   readonly inspectionId?: string;
   readonly observation?: string;
   readonly reason?: string;
   readonly now?: Date;
 }
 
-export interface DonorDecisionResult {
+export interface SourceAdoptionDecisionResult {
   readonly root: string;
-  readonly decision: DonorDecision;
-  readonly state: DonorState;
+  readonly decision: SourceAdoptionDecision;
+  readonly state: SourceAdoptionState;
   readonly path: string;
   readonly inspectionPath: string;
   readonly eventFile: string | null;
 }
 
 export async function decideDonorAdoption(
-  options: DecideDonorAdoptionOptions,
-): Promise<DonorDecisionResult> {
+  options: DecideSourceAdoptionOptions,
+): Promise<SourceAdoptionDecisionResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
   const targetId = assertDonorId(options.targetId);
   const now = options.now ?? new Date();
 
   return withAdoptionLock(root, adoptionId, async (directory) => {
-    const state = await readDonorStateFromDirectory(directory, adoptionId);
-    let inspection: DonorInspection;
+    const state = await readSourceAdoptionStateFromDirectory(directory, adoptionId);
+    let inspection: SourceAdoptionInspection;
     if (options.inspectionId) {
-      inspection = await readDonorInspection(root, adoptionId, options.inspectionId);
+      inspection = await readSourceAdoptionInspection(root, adoptionId, options.inspectionId);
       if (inspection.target_id !== targetId) {
         throw new FrameworkError(
           `inspection '${inspection.id}' belongs to target '${inspection.target_id}', not '${targetId}'`,
-          { code: "INVALID_DONOR" },
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
     } else {
@@ -1000,7 +1008,7 @@ export async function decideDonorAdoption(
         adoptionId,
         state.current_definition,
       );
-      inspection = await buildDonorInspection({
+      inspection = await buildSourceAdoptionInspection({
         root,
         state,
         definition,
@@ -1016,8 +1024,8 @@ export async function decideDonorAdoption(
     if (options.outcome === "accept") {
       if (!verification.current) {
         throw new FrameworkError(
-          "donor inspection is stale; inspect the current source and target before accepting",
-          { code: "DONOR_STALE", details: verification.diagnostics },
+          "Source adoption inspection is stale; inspect the current source and target before accepting",
+          { code: "SOURCE_ADOPTION_STALE", details: verification.diagnostics },
         );
       }
       const unresolvable = inspection.mappings.filter(
@@ -1026,14 +1034,14 @@ export async function decideDonorAdoption(
       if (unresolvable.length > 0) {
         throw new FrameworkError(
           `cannot bind an accepted baseline for unresolvable target mapping(s): ${unresolvable.map((mapping) => mapping.id).join(", ")}`,
-          { code: "INVALID_DONOR" },
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
       if (verification.policy.required_missing.length > 0) {
         throw new FrameworkError(
-          `required donor evidence has not passed: ${verification.policy.required_missing.join(", ")}`,
+          `required Source adoption evidence has not passed: ${verification.policy.required_missing.join(", ")}`,
           {
-            code: "DONOR_POLICY_BLOCKED",
+            code: "SOURCE_ADOPTION_POLICY_BLOCKED",
             details: verification.policy,
           },
         );
@@ -1057,7 +1065,7 @@ export async function decideDonorAdoption(
       decided_at: decidedAt,
     };
     const decisionId = recordId("decision", seed);
-    const baselineAfter: DonorAcceptedBaseline | null =
+    const baselineAfter: SourceAdoptionAcceptedBaseline | null =
       options.outcome === "accept"
         ? {
             decision_id: decisionId,
@@ -1091,7 +1099,7 @@ export async function decideDonorAdoption(
     const eventFile = await appendDonorEventBestEffort(
       root,
       {
-        event: `donor.${options.outcome}`,
+        event: `source.adoption.${options.outcome}`,
         adoption: adoptionId,
         target: targetId,
         inspection: inspection.id,
@@ -1116,22 +1124,24 @@ export async function recordDonorRollback(options: {
   readonly decisionId: string;
   readonly reason?: string;
   readonly now?: Date;
-}): Promise<DonorDecisionResult> {
+}): Promise<SourceAdoptionDecisionResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
   const restoredFrom = assertDonorId(options.decisionId);
   const now = options.now ?? new Date();
 
   return withAdoptionLock(root, adoptionId, async (directory) => {
-    const state = await readDonorStateFromDirectory(directory, adoptionId);
+    const state = await readSourceAdoptionStateFromDirectory(directory, adoptionId);
     if (!state.decisions.includes(restoredFrom)) {
-      throw new FrameworkNotFoundError(`committed donor decision not found: ${restoredFrom}`);
+      throw new FrameworkNotFoundError(
+        `committed Source adoption decision not found: ${restoredFrom}`,
+      );
     }
-    const historical = await readDonorDecision(root, adoptionId, restoredFrom);
+    const historical = await readSourceAdoptionDecision(root, adoptionId, restoredFrom);
     if (!historical.baseline_after) {
       throw new FrameworkError(
         `decision '${restoredFrom}' does not identify an accepted baseline`,
-        { code: "INVALID_DONOR" },
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     const { definition } = await readDonorDefinition(
@@ -1143,11 +1153,11 @@ export async function recordDonorRollback(options: {
     if (!sameTargetSnapshot(currentTarget, historical.baseline_after.target)) {
       throw new FrameworkError(
         "target mapped artifacts do not match the historical baseline; restore them outside Assay before recording rollback",
-        { code: "DONOR_STALE" },
+        { code: "SOURCE_ADOPTION_STALE" },
       );
     }
 
-    const inspection = await buildDonorInspection({
+    const inspection = await buildSourceAdoptionInspection({
       root,
       state,
       definition,
@@ -1178,7 +1188,7 @@ export async function recordDonorRollback(options: {
       decided_at: decidedAt,
     };
     const decisionId = recordId("decision", seed);
-    const baselineAfter: DonorAcceptedBaseline = {
+    const baselineAfter: SourceAdoptionAcceptedBaseline = {
       decision_id: decisionId,
       definition_digest: historical.baseline_after.definition_digest,
       source: historical.baseline_after.source,
@@ -1205,7 +1215,7 @@ export async function recordDonorRollback(options: {
     const eventFile = await appendDonorEventBestEffort(
       root,
       {
-        event: "donor.rollback.recorded",
+        event: "source.adoption.rollback.recorded",
         adoption: adoptionId,
         target: historical.target_id,
         restored_from: restoredFrom,
@@ -1224,7 +1234,7 @@ export async function recordDonorRollback(options: {
   });
 }
 
-export interface DonorAdoptionListEntry {
+export interface SourceAdoptionListEntry {
   readonly id: string;
   readonly title: string | null;
   readonly definitionDigest: string;
@@ -1236,18 +1246,18 @@ export interface DonorAdoptionListEntry {
   }[];
 }
 
-export interface DonorAdoptionListResult {
+export interface SourceAdoptionListResult {
   readonly root: string;
-  readonly adoptions: readonly DonorAdoptionListEntry[];
+  readonly adoptions: readonly SourceAdoptionListEntry[];
 }
 
 export async function listDonorAdoptions(options: {
   readonly root: string;
-}): Promise<DonorAdoptionListResult> {
+}): Promise<SourceAdoptionListResult> {
   const root = path.resolve(options.root);
-  const entries: DonorAdoptionListEntry[] = [];
-  for (const adoptionId of await listDonorStateIds(root)) {
-    const state = await readDonorState(root, adoptionId);
+  const entries: SourceAdoptionListEntry[] = [];
+  for (const adoptionId of await listSourceAdoptionStateIds(root)) {
+    const state = await readSourceAdoptionState(root, adoptionId);
     const { definition } = await readDonorDefinition(root, adoptionId, state.current_definition);
     entries.push({
       id: adoptionId,
@@ -1264,20 +1274,20 @@ export async function listDonorAdoptions(options: {
   return { root, adoptions: entries };
 }
 
-export interface DonorAdoptionResult {
+export interface SourceAdoptionResult {
   readonly root: string;
-  readonly definition: DonorAdoptionDefinition;
+  readonly definition: SourceAdoptionDefinition;
   readonly definitionDigest: string;
-  readonly state: DonorState;
+  readonly state: SourceAdoptionState;
 }
 
 export async function getDonorAdoption(options: {
   readonly root: string;
   readonly adoptionId: string;
-}): Promise<DonorAdoptionResult> {
+}): Promise<SourceAdoptionResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
-  const state = await readDonorState(root, adoptionId);
+  const state = await readSourceAdoptionState(root, adoptionId);
   const { definition, digest } = await readDonorDefinition(
     root,
     adoptionId,
@@ -1286,28 +1296,28 @@ export async function getDonorAdoption(options: {
   return { root, definition, definitionDigest: digest, state };
 }
 
-export interface DonorTargetStatus {
+export interface SourceAdoptionTargetStatus {
   readonly id: string;
   readonly system: string;
   readonly baselineDecision: string | null;
-  readonly inspection: DonorInspection;
+  readonly inspection: SourceAdoptionInspection;
 }
 
-export interface DonorStatusResult {
+export interface SourceAdoptionStatusResult {
   readonly root: string;
   readonly adoptionId: string;
   readonly definitionDigest: string;
-  readonly targets: readonly DonorTargetStatus[];
+  readonly targets: readonly SourceAdoptionTargetStatus[];
 }
 
 export async function getDonorStatus(options: {
   readonly root: string;
   readonly adoptionId: string;
   readonly targetId?: string;
-}): Promise<DonorStatusResult> {
+}): Promise<SourceAdoptionStatusResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
-  const state = await readDonorState(root, adoptionId);
+  const state = await readSourceAdoptionState(root, adoptionId);
   const { definition, digest } = await readDonorDefinition(
     root,
     adoptionId,
@@ -1318,7 +1328,7 @@ export async function getDonorStatus(options: {
     : definition.targets;
   if (targets.length === 0) {
     throw new FrameworkNotFoundError(
-      `target '${options.targetId}' is not active in donor adoption '${adoptionId}'`,
+      `target '${options.targetId}' is not active in Source adoption '${adoptionId}'`,
     );
   }
   const result = [];
@@ -1327,7 +1337,7 @@ export async function getDonorStatus(options: {
       id: target.id,
       system: target.system,
       baselineDecision: state.targets[target.id]?.baseline?.decision_id ?? null,
-      inspection: await buildDonorInspection({
+      inspection: await buildSourceAdoptionInspection({
         root,
         state,
         definition,
@@ -1340,17 +1350,17 @@ export async function getDonorStatus(options: {
   return { root, adoptionId, definitionDigest: digest, targets: result };
 }
 
-export interface DonorHistoryResult {
+export interface SourceAdoptionHistoryResult {
   readonly root: string;
   readonly adoptionId: string;
-  readonly decisions: readonly DonorDecision[];
+  readonly decisions: readonly SourceAdoptionDecision[];
 }
 
 export async function getDonorHistory(options: {
   readonly root: string;
   readonly adoptionId: string;
   readonly targetId?: string;
-}): Promise<DonorHistoryResult> {
+}): Promise<SourceAdoptionHistoryResult> {
   const root = path.resolve(options.root);
   const adoptionId = assertDonorId(options.adoptionId);
   return {
@@ -1360,20 +1370,22 @@ export async function getDonorHistory(options: {
   };
 }
 
-export interface DonorSummary {
+export interface SourceAdoptionSummary {
   readonly adoptions: number;
   readonly targets: number;
   readonly acceptedTargets: number;
   readonly draftTargets: number;
 }
 
-export async function getDonorSummary(root: string): Promise<DonorSummary | null> {
-  const ids = await listDonorStateIds(path.resolve(root));
+export async function getSourceAdoptionSummary(
+  root: string,
+): Promise<SourceAdoptionSummary | null> {
+  const ids = await listSourceAdoptionStateIds(path.resolve(root));
   if (ids.length === 0) return null;
   let targets = 0;
   let acceptedTargets = 0;
   for (const adoptionId of ids) {
-    const state = await readDonorState(root, adoptionId);
+    const state = await readSourceAdoptionState(root, adoptionId);
     const { definition } = await readDonorDefinition(root, adoptionId, state.current_definition);
     targets += definition.targets.length;
     acceptedTargets += definition.targets.filter(
@@ -1388,25 +1400,25 @@ export async function getDonorSummary(root: string): Promise<DonorSummary | null
   };
 }
 
-async function assertDonorStateHistoryIntegrity(
+async function assertSourceAdoptionStateHistoryIntegrity(
   root: string,
   adoptionId: string,
-  state: DonorState,
-  evidence: readonly DonorEvidence[],
+  state: SourceAdoptionState,
+  evidence: readonly SourceAdoptionEvidence[],
 ): Promise<void> {
   const { definition } = await readDonorDefinition(root, adoptionId, state.current_definition);
   for (const target of definition.targets) {
     if (!state.targets[target.id]) {
-      throw new FrameworkError(`donor state is missing active target '${target.id}'`, {
-        code: "INVALID_DONOR",
+      throw new FrameworkError(`Source adoption state is missing active target '${target.id}'`, {
+        code: "INVALID_SOURCE_ADOPTION",
       });
     }
   }
 
   const uniqueDecisionIds = new Set(state.decisions);
   if (uniqueDecisionIds.size !== state.decisions.length) {
-    throw new FrameworkError("donor state contains duplicate committed decision ids", {
-      code: "INVALID_DONOR",
+    throw new FrameworkError("Source adoption state contains duplicate committed decision ids", {
+      code: "INVALID_SOURCE_ADOPTION",
     });
   }
   const evidenceById = new Map(evidence.map((record) => [record.id, record]));
@@ -1416,11 +1428,11 @@ async function assertDonorStateHistoryIntegrity(
   let previousGeneration = -1;
 
   for (const decisionId of state.decisions) {
-    const decision = await readDonorDecision(root, adoptionId, decisionId);
+    const decision = await readSourceAdoptionDecision(root, adoptionId, decisionId);
     if (!state.targets[decision.target_id]) {
       throw new FrameworkError(
-        `donor decision '${decision.id}' references unknown state target '${decision.target_id}'`,
-        { code: "INVALID_DONOR" },
+        `Source adoption decision '${decision.id}' references unknown state target '${decision.target_id}'`,
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     if (
@@ -1428,8 +1440,8 @@ async function assertDonorStateHistoryIntegrity(
       decision.state_generation >= state.generation
     ) {
       throw new FrameworkError(
-        `donor decision '${decision.id}' has inconsistent state generation ${decision.state_generation}`,
-        { code: "INVALID_DONOR" },
+        `Source adoption decision '${decision.id}' has inconsistent state generation ${decision.state_generation}`,
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     previousGeneration = decision.state_generation;
@@ -1437,40 +1449,43 @@ async function assertDonorStateHistoryIntegrity(
     const expectedBefore = baselineByTarget.get(decision.target_id) ?? null;
     if (decision.baseline_before !== expectedBefore) {
       throw new FrameworkError(
-        `donor decision '${decision.id}' baseline_before does not match committed history`,
-        { code: "INVALID_DONOR" },
+        `Source adoption decision '${decision.id}' baseline_before does not match committed history`,
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
 
     await readDonorDefinition(root, adoptionId, decision.definition_digest);
-    const inspection = await readDonorInspection(root, adoptionId, decision.inspection_id);
+    const inspection = await readSourceAdoptionInspection(root, adoptionId, decision.inspection_id);
     if (
       inspection.definition_digest !== decision.definition_digest ||
       inspection.target_id !== decision.target_id
     ) {
       throw new FrameworkError(
-        `donor decision '${decision.id}' does not match inspection '${inspection.id}'`,
-        { code: "INVALID_DONOR" },
+        `Source adoption decision '${decision.id}' does not match inspection '${inspection.id}'`,
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
 
     if (new Set(decision.evidence_ids).size !== decision.evidence_ids.length) {
-      throw new FrameworkError(`donor decision '${decision.id}' contains duplicate evidence ids`, {
-        code: "INVALID_DONOR",
-      });
+      throw new FrameworkError(
+        `Source adoption decision '${decision.id}' contains duplicate evidence ids`,
+        {
+          code: "INVALID_SOURCE_ADOPTION",
+        },
+      );
     }
     for (const evidenceId of decision.evidence_ids) {
       const record = evidenceById.get(evidenceId);
       if (!record) {
         throw new FrameworkError(
-          `donor decision '${decision.id}' references missing evidence '${evidenceId}'`,
-          { code: "INVALID_DONOR" },
+          `Source adoption decision '${decision.id}' references missing evidence '${evidenceId}'`,
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
       if (record.inspection_id !== inspection.id) {
         throw new FrameworkError(
-          `donor decision '${decision.id}' references evidence '${evidenceId}' from another inspection`,
-          { code: "INVALID_DONOR" },
+          `Source adoption decision '${decision.id}' references evidence '${evidenceId}' from another inspection`,
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
     }
@@ -1478,14 +1493,14 @@ async function assertDonorStateHistoryIntegrity(
     const advancesBaseline = decision.outcome === "accept" || decision.outcome === "rollback";
     if (advancesBaseline !== (decision.baseline_after !== null)) {
       throw new FrameworkError(
-        `donor decision '${decision.id}' has an invalid baseline_after for outcome '${decision.outcome}'`,
-        { code: "INVALID_DONOR" },
+        `Source adoption decision '${decision.id}' has an invalid baseline_after for outcome '${decision.outcome}'`,
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     if ((decision.outcome === "rollback") !== (decision.restored_from_decision !== null)) {
       throw new FrameworkError(
-        `donor decision '${decision.id}' has an invalid rollback reference`,
-        { code: "INVALID_DONOR" },
+        `Source adoption decision '${decision.id}' has an invalid rollback reference`,
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
 
@@ -1499,8 +1514,8 @@ async function assertDonorStateHistoryIntegrity(
         recordDigest(baseline.target) !== recordDigest(inspection.target)
       ) {
         throw new FrameworkError(
-          `donor decision '${decision.id}' baseline_after does not match its inspection`,
-          { code: "INVALID_DONOR" },
+          `Source adoption decision '${decision.id}' baseline_after does not match its inspection`,
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
       baselineByTarget.set(decision.target_id, decision.id);
@@ -1512,19 +1527,23 @@ async function assertDonorStateHistoryIntegrity(
     const actualDecisionId = targetState.baseline?.decision_id ?? null;
     if (actualDecisionId !== expectedDecisionId) {
       throw new FrameworkError(
-        `donor state baseline for target '${targetId}' does not match committed history`,
-        { code: "INVALID_DONOR" },
+        `Source adoption state baseline for target '${targetId}' does not match committed history`,
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     if (targetState.baseline) {
-      const decision = await readDonorDecision(root, adoptionId, targetState.baseline.decision_id);
+      const decision = await readSourceAdoptionDecision(
+        root,
+        adoptionId,
+        targetState.baseline.decision_id,
+      );
       if (
         !decision.baseline_after ||
         recordDigest(targetState.baseline) !== recordDigest(decision.baseline_after)
       ) {
         throw new FrameworkError(
-          `donor state baseline for target '${targetId}' does not match decision '${decision.id}'`,
-          { code: "INVALID_DONOR" },
+          `Source adoption state baseline for target '${targetId}' does not match decision '${decision.id}'`,
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
     }
@@ -1542,23 +1561,23 @@ export async function collectDonorIntegrityRows(root: string): Promise<CheckRow[
   }
 
   const rows: CheckRow[] = [];
-  for (const adoptionId of await listDonorStateIds(resolvedRoot)) {
+  for (const adoptionId of await listSourceAdoptionStateIds(resolvedRoot)) {
     const directory = await adoptionRoot(resolvedRoot, adoptionId);
     try {
-      const state = await readDonorStateFromDirectory(directory, adoptionId);
+      const state = await readSourceAdoptionStateFromDirectory(directory, adoptionId);
       if (state.adoption_id !== adoptionId) {
         throw new FrameworkError(
           `state adoption id '${state.adoption_id}' does not match directory '${adoptionId}'`,
-          { code: "INVALID_DONOR" },
+          { code: "INVALID_SOURCE_ADOPTION" },
         );
       }
-      await listDonorInspections(resolvedRoot, adoptionId);
-      const evidence = await listDonorEvidence(resolvedRoot, adoptionId);
-      await assertDonorStateHistoryIntegrity(resolvedRoot, adoptionId, state, evidence);
+      await listSourceAdoptionInspections(resolvedRoot, adoptionId);
+      const evidence = await listSourceAdoptionEvidence(resolvedRoot, adoptionId);
+      await assertSourceAdoptionStateHistoryIntegrity(resolvedRoot, adoptionId, state, evidence);
       rows.push({
         path: relativeDisplayPath(stateFile(directory), resolvedRoot),
         status: "ok",
-        message: "donor state and committed records are valid",
+        message: "Source adoption state and committed records are valid",
       });
     } catch (error) {
       rows.push({
@@ -1571,7 +1590,7 @@ export async function collectDonorIntegrityRows(root: string): Promise<CheckRow[
           resolvedRoot,
         ),
         status: "error",
-        message: error instanceof Error ? error.message : "donor state failed validation",
+        message: error instanceof Error ? error.message : "Source adoption state failed validation",
       });
     }
 

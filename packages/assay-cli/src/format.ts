@@ -7,17 +7,18 @@ import type {
   CheckFrameworkResult,
   CheckPluginsResult,
   ConvertOverlayResult,
-  DonorAdoptionListResult,
-  DonorAdoptionResult,
-  DonorDecisionResult,
-  DonorHistoryResult,
-  DonorInspection,
-  DonorStatusResult,
   FrameworkStatusResult,
   InitFrameworkResult,
   ListPluginsResult,
   OperationReport,
   ReconcilePluginsResult,
+  SourceAdoptionDecisionResult,
+  SourceAdoptionHistoryResult,
+  SourceAdoptionInspection,
+  SourceAdoptionListResult,
+  SourceAdoptionResult,
+  SourceAdoptionStatusResult,
+  SourceAdoptionVerificationResult,
   SourceDiffResult,
   SourceLogResult,
   SourceStatusResult,
@@ -28,7 +29,6 @@ import type {
   TrellisTaskResult,
   UpdateAnalysis,
   UpdatePlan,
-  VerifyDonorInspectionResult,
 } from "assay-core";
 
 function section(title: string, lines: readonly string[]): string[] {
@@ -310,7 +310,7 @@ function upstreamLines(upstream: FrameworkStatusResult["upstream"]): string[] {
     ...upstream.sources.map((source) => {
       const impact =
         source.impact && source.impact.mappings > 0
-          ? `   affects ${source.impact.mappings} donor mapping${source.impact.mappings === 1 ? "" : "s"}`
+          ? `   affects ${source.impact.mappings} source adoption mapping${source.impact.mappings === 1 ? "" : "s"}`
           : "";
       return `  - ${source.alias.padEnd(aliasWidth)}   ${source.summary}${impact}`;
     }),
@@ -358,26 +358,25 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
         ]
       : [];
 
-  const livingSources = result.livingSources
+  const sources = result.sources
     ? [
-        "Living sources",
-        `  - total: ${result.livingSources.total}`,
-        `  - open observations: ${result.livingSources.openObservations}`,
-        `  - suggested analyses: ${result.livingSources.suggestedAnalyses}`,
-        `  - closed observations: ${result.livingSources.closedObservations}`,
-        `  - major revalidations: ${result.livingSources.majorRevalidations}`,
+        "Sources",
+        `  - total: ${result.sources.total}`,
+        `  - living: ${result.sources.living}`,
+        `  - frozen: ${result.sources.frozen}`,
+        `  - major changes: ${result.sources.majorChanges}`,
         "  - details: assay source status",
       ]
     : [];
 
-  const donors = result.donors
+  const sourceAdoptions = result.sourceAdoptions
     ? [
-        "Donor adoptions",
-        `  - adoptions: ${result.donors.adoptions}`,
-        `  - targets: ${result.donors.targets}`,
-        `  - accepted baselines: ${result.donors.acceptedTargets}`,
-        `  - draft targets: ${result.donors.draftTargets}`,
-        "  - details: assay donor status <adoption>",
+        "Source adoptions",
+        `  - adoptions: ${result.sourceAdoptions.adoptions}`,
+        `  - targets: ${result.sourceAdoptions.targets}`,
+        `  - accepted baselines: ${result.sourceAdoptions.acceptedTargets}`,
+        `  - draft targets: ${result.sourceAdoptions.draftTargets}`,
+        "  - details: assay source adoption status <adoption>",
       ]
     : [];
 
@@ -395,9 +394,9 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     ...archetypeNotice,
     ...zones,
     ...systems,
-    ...livingSources,
+    ...sources,
     ...upstreamLines(result.upstream),
-    ...donors,
+    ...sourceAdoptions,
     ...summary,
   ].join("\n");
 }
@@ -413,7 +412,7 @@ export function formatSourceStatusResult(result: SourceStatusResult): string {
       const commit = source.vcs?.commit ? ` ${source.vcs.commit.slice(0, 12)}` : "";
       const latest = source.latestObservation ?? "-";
       const change = source.latestChangeClass ?? "-";
-      return `${source.alias.padEnd(24)} ${source.kind.padEnd(9)} ${source.captureMode.padEnd(8)} ${change.padEnd(11)} ${latest}${commit}`;
+      return `${source.alias.padEnd(24)} ${source.mode.padEnd(7)} ${source.kind.padEnd(9)} ${source.captureMode.padEnd(8)} ${change.padEnd(11)} ${latest}${commit}`;
     }),
   ].join("\n");
 }
@@ -476,12 +475,12 @@ export function formatSourceDiffResult(result: SourceDiffResult): string {
   ].join("\n");
 }
 
-export function formatDonorList(result: DonorAdoptionListResult): string {
+export function formatSourceAdoptionList(result: SourceAdoptionListResult): string {
   if (result.adoptions.length === 0) {
-    return ["Donor adoptions", `Root: ${result.root}`, "(none)"].join("\n");
+    return ["Source adoption adoptions", `Root: ${result.root}`, "(none)"].join("\n");
   }
   return [
-    "Donor adoptions",
+    "Source adoption adoptions",
     `Root: ${result.root}`,
     ...result.adoptions.map((adoption) => {
       const accepted = adoption.targets.filter((target) => target.baselineDecision).length;
@@ -490,9 +489,9 @@ export function formatDonorList(result: DonorAdoptionListResult): string {
   ].join("\n");
 }
 
-export function formatDonorAdoption(result: DonorAdoptionResult): string {
+export function formatSourceAdoption(result: SourceAdoptionResult): string {
   return [
-    `Donor adoption: ${result.definition.id}`,
+    `Source adoption adoption: ${result.definition.id}`,
     `Title: ${result.definition.title ?? "-"}`,
     `Definition: ${result.definitionDigest}`,
     `Source: ${result.definition.source.alias}@${result.definition.source.observation}`,
@@ -515,7 +514,10 @@ export function formatDonorAdoption(result: DonorAdoptionResult): string {
   ].join("\n");
 }
 
-function donorInspectionLines(inspection: DonorInspection, indentation = ""): string[] {
+function sourceAdoptionInspectionLines(
+  inspection: SourceAdoptionInspection,
+  indentation = "",
+): string[] {
   const lines = [
     `${indentation}Inspection: ${inspection.id}`,
     `${indentation}Source: ${inspection.source.alias}@${inspection.source.observation_id}`,
@@ -540,31 +542,31 @@ function donorInspectionLines(inspection: DonorInspection, indentation = ""): st
   return lines;
 }
 
-export function formatDonorInspection(result: {
-  readonly inspection: DonorInspection;
+export function formatSourceAdoptionInspection(result: {
+  readonly inspection: SourceAdoptionInspection;
   readonly path: string | null;
 }): string {
   return [
-    ...donorInspectionLines(result.inspection),
+    ...sourceAdoptionInspectionLines(result.inspection),
     ...(result.path ? [`Record: ${result.path}`] : []),
   ].join("\n");
 }
 
-export function formatDonorStatus(result: DonorStatusResult): string {
+export function formatSourceAdoptionStatus(result: SourceAdoptionStatusResult): string {
   return [
-    `Donor status: ${result.adoptionId}`,
+    `Source adoption status: ${result.adoptionId}`,
     `Definition: ${result.definitionDigest}`,
     ...result.targets.flatMap((target) => [
       "",
       `Target: ${target.id} (system: ${target.system})`,
-      ...donorInspectionLines(target.inspection, "  "),
+      ...sourceAdoptionInspectionLines(target.inspection, "  "),
     ]),
   ].join("\n");
 }
 
-export function formatDonorVerification(result: VerifyDonorInspectionResult): string {
+export function formatSourceAdoptionVerification(result: SourceAdoptionVerificationResult): string {
   return [
-    `Donor verification: ${result.inspection.id}`,
+    `Source adoption verification: ${result.inspection.id}`,
     `Current: ${result.current ? "yes" : "no"}`,
     `Required policy: ${result.policy.required_missing.length === 0 ? "satisfied" : "missing"}`,
     `Evidence records: ${result.evidence.length}`,
@@ -577,9 +579,9 @@ export function formatDonorVerification(result: VerifyDonorInspectionResult): st
   ].join("\n");
 }
 
-export function formatDonorDecision(result: DonorDecisionResult): string {
+export function formatSourceAdoptionDecision(result: SourceAdoptionDecisionResult): string {
   return [
-    `Donor decision: ${result.decision.outcome}`,
+    `Source adoption decision: ${result.decision.outcome}`,
     `Decision: ${result.decision.id}`,
     `Adoption: ${result.decision.adoption_id}`,
     `Target: ${result.decision.target_id}`,
@@ -590,12 +592,12 @@ export function formatDonorDecision(result: DonorDecisionResult): string {
   ].join("\n");
 }
 
-export function formatDonorHistory(result: DonorHistoryResult): string {
+export function formatSourceAdoptionHistory(result: SourceAdoptionHistoryResult): string {
   if (result.decisions.length === 0) {
-    return [`Donor history: ${result.adoptionId}`, "(none)"].join("\n");
+    return [`Source adoption history: ${result.adoptionId}`, "(none)"].join("\n");
   }
   return [
-    `Donor history: ${result.adoptionId}`,
+    `Source adoption history: ${result.adoptionId}`,
     ...result.decisions.map(
       (decision) =>
         `${decision.decided_at} ${decision.outcome.padEnd(8)} ${decision.target_id.padEnd(20)} ${decision.id}${decision.reason ? ` - ${decision.reason}` : ""}`,

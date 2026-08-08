@@ -78,7 +78,15 @@ beforeEach(async () => {
 describe("assay Commander registration", () => {
   it("omits retired commands from help and rejects them without workspace writes", async () => {
     const help = createProgram().helpInformation();
-    for (const command of ["adr", "migrate-layout", "project", "iteration"]) {
+    for (const command of [
+      "adr",
+      "migrate-layout",
+      "project",
+      "iteration",
+      "reference",
+      "absorb",
+      "donor",
+    ]) {
       expect(help).not.toMatch(new RegExp(`^\\s+${command}(?:\\s|$)`, "m"));
     }
 
@@ -89,6 +97,9 @@ describe("assay Commander registration", () => {
       ["migrate-layout", "--root", root],
       ["project", "migrate-authority", "--root", root],
       ["iteration", "start", "retired", "--root", root],
+      ["reference", "add", "retired", "--root", root],
+      ["absorb", "retired", "--root", root],
+      ["donor", "list", "--root", root],
     ]) {
       const result = await runCli(args);
       expect(result.exitCode).not.toBe(0);
@@ -97,11 +108,11 @@ describe("assay Commander registration", () => {
   });
 
   it("exposes nested command help", async () => {
-    const result = await runCli(["reference", "add", "--help"]);
+    const result = await runCli(["source", "adoption", "--help"]);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Usage: assay reference add [options] <source-dir> <name>");
-    expect(result.stdout).toContain("--root <target-dir>");
+    expect(result.stdout).toContain("Usage: assay source adoption");
+    expect(result.stdout).toContain("register");
     expect(result.stderr).toBe("");
 
     const knowledge = await runCli(["knowledge", "add", "--help"]);
@@ -172,9 +183,10 @@ describe("assay CLI subprocess behavior", () => {
     expect(status.stdout).toContain("Framework status");
     expect(status.stdout).toContain("Project: Assay Smoke");
     expect(status.stdout).toContain("Managed files:");
-    expect(status.stdout).toContain("Living sources");
+    expect(status.stdout).toContain("Sources");
     expect(status.stdout).toContain("total: 1");
-    expect(status.stdout).toContain("open observations: 1");
+    expect(status.stdout).toContain("living: 1");
+    expect(status.stdout).toContain("frozen: 0");
     expect(status.stdout).toContain("details: assay source status");
     expect(status.stderr).toBe("");
 
@@ -430,7 +442,7 @@ describe("assay CLI subprocess behavior", () => {
     const expectations = {
       study: {
         mode: "learning",
-        paths: ["references", "analyses"],
+        paths: ["sources", "analyses"],
       },
       solve: {
         mode: "absorption",
@@ -468,7 +480,7 @@ describe("assay CLI subprocess behavior", () => {
         expect(await pathExists(path.join(root, "project", absent))).toBe(false);
       }
       if (archetype !== "study") {
-        expect(await pathExists(path.join(root, "references"))).toBe(false);
+        expect(await pathExists(path.join(root, "sources"))).toBe(false);
         expect(await pathExists(path.join(root, "analyses"))).toBe(false);
       }
       const manifest = JSON.parse(

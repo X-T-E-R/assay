@@ -6,19 +6,19 @@ Assay fits the way your code already lives. It supports two layout modes, both b
 
 | Mode | Root meaning | Work folders | Primary system | Default Git behavior |
 | --- | --- | --- | --- | --- |
-| `standalone` | The root is an Assay workbench. | `references/`, `analyses/`, `knowledge/`, `tasks/`, `systems/` at root; state in `.assay/`. | Registered under `systems/` or an external independent path. | Outer workbench Git is optional. |
+| `standalone` | The root is an Assay workbench. | `sources/`, `analyses/`, `knowledge/`, `tasks/`, `systems/` at root; state in `.assay/`. | Registered under `systems/` or an external independent path. | Outer workbench Git is optional. |
 | `overlay` | The root is an existing product repo. | All Assay-owned work folders live under `.assay/`. | `path: "."`, `vcs: "independent-git"`, contract in `.assay/systems/root.yaml`. | Product Git ignores `.assay/` by default. |
 
 Do not call overlay "monorepo mode". `overlay` and `attach` describe what happens: Assay attaches private evidence and decisions to a repo whose root remains the system.
 
 ## Path map
 
-The manifest carries a `layout` block so runtime code asks "where is `references` in this layout?" instead of hard-coding root-relative strings.
+The manifest carries a `layout` block so runtime code asks "where is `sources` in this layout?" instead of hard-coding root-relative strings.
 
 ```json
 {
   "layout": {
-    "version": 6,
+    "version": 7,
     "mode": "standalone",
     "state_root": ".assay",
     "work_root": ".",
@@ -28,7 +28,7 @@ The manifest carries a `layout` block so runtime code asks "where is `references
       "events": ".assay/events",
       "backups": ".assay/backups",
       "systems_registry": ".assay/systems-registry.json",
-      "references": "references",
+      "sources": "sources",
       "analyses": "analyses",
       "knowledge": "knowledge",
       "systems_contracts": "systems"
@@ -37,7 +37,7 @@ The manifest carries a `layout` block so runtime code asks "where is `references
 }
 ```
 
-In overlay mode, `references`, `analyses`, `knowledge`, native
+In overlay mode, `sources`, `analyses`, `knowledge`, native
 `tasks`, native `project`, and `systems_contracts` all resolve under
 `.assay/`. Native Task storage follows `work_root` directly, so it does not need a
 separate entry in `layout.paths`.
@@ -54,7 +54,7 @@ assay-workbench/
     events/
     backups/
     archetypes/
-  references/
+  sources/
   analyses/
   knowledge/
   tasks/
@@ -80,13 +80,13 @@ product-repo/
     archetypes/
     systems/
       root.yaml
-    references/
+    sources/
     analyses/
     knowledge/
     tasks/
 ```
 
-Overlay exists because the repo root is already the system. Assay must not move product files, rewrite the root README, or create top-level `references/` or `analyses/` folders in a product repo unless explicitly asked.
+Overlay exists because the repo root is already the system. Assay must not move product files, rewrite the root README, or create top-level `sources/` or `analyses/` folders in a product repo unless explicitly asked.
 
 ## Git policy
 
@@ -101,10 +101,10 @@ Recommended tracked content:
 .assay/task-contexts.json
 .assay/systems-registry.json
 .assay/events/
-references/**/source.yaml
-references/**/history.md
-references/**/materials/
-references/**/observations/
+sources/**/source.yaml
+sources/**/materials/**
+sources/**/materials/
+sources/**/observations/
 analyses/
 knowledge/
 tasks/
@@ -116,8 +116,8 @@ Recommended ignored content:
 
 ```text
 .assay/backups/*
-references/*/checkout/
-references/*/captures/
+sources/*/checkout/
+sources/*/captures/
 ```
 
 For independent systems that live under the workbench `systems/` tree, keep the contract at `systems/<name>/system.yaml` and avoid tracking the rest of that system's source tree in the outer workbench Git unless you intentionally treat it as embedded or a submodule. When the primary system lives outside the workbench root (for example after `assay convert --to standalone`), Assay keeps the sidecar contract under `.assay/systems/<name>.yaml`.
@@ -146,15 +146,14 @@ A team may explicitly choose `privacy: tracked`, but that is never the default. 
 
 ## Source ledger naming
 
-Each living source stores its observation ledger flat under `references/<alias>/`:
+Each living Source stores its observation ledger flat under `sources/<alias>/`:
 
 ```text
-references/foo/
+sources/foo/
   source.yaml
   observations/
   manifests/
   captures/
-  comparisons/
 ```
 
 ## Overlay attach workflow
@@ -195,13 +194,13 @@ assay convert --to standalone --target ../product-assay
 It should:
 
 1. Create `../product-assay` as a standalone workspace.
-2. Copy `.assay/references` to `../product-assay/references`.
+2. Copy `.assay/sources` to `../product-assay/sources`.
 3. Copy `.assay/analyses` to `../product-assay/analyses`.
 4. Copy `.assay/knowledge` to `../product-assay/knowledge`.
 5. Copy `.assay/tasks` to `../product-assay/tasks` without merging or overwriting a non-empty target.
 6. Copy `.assay/project` to `../product-assay/project` without changing bytes or merging a non-empty target.
 7. Carry `.assay/task-contexts.json` with the rest of Assay state under `../product-assay/.assay`.
-8. Register the original product repo as the primary independent system by relative path, such as `../product-repo`, with a sidecar contract under `../product-assay/.assay/systems/product.yaml`.
+8. Rewrite the complete systems registry so every current System keeps resolving to the same semantic target; no secondary or Source-adoption target is dropped.
 9. Leave the product repo and its `.git/` untouched.
 
 In-place conversion is allowed only with an explicit destructive flag, because it would have to move product root files into `systems/<name>/` or otherwise change the meaning of the product Git repository.
@@ -233,5 +232,5 @@ For overlay privacy:
 
 For standalone Git hygiene:
 
-- Warn when a `references/*/checkout/` directory is staged or tracked.
+- Warn when a `sources/*/checkout/` directory is staged or tracked.
 - Warn when an independent system stored under `systems/` is tracked by the outer workbench Git as source files rather than just `systems/<name>/system.yaml`, unless the repo intentionally treats that system as embedded or as a submodule.

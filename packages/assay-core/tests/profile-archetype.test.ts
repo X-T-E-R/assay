@@ -187,6 +187,13 @@ describe("archetype loader", () => {
         `/.assay/${retired}/history`,
         `.assay\\${retired}\\history`,
         `.assay/work/../${retired}/history`,
+        "references",
+        "references/archive",
+        ".assay/references",
+        ".assay/references/archive",
+        "sources/frozen",
+        "sources/frozen/archive",
+        ".assay/sources/frozen",
       ];
 
       for (const [index, declaredPath] of aliases.entries()) {
@@ -235,7 +242,14 @@ describe("archetype loader", () => {
     const userArchetypesDir = path.join(await tempDir(), "user-archetypes");
     const retired = ["itera", "tions"].join("");
     await writeCustomArchetype(path.join(userArchetypesDir, "general-paths.yaml"), {
-      dirs: [`notes/${retired}`, `${retired}-archive`, `.assay/${retired}-archive`],
+      dirs: [
+        `notes/${retired}`,
+        `${retired}-archive`,
+        `.assay/${retired}-archive`,
+        "notes/references",
+        "references-archive",
+        "sources/frozen-archive",
+      ],
     });
 
     const archetype = await loadArchetype("general-paths", { userArchetypesDir });
@@ -244,6 +258,9 @@ describe("archetype loader", () => {
         `notes/${retired}`,
         `${retired}-archive`,
         `.assay/${retired}-archive`,
+        "notes/references",
+        "references-archive",
+        "sources/frozen-archive",
       ]),
     );
   });
@@ -467,14 +484,14 @@ describe("archetype directory purposes", () => {
       "project",
       "systems",
       "knowledge",
-      "references",
+      "sources",
       "analyses",
     ]);
   });
 });
 
 describe("archetype data shapes", () => {
-  it("study keeps analyses and frozen references without solve inputs", async () => {
+  it("study keeps analyses and unified Sources without solve inputs", async () => {
     const study = await loadArchetype("study");
     const dirs = dirsForArchetype(study, study.mode);
 
@@ -486,7 +503,7 @@ describe("archetype data shapes", () => {
         "analyses/gaps",
         "analyses/patterns",
         "analyses/templates",
-        "references/frozen",
+        "sources",
       ]),
     );
     expect(hasPath(dirs, "problem")).toBe(false);
@@ -703,7 +720,7 @@ describe("archetype templates", () => {
     const templateIds = (await desiredTemplates("Demo")).map((template) => template.templateId);
 
     expect(paths).toContain("systems/README.md");
-    expect(paths).toContain("references/frozen/README.md");
+    expect(paths).toContain("sources/README.md");
     expect(paths).not.toContain(frameworkConfigPath);
     expect(paths.some((path) => path.includes("{core}") || path.includes("demo-core"))).toBe(false);
     expect(templateIds).not.toContain(configTemplateId);

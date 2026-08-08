@@ -325,10 +325,10 @@ describe("structured legacy Codex hook scrub", () => {
     );
 
     const hardlinkRoot = await workspace("hook-hardlink");
-    const donor = path.join(base, "donor-hooks.json");
-    await writeFile(donor, JSON.stringify(legacyHookDocument()));
+    const source = path.join(base, "source-hooks.json");
+    await writeFile(source, JSON.stringify(legacyHookDocument()));
     await mkdir(path.join(hardlinkRoot, ".codex"), { recursive: true });
-    await link(donor, path.join(hardlinkRoot, ".codex", "hooks.json"));
+    await link(source, path.join(hardlinkRoot, ".codex", "hooks.json"));
     await expect(planTrellisLegacyHookScrub({ root: hardlinkRoot, host: "codex" })).rejects.toThrow(
       /hardlink/,
     );

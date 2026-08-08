@@ -423,8 +423,8 @@ function parseTemplateList(value: unknown, archetypeName: string): ParsedTemplat
 }
 
 /**
- * Iteration storage is retired authority in layout v6. A custom archetype must
- * not recover it under either layout spelling, including lexical aliases that
+ * Retired storage paths are not archetype extension points in layout v7. A
+ * custom archetype must not recover them under either layout spelling, including lexical aliases that
  * resolve to the same workspace-relative path. Keep the check at YAML parsing
  * so init, attach, status, check, update, and convert all fail before scaffold
  * paths or template content are used.
@@ -436,14 +436,16 @@ function assertCurrentArchetypePath(
 ): void {
   const normalizedPath = normalizeArchetypeScaffoldPath(declaredPath);
   const comparable = normalizedPath.toLowerCase();
-  if (
-    comparable !== "iterations" &&
-    !comparable.startsWith("iterations/") &&
-    comparable !== `${MANAGED_DIR}/iterations` &&
-    !comparable.startsWith(`${MANAGED_DIR}/iterations/`)
-  ) {
+  const retiredRoots = [
+    "iterations",
+    `${MANAGED_DIR}/iterations`,
+    "references",
+    `${MANAGED_DIR}/references`,
+    "sources/frozen",
+    `${MANAGED_DIR}/sources/frozen`,
+  ];
+  if (!retiredRoots.some((root) => comparable === root || comparable.startsWith(`${root}/`)))
     return;
-  }
   throw new FrameworkError(
     `retired archetype path '${declaredPath}' in ${field} of archetype ${archetypeName} resolves to '${normalizedPath}'`,
     {

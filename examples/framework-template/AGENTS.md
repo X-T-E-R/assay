@@ -10,18 +10,17 @@ This workspace is managed by Assay.
 
 ## Workspace layout (archetype: study)
 
-Absorb external systems as the main product, converting what survives analysis into reusable knowledge.
+Study external systems as the main product, converting what survives analysis into reusable knowledge.
 
 | Directory | What goes here |
 | --- | --- |
+| `sources/` | Living and frozen external evidence |
 | `analyses/references/` | Analysis cards for external systems |
 | `analyses/gaps/` | Gaps between an external system and this workspace |
 | `analyses/patterns/` | Candidate reusable patterns awaiting validation |
 | `project/` | Native Project charter, roadmap, specifications, selected Relay records, and extensions |
 | `systems/` | Registered systems and local implementations |
 | `knowledge/` | Accepted, reusable knowledge |
-| `references/frozen/` | Read-only full captures of external systems, by month |
-| `references/` | Living sources and frozen external evidence (created on first use) |
 | `analyses/` | Analysis records (created on first use) |
 
 <!-- ASSAY:END -->

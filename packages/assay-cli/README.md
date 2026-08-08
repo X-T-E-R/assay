@@ -35,17 +35,17 @@ node ..\assay\packages\assay-cli\dist\cli.js source status repo-name
 node ..\assay\packages\assay-cli\dist\cli.js source sync repo-name
 ```
 
-`references/<alias>/checkout/` is the current materialized source; for Git sources it is the repository root. Observation metadata uses flat source-local ledger folders: `references/<alias>/observations/`, `references/<alias>/manifests/`, `references/<alias>/comparisons/`, and `references/<alias>/captures/`.
+`sources/<alias>/checkout/` is the current materialized living Source; for Git sources it is the repository root. Observation metadata uses source-local `observations/`, `manifests/`, and `captures/`. Frozen Sources force archive capture and cannot sync or switch; diffs are derived from manifests.
 
 Track selected source material after it is adopted into a registered system:
 
 ```powershell
-node ..\assay\packages\assay-cli\dist\cli.js donor register --file donor.yaml
-node ..\assay\packages\assay-cli\dist\cli.js donor status <adoption>
-node ..\assay\packages\assay-cli\dist\cli.js donor decide <adoption> --target <id> --outcome accept
+node ..\assay\packages\assay-cli\dist\cli.js source adoption register --file source-adoption.yaml
+node ..\assay\packages\assay-cli\dist\cli.js source adoption status <adoption>
+node ..\assay\packages\assay-cli\dist\cli.js source adoption decide <adoption> --target <id> --outcome accept
 ```
 
-Donor inspection and evidence commands are optional tools. Evidence blocks
+Source adoption inspection and evidence commands are optional tools. Evidence blocks
 acceptance only when the definition explicitly declares it `required`.
 
 To convert an existing project into a clean Assay workspace, run from that

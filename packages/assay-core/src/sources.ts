@@ -9,6 +9,7 @@ import { appendEvent } from "./events.js";
 import { resolveWorkspaceLayout, workspacePath, workspaceRelativePath } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
+import { loadArchetype } from "./profile.js";
 import type { CheckRow } from "./results.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
@@ -23,7 +24,11 @@ import {
   refreshRemoteGitCheckout,
   syncTargetForCheckout,
 } from "./sources/git.js";
+import { withWorkspaceMutationCoordination } from "./tasks/task-storage.js";
 import { nowIso } from "./time.js";
+
+export const SOURCE_MODES = ["living", "frozen"] as const;
+export type SourceMode = (typeof SOURCE_MODES)[number];
 
 export const SOURCE_CAPTURE_MODES = ["checkout", "archive"] as const;
 export type SourceCaptureMode = (typeof SOURCE_CAPTURE_MODES)[number];
@@ -32,8 +37,6 @@ export const SOURCE_CHANGE_CLASSES = ["same", "patch", "normal", "major", "repla
 export type SourceChangeClass = (typeof SOURCE_CHANGE_CLASSES)[number];
 
 export type SourceKind = "git" | "directory" | "archive" | "url" | "unknown";
-export type SourceAnalysisStatus = "none" | "open" | "closed" | "suggested";
-
 export interface SourceVcsMetadata {
   readonly type: "git";
   readonly remote: string | null;
@@ -59,17 +62,13 @@ export interface SourceLineage {
   readonly source_uri: string;
   readonly created_on: string;
   readonly latest_observation: string | null;
-  readonly status: "active" | "replaced" | "archived";
+  readonly mode: SourceMode;
   readonly default_capture_mode: SourceCaptureMode;
   readonly checkout?: {
     readonly path: "checkout";
     readonly ref: string | null;
     readonly commit: string | null;
     readonly dirty: boolean | null;
-  };
-  readonly relation?: {
-    readonly kind: "replaces" | "forks" | "supersedes";
-    readonly source: string;
   };
 }
 
@@ -81,16 +80,12 @@ export interface SourceObservation {
   readonly previous_observation: string | null;
   readonly change_class: SourceChangeClass;
   readonly capture_mode: SourceCaptureMode;
-  readonly analysis_status: SourceAnalysisStatus;
   readonly vcs?: SourceVcsMetadata;
   readonly fingerprint: SourceFingerprint;
   readonly manifest: string;
   readonly materials_path: string;
   readonly checkout_path?: string;
   readonly capture_path?: string;
-  readonly analysis_path?: string;
-  readonly analysis_exit?: string;
-  readonly analysis_closed_on?: string;
 }
 
 export interface SourceManifestFile {
@@ -113,6 +108,7 @@ export interface SourceAddOptions {
   readonly alias?: string;
   readonly branch?: string;
   readonly capture?: SourceCaptureMode;
+  readonly mode?: SourceMode;
   readonly now?: Date;
 }
 
@@ -174,11 +170,10 @@ export interface SourceStatusEntry {
   readonly name: string;
   readonly kind: SourceKind;
   readonly uri: string;
-  readonly status: SourceLineage["status"];
+  readonly mode: SourceMode;
   readonly captureMode: SourceCaptureMode;
   readonly latestObservation: string | null;
   readonly latestChangeClass: SourceChangeClass | null;
-  readonly analysisStatus: SourceAnalysisStatus | null;
   readonly vcs?: SourceVcsMetadata;
   readonly checkout?: SourceLineage["checkout"];
 }
@@ -231,13 +226,6 @@ export interface SourceObservationResolution {
   readonly manifestFile: string;
   readonly materialsPath: string;
   readonly checkoutPath: string | null;
-  readonly diffFile: string | null;
-}
-
-export interface SourceObservationCloseOptions extends SourceObservationResolveOptions {
-  readonly analysisPath: string;
-  readonly analysisExit: string;
-  readonly now?: Date;
 }
 
 interface SourceEntry {
@@ -315,12 +303,29 @@ function layoutForManifest(manifest: FrameworkManifest) {
   return layout;
 }
 
-function referencesRootForManifest(root: string, manifest: FrameworkManifest): string {
-  return workspacePath(root, layoutForManifest(manifest), "references");
+async function preflightSourceWorkspace(root: string): Promise<FrameworkManifest> {
+  const manifest = requireManifestPresent(await loadManifest(root), root);
+  try {
+    await loadArchetype(manifest.project.archetype, { root });
+  } catch (error) {
+    // Workspaces whose historical archetype no longer resolves intentionally
+    // degrade to the layout's base structure. Still propagate parse failures,
+    // especially RETIRED_ARCHETYPE_PATH, before any Source semantic access.
+    const message = error instanceof Error ? error.message : "";
+    const unresolved =
+      message.startsWith("archetype not found:") ||
+      (message.startsWith("archetype '") && message.includes(" was removed in Assay "));
+    if (!unresolved) throw error;
+  }
+  return manifest;
 }
 
-function referencesRelativeForManifest(manifest: FrameworkManifest): string {
-  return workspaceRelativePath(layoutForManifest(manifest), "references");
+function sourcesRootForManifest(root: string, manifest: FrameworkManifest): string {
+  return workspacePath(root, layoutForManifest(manifest), "sources");
+}
+
+function sourcesRelativeForManifest(manifest: FrameworkManifest): string {
+  return workspaceRelativePath(layoutForManifest(manifest), "sources");
 }
 
 function assertCaptureMode(value: SourceCaptureMode): void {
@@ -350,7 +355,7 @@ function displaySourceName(source: string): string {
 function aliasForSource(source: string, alias?: string): string {
   const normalized = slugify(alias ?? displaySourceName(source));
   if (normalized === "frozen") {
-    throw new FrameworkError("source alias 'frozen' is reserved for legacy full captures");
+    throw new FrameworkError("source alias 'frozen' is reserved by the Source namespace");
   }
   return normalized;
 }
@@ -383,16 +388,70 @@ async function readYamlFile<T>(file: string): Promise<T> {
   return parsed as T;
 }
 
+async function readSourceLineageFile(file: string): Promise<SourceLineage> {
+  const value = await readYamlFile<Record<string, unknown>>(file);
+  for (const field of ["status", "relation"] as const) {
+    if (Object.hasOwn(value, field)) {
+      throw new FrameworkError(`source lineage contains retired field '${field}': ${file}`, {
+        code: "IO_ERROR",
+      });
+    }
+  }
+  if (typeof value.mode !== "string" || !SOURCE_MODES.includes(value.mode as SourceMode)) {
+    throw new FrameworkError(
+      `source lineage mode must be one of: ${SOURCE_MODES.join(", ")}: ${file}`,
+      {
+        code: "IO_ERROR",
+      },
+    );
+  }
+  if (
+    typeof value.default_capture_mode !== "string" ||
+    !SOURCE_CAPTURE_MODES.includes(value.default_capture_mode as SourceCaptureMode)
+  ) {
+    throw new FrameworkError(
+      `source lineage capture mode must be one of: ${SOURCE_CAPTURE_MODES.join(", ")}: ${file}`,
+      { code: "IO_ERROR" },
+    );
+  }
+  return value as unknown as SourceLineage;
+}
+
+async function readSourceObservationFile(file: string): Promise<SourceObservation> {
+  const value = await readYamlFile<Record<string, unknown>>(file);
+  for (const field of [
+    "analysis_status",
+    "analysis_path",
+    "analysis_exit",
+    "analysis_closed_on",
+  ] as const) {
+    if (Object.hasOwn(value, field)) {
+      throw new FrameworkError(`source observation contains retired field '${field}': ${file}`, {
+        code: "IO_ERROR",
+      });
+    }
+  }
+  if (
+    typeof value.capture_mode !== "string" ||
+    !SOURCE_CAPTURE_MODES.includes(value.capture_mode as SourceCaptureMode)
+  ) {
+    throw new FrameworkError(
+      `source observation capture mode must be one of: ${SOURCE_CAPTURE_MODES.join(", ")}: ${file}`,
+      { code: "IO_ERROR" },
+    );
+  }
+  return value as unknown as SourceObservation;
+}
+
 async function writeYamlFile(file: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, stringifyYaml(value), "utf8");
 }
 
-// Source-entry ledger directories live directly under references/<alias>/.
+// Source-entry ledger directories live directly under sources/<alias>/.
 const OBSERVATIONS_DIR = "observations";
 const MANIFESTS_DIR = "manifests";
 const CAPTURES_DIR = "captures";
-const COMPARISONS_DIR = "comparisons";
 
 function observationPath(observationId: string): string {
   return `${OBSERVATIONS_DIR}/${observationId}.yaml`;
@@ -400,15 +459,6 @@ function observationPath(observationId: string): string {
 
 function manifestPath(observationId: string): string {
   return `${MANIFESTS_DIR}/${observationId}.json`;
-}
-
-function analysisStatusForChange(
-  changeClass: SourceChangeClass,
-  firstObservation: boolean,
-): SourceAnalysisStatus {
-  if (changeClass === "same") return "none";
-  if (firstObservation) return "open";
-  return changeClass === "major" || changeClass === "replacement" ? "open" : "suggested";
 }
 
 function isGitMetadata(value: SourceVcsMetadata | undefined): value is SourceVcsMetadata {
@@ -657,7 +707,6 @@ async function ensureSourceScaffold(entryRoot: string): Promise<void> {
   await mkdir(path.join(entryRoot, "materials"), { recursive: true });
   await mkdir(path.join(entryRoot, OBSERVATIONS_DIR), { recursive: true });
   await mkdir(path.join(entryRoot, MANIFESTS_DIR), { recursive: true });
-  await mkdir(path.join(entryRoot, COMPARISONS_DIR), { recursive: true });
   await mkdir(path.join(entryRoot, CAPTURES_DIR), { recursive: true });
 }
 
@@ -801,7 +850,6 @@ async function recordObservation(input: {
     observationSuffix(vcs, manifest.fingerprint),
   );
 
-  const firstObservation = input.previousObservation === null;
   const observation: SourceObservation = {
     observation_id: id,
     observed_on: observedOn,
@@ -812,7 +860,6 @@ async function recordObservation(input: {
       : null,
     change_class: changeClass,
     capture_mode: input.captureMode,
-    analysis_status: analysisStatusForChange(changeClass, firstObservation),
     ...(vcs ? { vcs } : {}),
     fingerprint: manifest.fingerprint,
     manifest: manifestPath(id),
@@ -845,7 +892,7 @@ function updateLineageForObservation(
   return {
     ...lineage,
     latest_observation: observationPath(observation.observation_id),
-    ...(observation.vcs
+    ...(observation.capture_mode === "checkout" && observation.vcs
       ? {
           checkout: {
             path: "checkout",
@@ -877,48 +924,33 @@ async function writeSourceCard(
     "- `source.yaml`: durable lineage identity",
     "- `checkout/`: current materialized source when capture mode is `checkout`",
     "- `materials/`: selected extracts and supporting files",
-    "- `observations/`, `manifests/`, `comparisons/`, `captures/`: source observation ledger",
+    `- Source mode: ${lineage.mode}`,
+    "- `observations/`, `manifests/`, `captures/`: source observation ledger",
     "",
   ];
   await writeFile(path.join(entryRoot, "README.md"), lines.join("\n"), "utf8");
 }
 
-async function appendHistory(
-  entryRoot: string,
-  event: "add" | "sync" | "switch" | "noop",
-  observation: SourceObservation | null,
-  note: string,
-  now: Date,
-): Promise<void> {
-  const file = path.join(entryRoot, "history.md");
-  if (!(await exists(file))) {
-    await writeFile(file, "# Source History\n\n", "utf8");
-  }
-  const obs = observation ? ` (${observation.observation_id}, ${observation.change_class})` : "";
-  const line = `- ${nowIso(now)} — ${event}${obs}: ${note}\n`;
-  await writeFile(file, `${await readFile(file, "utf8")}${line}`, "utf8");
-}
-
 async function sourceEntryForAlias(root: string, alias?: string): Promise<SourceEntry> {
   const manifest = requireManifestPresent(await loadManifest(root), root);
-  const referencesRoot = referencesRootForManifest(root, manifest);
-  const referencesRelative = referencesRelativeForManifest(manifest);
-  if (!(await exists(referencesRoot))) {
-    throw new FrameworkNotFoundError(`no references directory found: ${referencesRelative}`);
+  const sourcesRoot = sourcesRootForManifest(root, manifest);
+  const sourcesRelative = sourcesRelativeForManifest(manifest);
+  if (!(await exists(sourcesRoot))) {
+    throw new FrameworkNotFoundError(`no sources directory found: ${sourcesRelative}`);
   }
 
   if (alias) {
     const normalized = slugify(alias);
-    const entryRoot = path.join(referencesRoot, normalized);
+    const entryRoot = path.join(sourcesRoot, normalized);
     const sourceFile = path.join(entryRoot, "source.yaml");
     if (!(await exists(sourceFile))) {
       throw new FrameworkNotFoundError(`source not found: ${normalized}`);
     }
     return {
       alias: normalized,
-      relativePath: `${referencesRelative}/${normalized}`,
+      relativePath: `${sourcesRelative}/${normalized}`,
       absolutePath: entryRoot,
-      lineage: await readYamlFile<SourceLineage>(sourceFile),
+      lineage: await readSourceLineageFile(sourceFile),
     };
   }
 
@@ -940,21 +972,21 @@ async function sourceEntryForAlias(root: string, alias?: string): Promise<Source
 
 async function listSourceEntries(root: string): Promise<SourceEntry[]> {
   const manifest = requireManifestPresent(await loadManifest(root), root);
-  const referencesRoot = referencesRootForManifest(root, manifest);
-  const referencesRelative = referencesRelativeForManifest(manifest);
-  if (!(await exists(referencesRoot))) return [];
-  const entries = await readdir(referencesRoot, { withFileTypes: true });
+  const sourcesRoot = sourcesRootForManifest(root, manifest);
+  const sourcesRelative = sourcesRelativeForManifest(manifest);
+  if (!(await exists(sourcesRoot))) return [];
+  const entries = await readdir(sourcesRoot, { withFileTypes: true });
   const sources: SourceEntry[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name === "frozen") continue;
-    const entryRoot = path.join(referencesRoot, entry.name);
+    const entryRoot = path.join(sourcesRoot, entry.name);
     const sourceFile = path.join(entryRoot, "source.yaml");
     if (!(await exists(sourceFile))) continue;
     sources.push({
       alias: entry.name,
-      relativePath: `${referencesRelative}/${entry.name}`,
+      relativePath: `${sourcesRelative}/${entry.name}`,
       absolutePath: entryRoot,
-      lineage: await readYamlFile<SourceLineage>(sourceFile),
+      lineage: await readSourceLineageFile(sourceFile),
     });
   }
   return sources.sort((a, b) => a.alias.localeCompare(b.alias));
@@ -970,7 +1002,7 @@ async function loadObservation(
     ? path.join(entryRoot, normalized)
     : path.join(entryRoot, OBSERVATIONS_DIR, `${normalized}.yaml`);
   if (!(await exists(file))) return null;
-  return readYamlFile<SourceObservation>(file);
+  return readSourceObservationFile(file);
 }
 
 async function loadObservationManifest(
@@ -994,9 +1026,22 @@ async function materializeMaterials(captureRoot: string, materialsDir: string): 
 
 export async function addSource(options: SourceAddOptions): Promise<SourceAddResult> {
   const root = path.resolve(options.root);
+  await preflightSourceWorkspace(root);
+  return withWorkspaceMutationCoordination(root, () => addSourceUnlocked({ ...options, root }));
+}
+
+async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddResult> {
+  const root = path.resolve(options.root);
   const manifest = requireManifestPresent(await loadManifest(root), root);
   const now = options.now ?? new Date();
-  const captureMode = options.capture ?? "checkout";
+  const mode = options.mode ?? "living";
+  if (!SOURCE_MODES.includes(mode)) {
+    throw new FrameworkError(`source mode must be one of: ${SOURCE_MODES.join(", ")}`);
+  }
+  if (mode === "frozen" && options.capture !== undefined && options.capture !== "archive") {
+    throw new FrameworkError("frozen sources require archive capture");
+  }
+  const captureMode = mode === "frozen" ? "archive" : (options.capture ?? "checkout");
   assertCaptureMode(captureMode);
 
   const source =
@@ -1004,7 +1049,7 @@ export async function addSource(options: SourceAddOptions): Promise<SourceAddRes
       ? options.source
       : path.resolve(options.source);
   const alias = aliasForSource(options.source, options.alias);
-  const relativePath = `${referencesRelativeForManifest(manifest)}/${alias}`;
+  const relativePath = `${sourcesRelativeForManifest(manifest)}/${alias}`;
   const entryRoot = path.join(root, relativePath);
   if (await exists(entryRoot)) {
     throw new FrameworkAlreadyExistsError(`source already exists: ${relativePath}`);
@@ -1026,7 +1071,7 @@ export async function addSource(options: SourceAddOptions): Promise<SourceAddRes
     source_uri: source,
     created_on: createdOn,
     latest_observation: null,
-    status: "active",
+    mode,
     default_capture_mode: captureMode,
   };
 
@@ -1044,8 +1089,6 @@ export async function addSource(options: SourceAddOptions): Promise<SourceAddRes
   const updatedLineage = updateLineageForObservation(lineage, recorded.observation);
   await writeLineage(entryRoot, updatedLineage);
   await writeSourceCard(entryRoot, updatedLineage, recorded.observation);
-  await appendHistory(entryRoot, "add", recorded.observation, `added from ${source}`, now);
-
   const eventFile = await appendEvent(
     root,
     {
@@ -1053,6 +1096,7 @@ export async function addSource(options: SourceAddOptions): Promise<SourceAddRes
       source: alias,
       path: relativePath,
       source_uri: source,
+      mode,
       capture_mode: captureMode,
       observation: recorded.observationFile,
       manifest: recorded.manifestFile,
@@ -1077,10 +1121,19 @@ export async function addSource(options: SourceAddOptions): Promise<SourceAddRes
 
 export async function syncSource(options: SourceSyncOptions): Promise<SourceSyncResult> {
   const root = path.resolve(options.root);
+  await preflightSourceWorkspace(root);
+  return withWorkspaceMutationCoordination(root, () => syncSourceUnlocked({ ...options, root }));
+}
+
+async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyncResult> {
+  const root = path.resolve(options.root);
   requireManifestPresent(await loadManifest(root), root);
   const now = options.now ?? new Date();
   if (options.changeClass) assertChangeClass(options.changeClass);
   const entry = await sourceEntryForAlias(root, options.alias);
+  if (entry.lineage.mode === "frozen") {
+    throw new FrameworkError(`source '${entry.alias}' is frozen and cannot be synced`);
+  }
   const previousObservation = await loadObservation(
     entry.absolutePath,
     entry.lineage.latest_observation,
@@ -1112,13 +1165,6 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
   if (recorded.changeClass === "same") {
     await rm(path.join(entry.absolutePath, recorded.observationFile), { force: true });
     await rm(path.join(entry.absolutePath, recorded.manifestFile), { force: true });
-    await appendHistory(
-      entry.absolutePath,
-      "noop",
-      null,
-      "same source state; no new observation",
-      now,
-    );
     const eventFile = await appendEvent(
       root,
       {
@@ -1145,13 +1191,6 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
   const updatedLineage = updateLineageForObservation(entry.lineage, recorded.observation);
   await writeLineage(entry.absolutePath, updatedLineage);
   await writeSourceCard(entry.absolutePath, updatedLineage, recorded.observation);
-  await appendHistory(
-    entry.absolutePath,
-    "sync",
-    recorded.observation,
-    `synced ${entry.lineage.source_uri}`,
-    now,
-  );
   const comparison = compareManifests(previousManifest, recorded.manifest);
   const comparisonResult: SourceDiffResult = {
     ...comparison,
@@ -1160,15 +1199,6 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
     from: previousObservation?.observation_id ?? null,
     to: recorded.observation.observation_id,
   };
-  await writeFile(
-    path.join(
-      entry.absolutePath,
-      COMPARISONS_DIR,
-      `${previousObservation?.observation_id ?? "none"}--${recorded.observation.observation_id}.md`,
-    ),
-    formatDiffMarkdown(comparisonResult),
-    "utf8",
-  );
   const eventFile = await appendEvent(
     root,
     {
@@ -1198,9 +1228,18 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
 
 export async function switchSource(options: SourceSwitchOptions): Promise<SourceSwitchResult> {
   const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  await preflightSourceWorkspace(root);
+  return withWorkspaceMutationCoordination(root, () => switchSourceUnlocked({ ...options, root }));
+}
+
+async function switchSourceUnlocked(options: SourceSwitchOptions): Promise<SourceSwitchResult> {
+  const root = path.resolve(options.root);
+  await preflightSourceWorkspace(root);
   const now = options.now ?? new Date();
   const entry = await sourceEntryForAlias(root, options.alias);
+  if (entry.lineage.mode === "frozen") {
+    throw new FrameworkError(`source '${entry.alias}' is frozen and cannot be switched`);
+  }
   const checkout = path.join(entry.absolutePath, "checkout");
   if (!(await exists(path.join(checkout, ".git")))) {
     throw new FrameworkError(`source '${entry.alias}' does not have a Git checkout`);
@@ -1228,13 +1267,6 @@ export async function switchSource(options: SourceSwitchOptions): Promise<Source
     },
   };
   await writeLineage(entry.absolutePath, updatedLineage);
-  await appendHistory(
-    entry.absolutePath,
-    "switch",
-    null,
-    `checked out ${options.target} (${vcs.commit.slice(0, 12)})`,
-    now,
-  );
   const eventFile = await appendEvent(
     root,
     {
@@ -1248,7 +1280,9 @@ export async function switchSource(options: SourceSwitchOptions): Promise<Source
     },
     now,
   );
-  const sync = options.sync ? await syncSource({ root, alias: entry.alias, now }) : undefined;
+  const sync = options.sync
+    ? await syncSourceUnlocked({ root, alias: entry.alias, now })
+    : undefined;
   return {
     root,
     alias: entry.alias,
@@ -1265,7 +1299,7 @@ export async function getSourceStatus(options: {
   readonly alias?: string;
 }): Promise<SourceStatusResult> {
   const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  await preflightSourceWorkspace(root);
   const entries = options.alias
     ? [await sourceEntryForAlias(root, options.alias)]
     : await listSourceEntries(root);
@@ -1278,13 +1312,14 @@ export async function getSourceStatus(options: {
       name: entry.lineage.lineage_name,
       kind: entry.lineage.source_kind,
       uri: entry.lineage.source_uri,
-      status: entry.lineage.status,
+      mode: entry.lineage.mode,
       captureMode: entry.lineage.default_capture_mode,
       latestObservation: latest?.observation_id ?? null,
       latestChangeClass: latest?.change_class ?? null,
-      analysisStatus: latest?.analysis_status ?? null,
       ...(latest?.vcs ? { vcs: latest.vcs } : {}),
-      ...(entry.lineage.checkout ? { checkout: entry.lineage.checkout } : {}),
+      ...(entry.lineage.default_capture_mode === "checkout" && entry.lineage.checkout
+        ? { checkout: entry.lineage.checkout }
+        : {}),
     });
   }
   return { root, sources };
@@ -1295,7 +1330,7 @@ export async function getSourceLog(options: {
   readonly alias: string;
 }): Promise<SourceLogResult> {
   const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  await preflightSourceWorkspace(root);
   const entry = await sourceEntryForAlias(root, options.alias);
   const observationsDir = path.join(entry.absolutePath, OBSERVATIONS_DIR);
   const entries = await readdir(observationsDir, { withFileTypes: true });
@@ -1304,7 +1339,7 @@ export async function getSourceLog(options: {
     if (!file.isFile() || !file.name.endsWith(".yaml")) continue;
     const relative = `${OBSERVATIONS_DIR}/${file.name}`;
     observations.push({
-      observation: await readYamlFile<SourceObservation>(path.join(observationsDir, file.name)),
+      observation: await readSourceObservationFile(path.join(observationsDir, file.name)),
       path: relative,
     });
   }
@@ -1317,11 +1352,6 @@ function normalizeObservationSelector(selector: string): string {
   if (normalized.endsWith(".yaml")) return normalized;
   if (normalized.startsWith(`${OBSERVATIONS_DIR}/`)) return `${normalized}.yaml`;
   return `${OBSERVATIONS_DIR}/${normalized}.yaml`;
-}
-
-function observationIdFromPath(observationRef: string | null): string | null {
-  if (!observationRef) return null;
-  return path.basename(observationRef.replace(/\\/g, "/"), ".yaml");
 }
 
 async function resolveSourceObservationEntry(
@@ -1347,19 +1377,9 @@ export async function resolveSourceObservation(
   options: SourceObservationResolveOptions,
 ): Promise<SourceObservationResolution> {
   const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  await preflightSourceWorkspace(root);
   const entry = await resolveSourceObservationEntry(root, options.alias, options.observation);
   const observationFile = observationPath(entry.observation.observation_id);
-  const previousId = observationIdFromPath(entry.observation.previous_observation);
-  const diffName = previousId ? `${previousId}--${entry.observation.observation_id}.md` : null;
-  let diffExists: string | null = null;
-  if (diffName) {
-    const flat = `${COMPARISONS_DIR}/${diffName}`;
-    if (await exists(path.join(entry.absolutePath, flat))) {
-      diffExists = flat;
-    }
-  }
-
   return {
     root,
     alias: entry.alias,
@@ -1371,37 +1391,12 @@ export async function resolveSourceObservation(
     checkoutPath: entry.observation.checkout_path
       ? `${entry.relativePath}/${entry.observation.checkout_path}`
       : null,
-    diffFile: diffExists ? `${entry.relativePath}/${diffExists}` : null,
   };
-}
-
-export async function closeSourceObservationAnalysis(
-  options: SourceObservationCloseOptions,
-): Promise<SourceObservationResolution> {
-  const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
-  const entry = await resolveSourceObservationEntry(root, options.alias, options.observation);
-  const updated: SourceObservation = {
-    ...entry.observation,
-    analysis_status: "closed",
-    analysis_path: options.analysisPath.replace(/\\/g, "/"),
-    analysis_exit: options.analysisExit,
-    analysis_closed_on: nowIso(options.now ?? new Date()),
-  };
-  await writeYamlFile(
-    path.join(entry.absolutePath, observationPath(updated.observation_id)),
-    updated,
-  );
-  return resolveSourceObservation({
-    root,
-    alias: entry.alias,
-    observation: updated.observation_id,
-  });
 }
 
 export async function diffSource(options: SourceDiffOptions): Promise<SourceDiffResult> {
   const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  await preflightSourceWorkspace(root);
   const entry = await sourceEntryForAlias(root, options.alias);
   const latest = await loadObservation(entry.absolutePath, entry.lineage.latest_observation);
   const latestManifest = await loadObservationManifest(entry.absolutePath, latest);
@@ -1424,32 +1419,11 @@ export async function diffSource(options: SourceDiffOptions): Promise<SourceDiff
   };
 }
 
-function formatDiffMarkdown(diff: SourceDiffResult): string {
-  return [
-    `# Source Diff: ${diff.alias}`,
-    "",
-    `- From: ${diff.from ?? "none"}`,
-    `- To: ${diff.to ?? "none"}`,
-    "",
-    "## Added",
-    "",
-    ...(diff.added.length > 0 ? diff.added.map((file) => `- ${file}`) : ["(none)"]),
-    "",
-    "## Removed",
-    "",
-    ...(diff.removed.length > 0 ? diff.removed.map((file) => `- ${file}`) : ["(none)"]),
-    "",
-    "## Changed",
-    "",
-    ...(diff.changed.length > 0 ? diff.changed.map((file) => `- ${file}`) : ["(none)"]),
-    "",
-  ].join("\n");
-}
-
 export async function collectSourceHealthRows(
   root: string,
   options: { readonly includeAdvisories?: boolean } = {},
 ): Promise<CheckRow[]> {
+  await preflightSourceWorkspace(path.resolve(root));
   const rows: CheckRow[] = [];
   const sources = await listSourceEntries(root);
   for (const source of sources) {
@@ -1483,17 +1457,6 @@ export async function collectSourceHealthRows(
         path: `${source.relativePath}/${latest.manifest}`,
         status: "error",
         message: `source observation '${latest.observation_id}' has no capture manifest`,
-      });
-    }
-    if (
-      options.includeAdvisories === true &&
-      latest.change_class === "major" &&
-      latest.analysis_status !== "closed"
-    ) {
-      rows.push({
-        path: `${source.relativePath}/${source.lineage.latest_observation}`,
-        status: "warning",
-        message: `major source change '${latest.observation_id}' needs revalidation analysis`,
       });
     }
   }

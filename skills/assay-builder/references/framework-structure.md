@@ -13,7 +13,7 @@ Every current Assay workspace has a shared base, then the selected archetype add
 │   ├── patterns/     # validated reusable patterns
 │   ├── guides/       # operational guides
 │   └── troubleshooting/  # failure modes and fixes
-├── references/       # native external evidence; eager in study, lazy elsewhere
+├── sources/       # native external evidence; eager in study, lazy elsewhere
 ├── analyses/         # native analyses; eager in study, lazy elsewhere
 ├── problem/          # solve/absorption-mode source materials, when enabled
 ├── project/           # required native Project envelope, charter, and Roadmap items
@@ -39,10 +39,10 @@ dirs:
 
 `assay status`, the `AGENTS.md` managed block, and the placement advisories in `assay check --advisories` all read those declarations, so a custom archetype explains itself everywhere without any change to Assay. Directories under `.assay/` and `<zone>/templates` folders are treated as machinery rather than places to put work and stay out of all three; declare the parent directory when you want it listed. After changing an archetype, run `assay update --agents` so the `AGENTS.md` table matches it again.
 
-- **learning** (default): the project learns from external systems. Living external sources are added under `references/<alias>/` with `source.yaml`, current `checkout/`, bounded `materials/`, `history.md`, and a flat observation ledger (`observations/`, `manifests/`, `comparisons/`, `captures/`). Use this when the external thing is something you study, not something you are.
-- **absorption**: the project exists to absorb a specific external thing (a benchmark target, a paper, a repo you are rebuilding). Its official/source materials land under `problem/<name>/` with a `source.yaml` case file, because they ARE the project, not external references. `references/frozen/` is still available for genuine third-party side evidence.
+- **learning** (default): the project learns from external systems. Living external sources are added under `sources/<alias>/` with `source.yaml`, bounded `materials/`, and an observation ledger (`observations/`, `manifests/`, `captures/`). Use this when the external thing is something you study, not something you are.
+- **absorption**: the project centers on a specific external thing (a benchmark target, a paper, a repo you are rebuilding). Its official materials land under `problem/<name>/` because they are the project. `sources/` remains available for genuine third-party side evidence.
 
-`source add` is the preferred learning-mode intake for external systems that may change. `absorb` still routes automatically based on mode for the freeze-and-open-analysis flow: legacy/full capture under `references/frozen/` in learning mode, `problem/` in absorption mode.
+`source add --mode living|frozen` is the single Source intake. Living Sources may sync or switch; frozen Sources use archive capture and are immutable. Project mode still governs the project-specific `problem/` workflow, not Source storage.
 
 ## Integrity checks and optional advisories
 
@@ -51,15 +51,11 @@ file existing does not prove content quality, so Assay does not turn prose
 heuristics into mandatory gates. Use `assay check --advisories` when workflow
 reminders are useful:
 
-- A frozen reference directory with no `reference.yaml` is listed with the
-  `assay reference backfill <path>` command that writes one. Provenance is
-  checkable; whether someone read the material is not.
-- A living source observation must always retain provenance, fingerprint, and
-  manifest metadata. A `major` observation can additionally be listed as a
-  revalidation advisory until a bound analysis closes.
+- Every Source observation retains provenance, fingerprint, and manifest
+  metadata. Frozen Sources are immutable archive captures in the same namespace.
 - An analysis at `Status: draft` with empty `## Key observations` is listed as
   an unfinished-draft advisory.
-- `analysis close --exit …` records the explicit decision and marks a bound
+- `analysis close --exit …` records the explicit Analysis decision without rewriting a bound
   source observation closed; it does not judge section prose.
 
 
@@ -67,16 +63,16 @@ reminders are useful:
 
 | User intent | Directory |
 | --- | --- |
-| study others' projects/materials | `references/` |
+| study others' projects/materials | `sources/` |
 | analyze them | `analyses/` |
-| absorb objective inputs | `problem/`, `intake/` |
+| absorption-mode objective inputs | `problem/`, `intake/` |
 | explore local approaches | `approaches/`, `trials/`, `comparison.md` |
 | build local systems | `systems/` |
 | keep one bounded outcome identifiable across contexts | `tasks/` |
 | promote accepted findings | `knowledge/` |
 | record the adopted charter, roadmap, specifications, and selected extensions | `project/` |
 
-`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap records are added under `roadmap/<id>/`. Native Specifications are lazy under `specs/<id>/{spec.yaml,specification.md}` and promotion never changes its Analysis or Task source. Project-selected Relay records and extensions are also lazy; Reference, Analysis, Task, System, and runtime state keep separate authority.
+`project/` is required and follows the work root: standalone uses `project/`, overlay uses `.assay/project/`. Init creates `project.yaml`, `README.md`, and explanatory `roadmap/README.md`; native Roadmap records are added under `roadmap/<id>/`. Native Specifications are lazy under `specs/<id>/{spec.yaml,specification.md}` and promotion never changes its Analysis or Task source. Project-selected Relay records and extensions are also lazy; Source, Analysis, Task, System, and runtime state keep separate authority.
 
 Native Task follows the same work root: `tasks/` in standalone and
 `.assay/tasks/` in overlay. Each stable-id directory requires a machine

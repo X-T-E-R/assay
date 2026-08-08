@@ -45,13 +45,13 @@ export function archetypeZones(
 }
 
 /**
- * Reference and Analysis are native for every archetype, but lazy outside
+ * Source and Analysis are native for every archetype, but lazy outside
  * study. Declaring them as zones makes placement/status semantics available
  * without causing init or check to require their directories on disk.
  */
 export const NATIVE_LAZY_DIRECTORIES: readonly ArchetypeDirectory[] = [
   {
-    path: "references",
+    path: "sources",
     purpose: "Living sources and frozen external evidence (created on first use)",
   },
   { path: "analyses", purpose: "Analysis records (created on first use)" },

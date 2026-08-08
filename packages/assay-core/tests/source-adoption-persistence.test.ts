@@ -4,22 +4,21 @@ import path from "node:path";
 import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { inspectAdoptionLock, releaseAdoptionLock } from "../src/donors/index.js";
 import {
   addSource,
   checkFramework,
-  decideDonorAdoption,
-  getDonorHistory,
+  decideSourceAdoption,
+  getSourceAdoptionHistory,
   initFramework,
-  inspectAdoptionLock,
-  inspectDonorAdoption,
-  listDonorAdoptions,
-  recordDonorEvidence,
-  registerDonorAdoption,
+  inspectSourceAdoption,
+  listSourceAdoptions,
+  recordSourceAdoptionEvidence,
+  registerSourceAdoption,
   registerSystem,
-  releaseAdoptionLock,
 } from "../src/index.js";
 
-const tempDirs = createTempDirectoryFixture("assay-donor-persistence");
+const tempDirs = createTempDirectoryFixture("assay-source-adoption-persistence");
 
 beforeAll(() => {
   process.env.ASSAY_NO_TRACK = "1";
@@ -29,13 +28,13 @@ afterEach(async () => {
   await tempDirs.cleanup();
 });
 
-interface DonorFixture {
+interface SourceAdoptionFixture {
   readonly root: string;
   readonly targetRoot: string;
   readonly observation: string;
 }
 
-async function createFixture(name: string): Promise<DonorFixture> {
+async function createFixture(name: string): Promise<SourceAdoptionFixture> {
   const root = path.join(await tempDirs.createTempDir(), name);
   await initFramework({ target: root, name });
 
@@ -62,7 +61,7 @@ async function createFixture(name: string): Promise<DonorFixture> {
   return { root, targetRoot, observation: source.observation.observation_id };
 }
 
-function definition(fixture: DonorFixture, targetPath = "integrations/alpha.txt") {
+function definition(fixture: SourceAdoptionFixture, targetPath = "integrations/alpha.txt") {
   return {
     schema: "assay.donor-adoption/v1" as const,
     id: "upstream-product",
@@ -82,16 +81,17 @@ function definition(fixture: DonorFixture, targetPath = "integrations/alpha.txt"
   };
 }
 
-async function registeredFixture(name: string): Promise<DonorFixture> {
+async function registeredFixture(name: string): Promise<SourceAdoptionFixture> {
   const fixture = await createFixture(name);
-  await registerDonorAdoption({ root: fixture.root, definition: definition(fixture) });
+  await registerSourceAdoption({ root: fixture.root, definition: definition(fixture) });
   return fixture;
 }
 
-const donorsDir = (root: string, ...segments: readonly string[]): string =>
+const adoptionStorePath = (root: string, ...segments: readonly string[]): string =>
   path.join(root, ".assay", "donors", ...segments);
 
-const lockFile = (root: string, adoptionId: string): string => donorsDir(root, adoptionId, ".lock");
+const lockFile = (root: string, adoptionId: string): string =>
+  adoptionStorePath(root, adoptionId, ".lock");
 
 /**
  * Write a lock file as a crashed run would have left it. `ageMs` also moves the
@@ -142,15 +142,15 @@ async function createDirectoryLink(target: string, linkPath: string): Promise<bo
   return false;
 }
 
-describe("donor state does not drift from the rest of the workspace state", () => {
+describe("Source adoption state does not drift from the rest of the workspace state", () => {
   it("reports a truncated inspection against its own file and leaves state.json valid", async () => {
     const fixture = await registeredFixture("TruncatedInspection");
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
     });
-    const inspectionPath = donorsDir(
+    const inspectionPath = adoptionStorePath(
       fixture.root,
       "upstream-product",
       "inspections",
@@ -181,13 +181,13 @@ describe("donor state does not drift from the rest of the workspace state", () =
   it("re-running the same inspect after a truncated write succeeds", async () => {
     const fixture = await registeredFixture("RetryAfterTruncation");
     const now = new Date("2026-07-26T10:00:00");
-    const first = await inspectDonorAdoption({
+    const first = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
       now,
     });
-    const inspectionPath = donorsDir(
+    const inspectionPath = adoptionStorePath(
       fixture.root,
       "upstream-product",
       "inspections",
@@ -199,7 +199,7 @@ describe("donor state does not drift from the rest of the workspace state", () =
     // Inspection ids are content digests, so the retry lands on the same file.
     // It must replace the partial record instead of reporting a collision that
     // no `assay` command can clear.
-    const retried = await inspectDonorAdoption({
+    const retried = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -218,12 +218,12 @@ describe("donor state does not drift from the rest of the workspace state", () =
 
   it("reports a truncated evidence record against its own file", async () => {
     const fixture = await registeredFixture("TruncatedEvidence");
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
     });
-    const recorded = await recordDonorEvidence({
+    const recorded = await recordSourceAdoptionEvidence({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -242,17 +242,17 @@ describe("donor state does not drift from the rest of the workspace state", () =
     expect(row?.status).toBe("error");
   });
 
-  it("reports a truncated uncommitted decision instead of crashing donor history", async () => {
+  it("reports a truncated uncommitted decision instead of crashing Source adoption history", async () => {
     const fixture = await registeredFixture("TruncatedDecision");
-    const committed = await decideDonorAdoption({
+    const committed = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
       outcome: "accept",
     });
-    // An interrupted `donor decide` leaves a decision file that state.json
+    // An interrupted `source adoption decide` leaves a decision file that state.json
     // never came to reference.
-    const orphan = donorsDir(
+    const orphan = adoptionStorePath(
       fixture.root,
       "upstream-product",
       "decisions",
@@ -262,7 +262,10 @@ describe("donor state does not drift from the rest of the workspace state", () =
 
     // History used to throw on the unreadable file even though it is not part
     // of committed history.
-    const history = await getDonorHistory({ root: fixture.root, adoptionId: "upstream-product" });
+    const history = await getSourceAdoptionHistory({
+      root: fixture.root,
+      adoptionId: "upstream-product",
+    });
     expect(history.decisions.map((decision) => decision.id)).toEqual([committed.decision.id]);
 
     const check = await checkFramework({ root: fixture.root });
@@ -277,13 +280,13 @@ describe("donor state does not drift from the rest of the workspace state", () =
 
   it("refuses to rewrite a record that committed history depends on", async () => {
     const fixture = await registeredFixture("CommittedRecordGuard");
-    const committed = await decideDonorAdoption({
+    const committed = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
       outcome: "accept",
     });
-    const inspectionPath = donorsDir(
+    const inspectionPath = adoptionStorePath(
       fixture.root,
       "upstream-product",
       "inspections",
@@ -302,7 +305,7 @@ describe("donor state does not drift from the rest of the workspace state", () =
   });
 });
 
-describe("a crashed donor run leaves a recoverable lock", () => {
+describe("a crashed Source adoption run leaves a recoverable lock", () => {
   it("treats an empty lock file as abandoned once past the grace window", async () => {
     const fixture = await registeredFixture("EmptyLock");
     const file = lockFile(fixture.root, "upstream-product");
@@ -312,13 +315,13 @@ describe("a crashed donor run leaves a recoverable lock", () => {
     // Fresh: still respected, so a live acquisition mid-write is not stolen.
     expect((await inspectAdoptionLock(fixture.root, "upstream-product"))?.stale).toBe(false);
     await expect(
-      decideDonorAdoption({
+      decideSourceAdoption({
         root: fixture.root,
         adoptionId: "upstream-product",
         targetId: "product",
         outcome: "defer",
       }),
-    ).rejects.toThrow(/donor adoption is busy/);
+    ).rejects.toThrow(/Source adoption is busy/);
 
     // Ten minutes on, no acquisition is still in flight. A payload-less lock
     // must not hold the adoption for an hour.
@@ -328,7 +331,7 @@ describe("a crashed donor run leaves a recoverable lock", () => {
     expect(aged?.reason).toContain("no usable owner record");
     expect(aged?.stale).toBe(true);
 
-    const decided = await decideDonorAdoption({
+    const decided = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -344,7 +347,7 @@ describe("a crashed donor run leaves a recoverable lock", () => {
 
     const released = await releaseAdoptionLock(fixture.root, "upstream-product", { force: true });
     expect(released.released).toBe(true);
-    const decided = await decideDonorAdoption({
+    const decided = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -378,7 +381,7 @@ describe("a crashed donor run leaves a recoverable lock", () => {
     expect(lock?.stale).toBe(true);
 
     // The adoption unblocks itself rather than staying wedged forever.
-    const decided = await decideDonorAdoption({
+    const decided = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -396,7 +399,7 @@ describe("a crashed donor run leaves a recoverable lock", () => {
     const lock = await inspectAdoptionLock(fixture.root, "upstream-product");
     expect(lock?.stale).toBe(true);
     expect(lock?.reason).toContain("before the last reboot");
-    const decided = await decideDonorAdoption({
+    const decided = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -409,7 +412,7 @@ describe("a crashed donor run leaves a recoverable lock", () => {
     const fixture = await registeredFixture("LiveLockRelease");
     await writeAgedLock(fixture.root, { pid: process.pid, ageMs: 0 });
     await expect(releaseAdoptionLock(fixture.root, "upstream-product")).rejects.toThrow(
-      /donor adoption is busy/,
+      /Source adoption is busy/,
     );
     expect(await exists(lockFile(fixture.root, "upstream-product"))).toBe(true);
   });
@@ -429,7 +432,7 @@ describe("target locators cannot reach outside the registered system", () => {
     // a link out of the system: accepting it would let a baseline attest to
     // bytes the target system does not own.
     await expect(
-      registerDonorAdoption({
+      registerSourceAdoption({
         root: fixture.root,
         definition: definition(fixture, "link/src/a.txt"),
       }),
@@ -446,7 +449,7 @@ describe("target locators cannot reach outside the registered system", () => {
     // A locator that does not exist yet is a legitimate draft state, but it
     // must not be the way past containment.
     await expect(
-      registerDonorAdoption({
+      registerSourceAdoption({
         root: fixture.root,
         definition: definition(fixture, "link/not-created-yet.txt"),
       }),
@@ -455,7 +458,7 @@ describe("target locators cannot reach outside the registered system", () => {
 
   it("still accepts an ordinary contained locator that does not exist yet", async () => {
     const fixture = await createFixture("DraftLocator");
-    const registered = await registerDonorAdoption({
+    const registered = await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture, "integrations/planned.txt"),
     });

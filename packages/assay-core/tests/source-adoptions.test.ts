@@ -9,29 +9,29 @@ import {
   attachExistingRepo,
   checkFramework,
   convertOverlayToStandalone,
-  decideDonorAdoption,
-  getDonorAdoption,
-  getDonorHistory,
-  getDonorStatus,
+  decideSourceAdoption,
   getFrameworkStatus,
+  getSourceAdoption,
+  getSourceAdoptionHistory,
+  getSourceAdoptionStatus,
   initFramework,
-  inspectDonorAdoption,
-  listDonorAdoptions,
-  recordDonorEvidence,
-  recordDonorRollback,
-  registerDonorAdoption,
+  inspectSourceAdoption,
+  listSourceAdoptions,
+  recordSourceAdoptionEvidence,
+  recordSourceAdoptionRollback,
+  registerSourceAdoption,
   registerSystem,
   setConvertRoadmapProbeForTests,
   syncSource,
-  updateDonorAdoption,
+  updateSourceAdoption,
   updateSystem,
-  verifyDonorInspection,
+  verifySourceAdoptionInspection,
 } from "../src/index.js";
 
 const tempRoots: string[] = [];
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-donors-"));
+  const root = await mkdtemp(path.join(tmpdir(), "assay-source-adoptions-"));
   tempRoots.push(root);
   return root;
 }
@@ -41,14 +41,14 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-interface DonorFixture {
+interface SourceAdoptionFixture {
   readonly root: string;
   readonly sourceRoot: string;
   readonly targetRoot: string;
   readonly observation: string;
 }
 
-async function createFixture(name: string): Promise<DonorFixture> {
+async function createFixture(name: string): Promise<SourceAdoptionFixture> {
   const root = path.join(await tempDir(), name);
   await initFramework({ target: root, name });
 
@@ -84,7 +84,7 @@ async function createFixture(name: string): Promise<DonorFixture> {
 }
 
 function definition(
-  fixture: DonorFixture,
+  fixture: SourceAdoptionFixture,
   options: {
     readonly id?: string;
     readonly includeRequiredEvidence?: boolean;
@@ -164,8 +164,8 @@ function definition(
   };
 }
 
-describe("donor adoption lifecycle", () => {
-  it("fail-closes a donor decision after a move boundary and preserves a usable target snapshot", async () => {
+describe("Source adoption lifecycle", () => {
+  it("fail-closes a Source adoption decision after a move boundary and preserves a usable target snapshot", async () => {
     const root = path.join(await tempDir(), "root");
     await mkdir(path.join(root, "integrations"), { recursive: true });
     await writeFile(path.join(root, "package.json"), '{"name":"root"}\n', "utf8");
@@ -181,18 +181,29 @@ describe("donor adoption lifecycle", () => {
       expect(result.exitCode, result.stderr).toBe(0);
     }
     await attachExistingRepo({ root, name: "Root", privacy: "private", noTrack: true });
+    const docsRoot = path.join(root, "docs-system");
+    await mkdir(docsRoot, { recursive: true });
+    await writeFile(path.join(docsRoot, "alpha.md"), "target-docs-v1\n", "utf8");
+    await registerSystem(root, {
+      name: "docs",
+      path: "docs-system",
+      vcs: "none",
+    });
     const sourceRoot = path.join(await tempDir(), "upstream");
     await mkdir(path.join(sourceRoot, "src"), { recursive: true });
     await writeFile(path.join(sourceRoot, "src", "alpha.txt"), "source-v1\n", "utf8");
     const source = await addSource({ root, source: sourceRoot, alias: "upstream" });
-    await registerDonorAdoption({
+    const registered = await registerSourceAdoption({
       root,
       definition: {
         schema: "assay.donor-adoption/v1",
         id: "upstream-root",
-        title: "Concurrent donor",
+        title: "Concurrent Source adoption",
         source: { alias: "upstream", observation: source.observation.observation_id },
-        targets: [{ id: "product", system: "root", adapter: "local-system/v1" }],
+        targets: [
+          { id: "product", system: "root", adapter: "local-system/v1" },
+          { id: "docs", system: "docs", adapter: "local-system/v1" },
+        ],
         mappings: [
           {
             id: "alpha",
@@ -202,15 +213,33 @@ describe("donor adoption lifecycle", () => {
             target: { target_id: "product", path: "integrations/alpha.txt", match: "exact" },
             evidence: [],
           },
+          {
+            id: "docs-alpha",
+            kind: "documentation",
+            mode: "adapt",
+            source: { path: "src/alpha.txt", match: "exact" },
+            target: { target_id: "docs", path: "alpha.md", match: "exact" },
+            evidence: [],
+          },
         ],
         evidence: [],
       },
     });
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root,
       adoptionId: "upstream-root",
       targetId: "product",
     });
+    const opaqueReceipt = path.join(
+      root,
+      ".assay",
+      "donors",
+      "upstream-root",
+      "opaque",
+      "note.bin",
+    );
+    await mkdir(path.dirname(opaqueReceipt), { recursive: true });
+    await writeFile(opaqueReceipt, "unknown-receipt-bytes\n", "utf8");
     await writeFile(
       path.join(root, ".assay", "donors", "upstream-root", ".lock"),
       '{"stale":true}\n',
@@ -239,7 +268,7 @@ describe("donor adoption lifecycle", () => {
     await atBoundary;
     try {
       await expect(
-        decideDonorAdoption({
+        decideSourceAdoption({
           root,
           adoptionId: "upstream-root",
           targetId: "product",
@@ -252,13 +281,33 @@ describe("donor adoption lifecycle", () => {
     }
     await conversion;
 
+    const converted = await getSourceAdoption({ root: target, adoptionId: "upstream-root" });
+    expect(converted.definitionDigest).toBe(registered.definitionDigest);
+    expect(converted.state.current_definition).toBe(registered.state.current_definition);
+    expect(converted.definition.targets.map((candidate) => candidate.id).sort()).toEqual([
+      "docs",
+      "product",
+    ]);
+    const docsInspection = await inspectSourceAdoption({
+      root: target,
+      adoptionId: "upstream-root",
+      targetId: "docs",
+    });
+    expect(docsInspection.inspection.mappings[0]?.target.change).toBe("activation");
+
     expect(
-      (await getDonorHistory({ root: target, adoptionId: "upstream-root" })).decisions,
+      (await getSourceAdoptionHistory({ root: target, adoptionId: "upstream-root" })).decisions,
     ).toEqual([]);
     await expect(
       stat(path.join(target, ".assay", "donors", "upstream-root", ".lock")),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    const completed = await decideDonorAdoption({
+    expect(
+      await readFile(
+        path.join(target, ".assay", "donors", "upstream-root", "opaque", "note.bin"),
+        "utf8",
+      ),
+    ).toBe("unknown-receipt-bytes\n");
+    const completed = await decideSourceAdoption({
       root: target,
       adoptionId: "upstream-root",
       targetId: "product",
@@ -266,13 +315,63 @@ describe("donor adoption lifecycle", () => {
       inspectionId: inspected.inspection.id,
     });
     expect(completed.decision.outcome).toBe("reject");
-  });
+  }, 45_000);
+
+  it("fails conversion before target writes when a Source adoption System target no longer resolves", async () => {
+    const root = path.join(await tempDir(), "preflight-root");
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, "package.json"), '{"name":"preflight-root"}\n', "utf8");
+    for (const args of [
+      ["init"],
+      ["config", "user.email", "assay@example.test"],
+      ["config", "user.name", "Assay Test"],
+      ["add", "."],
+      ["commit", "-m", "initial"],
+    ]) {
+      const result = await execa("git", args, { cwd: root, reject: false });
+      expect(result.exitCode, result.stderr).toBe(0);
+    }
+    await attachExistingRepo({ root, name: "Preflight Root", privacy: "private", noTrack: true });
+    const sourceRoot = path.join(await tempDir(), "preflight-upstream");
+    await mkdir(path.join(sourceRoot, "src"), { recursive: true });
+    await writeFile(path.join(sourceRoot, "src", "alpha.txt"), "source-v1\n", "utf8");
+    const source = await addSource({ root, source: sourceRoot, alias: "upstream" });
+    const docsRoot = path.join(root, "docs-system");
+    await mkdir(docsRoot, { recursive: true });
+    await writeFile(path.join(docsRoot, "alpha.md"), "docs-v1\n", "utf8");
+    await registerSystem(root, { name: "docs", path: "docs-system", vcs: "none" });
+    await registerSourceAdoption({
+      root,
+      definition: {
+        schema: "assay.donor-adoption/v1",
+        id: "upstream-docs",
+        source: { alias: "upstream", observation: source.observation.observation_id },
+        targets: [{ id: "docs", system: "docs", adapter: "local-system/v1" }],
+        mappings: [
+          {
+            id: "docs-alpha",
+            source: { path: "src/alpha.txt", match: "exact" },
+            target: { target_id: "docs", path: "alpha.md", match: "exact" },
+            evidence: [],
+          },
+        ],
+        evidence: [],
+      },
+    });
+    await rm(docsRoot, { recursive: true, force: true });
+    const target = path.join(await tempDir(), "preflight-converted");
+
+    await expect(convertOverlayToStandalone({ root, target })).rejects.toThrow(
+      /target system 'docs' does not resolve before conversion/,
+    );
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  }, 30_000);
 
   it("registers a reviewable definition and keeps global check structural", async () => {
-    const fixture = await createFixture("DonorRegister");
+    const fixture = await createFixture("AdoptionRegister");
     await rm(path.join(fixture.targetRoot, "integrations", "alpha.txt"));
 
-    const registered = await registerDonorAdoption({
+    const registered = await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
       now: new Date("2026-07-25T09:00:00"),
@@ -293,10 +392,10 @@ describe("donor adoption lifecycle", () => {
       ),
     ).toContain('"schema": "assay.donor-adoption/v1"');
 
-    const listed = await listDonorAdoptions({ root: fixture.root });
+    const listed = await listSourceAdoptions({ root: fixture.root });
     expect(listed.adoptions[0]?.targets[0]?.baselineDecision).toBeNull();
 
-    const status = await getDonorStatus({
+    const status = await getSourceAdoptionStatus({
       root: fixture.root,
       adoptionId: "upstream-product",
     });
@@ -314,7 +413,7 @@ describe("donor adoption lifecycle", () => {
     );
 
     const frameworkStatus = await getFrameworkStatus({ root: fixture.root });
-    expect(frameworkStatus.donors).toEqual({
+    expect(frameworkStatus.sourceAdoptions).toEqual({
       adoptions: 1,
       targets: 1,
       acceptedTargets: 0,
@@ -323,20 +422,20 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("keeps advisory evidence non-blocking and enforces only explicit required policy", async () => {
-    const fixture = await createFixture("DonorEvidence");
-    await registerDonorAdoption({
+    const fixture = await createFixture("AdoptionEvidence");
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture, { includeRequiredEvidence: true }),
       now: new Date("2026-07-25T09:00:00"),
     });
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
       now: new Date("2026-07-25T09:10:00"),
     });
 
-    const missing = await verifyDonorInspection({
+    const missing = await verifySourceAdoptionInspection({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -346,7 +445,7 @@ describe("donor adoption lifecycle", () => {
     expect(missing.policy.advisory_missing).toEqual(["review-note"]);
 
     await expect(
-      decideDonorAdoption({
+      decideSourceAdoption({
         root: fixture.root,
         adoptionId: "upstream-product",
         targetId: "product",
@@ -354,9 +453,9 @@ describe("donor adoption lifecycle", () => {
         inspectionId: inspected.inspection.id,
         now: new Date("2026-07-25T09:20:00"),
       }),
-    ).rejects.toMatchObject({ code: "DONOR_POLICY_BLOCKED" });
+    ).rejects.toMatchObject({ code: "SOURCE_ADOPTION_POLICY_BLOCKED" });
 
-    await recordDonorEvidence({
+    await recordSourceAdoptionEvidence({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -368,7 +467,7 @@ describe("donor adoption lifecycle", () => {
       },
       now: new Date("2026-07-25T09:30:00"),
     });
-    await recordDonorEvidence({
+    await recordSourceAdoptionEvidence({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -381,7 +480,7 @@ describe("donor adoption lifecycle", () => {
       now: new Date("2026-07-25T09:31:00"),
     });
 
-    const verified = await verifyDonorInspection({
+    const verified = await verifySourceAdoptionInspection({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -389,7 +488,7 @@ describe("donor adoption lifecycle", () => {
     expect(verified.ok).toBe(true);
     expect(verified.policy.failed).toEqual(["review-note"]);
 
-    const accepted = await decideDonorAdoption({
+    const accepted = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -402,7 +501,7 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("records a dirty Git target as evidence instead of imposing a universal block", async () => {
-    const fixture = await createFixture("DonorDirtyTarget");
+    const fixture = await createFixture("AdoptionDirtyTarget");
     for (const args of [
       ["init"],
       ["config", "user.email", "assay@example.test"],
@@ -423,11 +522,11 @@ describe("donor adoption lifecycle", () => {
       "utf8",
     );
 
-    await registerDonorAdoption({
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
     });
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -439,23 +538,23 @@ describe("donor adoption lifecycle", () => {
       ),
     ).toBe(true);
 
-    const accepted = await decideDonorAdoption({
+    const accepted = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
       outcome: "accept",
     });
     expect(accepted.decision.baseline_after?.target.working_tree).toBe("dirty");
-  });
+  }, 30_000);
 
   it("reports source and target facts independently and invalidates stale inspections", async () => {
-    const fixture = await createFixture("DonorDrift");
-    await registerDonorAdoption({
+    const fixture = await createFixture("AdoptionDrift");
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
       now: new Date("2026-07-25T09:00:00"),
     });
-    await decideDonorAdoption({
+    const accepted = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -469,7 +568,12 @@ describe("donor adoption lifecycle", () => {
       alias: "upstream",
       now: new Date("2026-07-25T10:00:00"),
     });
-    const sourceOnly = await inspectDonorAdoption({
+    const afterSync = await getSourceAdoption({
+      root: fixture.root,
+      adoptionId: "upstream-product",
+    });
+    expect(afterSync.state.targets.product?.baseline?.decision_id).toBe(accepted.decision.id);
+    const sourceOnly = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -486,23 +590,23 @@ describe("donor adoption lifecycle", () => {
       "target-alpha-v2\n",
       "utf8",
     );
-    const stale = await verifyDonorInspection({
+    const stale = await verifySourceAdoptionInspection({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: sourceOnly.inspection.id,
     });
     expect(stale.current).toBe(false);
     await expect(
-      decideDonorAdoption({
+      decideSourceAdoption({
         root: fixture.root,
         adoptionId: "upstream-product",
         targetId: "product",
         outcome: "accept",
         inspectionId: sourceOnly.inspection.id,
       }),
-    ).rejects.toMatchObject({ code: "DONOR_STALE" });
+    ).rejects.toMatchObject({ code: "SOURCE_ADOPTION_STALE" });
 
-    const both = await getDonorStatus({
+    const both = await getSourceAdoptionStatus({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -515,7 +619,7 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("advances multi-target baselines independently", async () => {
-    const fixture = await createFixture("DonorMultiTarget");
+    const fixture = await createFixture("AdoptionMultiTarget");
     const docsRoot = path.join(fixture.root, "systems", "docs");
     await mkdir(docsRoot, { recursive: true });
     await writeFile(path.join(docsRoot, "alpha.md"), "docs-alpha-v1\n", "utf8");
@@ -524,12 +628,12 @@ describe("donor adoption lifecycle", () => {
       path: "systems/docs",
       vcs: "none",
     });
-    await registerDonorAdoption({
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture, { secondTarget: true }),
     });
 
-    const accepted = await decideDonorAdoption({
+    const accepted = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -538,7 +642,7 @@ describe("donor adoption lifecycle", () => {
     expect(accepted.state.targets.product?.baseline).not.toBeNull();
     expect(accepted.state.targets.docs?.baseline).toBeNull();
 
-    const current = await getDonorAdoption({
+    const current = await getSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
     });
@@ -547,12 +651,12 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("records a verified external rollback without changing target files", async () => {
-    const fixture = await createFixture("DonorRollback");
-    await registerDonorAdoption({
+    const fixture = await createFixture("AdoptionRollback");
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
     });
-    const first = await decideDonorAdoption({
+    const first = await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -569,7 +673,7 @@ describe("donor adoption lifecycle", () => {
       alias: "upstream",
       now: new Date("2026-07-25T10:00:00"),
     });
-    await decideDonorAdoption({
+    await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
@@ -578,15 +682,15 @@ describe("donor adoption lifecycle", () => {
     });
 
     await expect(
-      recordDonorRollback({
+      recordSourceAdoptionRollback({
         root: fixture.root,
         adoptionId: "upstream-product",
         decisionId: first.decision.id,
       }),
-    ).rejects.toMatchObject({ code: "DONOR_STALE" });
+    ).rejects.toMatchObject({ code: "SOURCE_ADOPTION_STALE" });
 
     await writeFile(alphaPath, original, "utf8");
-    const rollback = await recordDonorRollback({
+    const rollback = await recordSourceAdoptionRollback({
       root: fixture.root,
       adoptionId: "upstream-product",
       decisionId: first.decision.id,
@@ -597,7 +701,7 @@ describe("donor adoption lifecycle", () => {
     expect(rollback.decision.restored_from_decision).toBe(first.decision.id);
     expect(await readFile(alphaPath, "utf8")).toBe(original);
 
-    const history = await getDonorHistory({
+    const history = await getSourceAdoptionHistory({
       root: fixture.root,
       adoptionId: "upstream-product",
     });
@@ -609,25 +713,25 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("makes definition revisions stale without rewriting prior records", async () => {
-    const fixture = await createFixture("DonorDefinitionRevision");
-    await registerDonorAdoption({
+    const fixture = await createFixture("AdoptionDefinitionRevision");
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
     });
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
     });
     const revised = definition(fixture);
     revised.title = "Revised adoption";
-    await updateDonorAdoption({
+    await updateSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       definition: revised,
     });
 
-    const verification = await verifyDonorInspection({
+    const verification = await verifySourceAdoptionInspection({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -641,17 +745,17 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("detects tampered content-addressed evidence without inspecting the target", async () => {
-    const fixture = await createFixture("DonorTamper");
-    await registerDonorAdoption({
+    const fixture = await createFixture("SourceAdoptionTamper");
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
     });
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
     });
-    const recorded = await recordDonorEvidence({
+    const recorded = await recordSourceAdoptionEvidence({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -683,17 +787,17 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("detects content-addressed record filename mismatches", async () => {
-    const fixture = await createFixture("DonorFilenameTamper");
-    await registerDonorAdoption({
+    const fixture = await createFixture("SourceAdoptionFilenameTamper");
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
     });
-    const inspected = await inspectDonorAdoption({
+    const inspected = await inspectSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",
     });
-    const recorded = await recordDonorEvidence({
+    const recorded = await recordSourceAdoptionEvidence({
       root: fixture.root,
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
@@ -718,12 +822,12 @@ describe("donor adoption lifecycle", () => {
   });
 
   it("detects state baselines that contradict committed decision history", async () => {
-    const fixture = await createFixture("DonorStateTamper");
-    await registerDonorAdoption({
+    const fixture = await createFixture("SourceAdoptionStateTamper");
+    await registerSourceAdoption({
       root: fixture.root,
       definition: definition(fixture),
     });
-    await decideDonorAdoption({
+    await decideSourceAdoption({
       root: fixture.root,
       adoptionId: "upstream-product",
       targetId: "product",

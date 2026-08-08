@@ -74,7 +74,7 @@ describe("assay status upstream", () => {
       // A hand edit inside the managed checkout: previously invisible, because
       // only `source sync` guarded against it and sync is never run.
       await writeFile(
-        path.join(root, "references", "upstream", "checkout", "src", "alpha.txt"),
+        path.join(root, "sources", "upstream", "checkout", "src", "alpha.txt"),
         "alpha-edited\n",
         "utf8",
       );
@@ -97,43 +97,6 @@ describe("assay status upstream", () => {
         signal: "local-modified",
       });
       expect(payload.upstream.sources[0].upstreamNote).toContain("git fetch failed");
-    },
-    UPSTREAM_CLI_TIMEOUT_MS,
-  );
-});
-
-describe("assay reference backfill", () => {
-  it(
-    "writes the case file the check advisory asked for",
-    async () => {
-      const root = await createInitializedCliWorkspace({
-        tempDirs,
-        runner: cliRunner,
-        directoryName: "ReferenceBackfill",
-      });
-      const frozen = "references/frozen/202512/legacy-freeze";
-      await mkdir(path.join(root, frozen), { recursive: true });
-      await writeFile(path.join(root, frozen, "README.md"), "# Legacy\n", "utf8");
-
-      const advised = await cliRunner.runCli(["check", "--root", root, "--advisories"]);
-      expect(advised.exitCode).toBe(0);
-      expect(advised.stdout).toContain(`assay reference backfill ${frozen}`);
-
-      const backfilled = await cliRunner.runCli([
-        "reference",
-        "backfill",
-        frozen,
-        "--source",
-        "https://example.test/legacy",
-        "--root",
-        root,
-      ]);
-      expect(backfilled.exitCode).toBe(0);
-      expect(backfilled.stdout).toContain(`Wrote reference case file: ${frozen}/reference.yaml`);
-
-      const after = await cliRunner.runCli(["check", "--root", root, "--advisories"]);
-      expect(after.exitCode).toBe(0);
-      expect(after.stdout).not.toContain("has no reference.yaml");
     },
     UPSTREAM_CLI_TIMEOUT_MS,
   );

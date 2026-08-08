@@ -29,7 +29,7 @@ Assay fits the way your code already lives.
 
 | Mode | Use it when | Where Assay writes | Git posture |
 | --- | --- | --- | --- |
-| `standalone` | You want a dedicated study / solve / explore workspace. | `.assay/` for Assay state, with work folders such as `tasks/`, `references/`, `analyses/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
+| `standalone` | You want a dedicated study / solve / explore workspace. | `.assay/` for Assay state, with work folders such as `tasks/`, `sources/`, `analyses/`, `knowledge/`, and `systems/` at the workspace root. | Optional workbench Git. Independent systems keep their own Git. |
 | `overlay` | You already have a product repo and want its root to be the primary system. | One private `.assay/` folder containing Assay state and work folders. Product files stay where they are. | Product Git ignores `.assay/` by default; Assay state can optionally have its own Git inside `.assay/`. |
 
 ## Choose what you're building
@@ -38,7 +38,7 @@ Archetypes shape the workspace structure and defaults. They are **structure + co
 
 | If you want to... | Start with | Assay gives you |
 | --- | --- | --- |
-| Study external projects without losing provenance | `study` | living sources, reference analyses, pattern notes, decision exits |
+| Study external projects without losing provenance | `study` | living and frozen Sources, Source analyses, pattern notes, decision exits |
 | Work toward a measurable target | `solve` | objectives, intake, attempts, benchmarks, tools |
 | Explore several possible directions | `explore` | approaches, trials, comparison notes |
 
@@ -65,7 +65,7 @@ authority boundaries.
 
 ## Keep Project, Roadmap, and Spec authority explicit
 
-Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Project ids use `project-<slug>`. `README.md` explains authority boundaries. Roadmap items live under `roadmap/<roadmap-id>/`, with closed machine state in `item.yaml` and reader-owned outcome prose in `outcome.md`; the root `roadmap/README.md` is explanatory, not a dynamic index. Native Specs are lazy under `specs/<spec-id>/{spec.yaml,specification.md}` and explicitly promote current constraints from Analysis or Task without changing their source. Project-selected `relay/` and `extensions/` remain lazy. References, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority. See [Roadmap items](docs/roadmap.md) and [Native specifications](docs/spec.md).
+Every workspace has exactly one native Project: `project/` in standalone workspaces and `.assay/project/` in overlays. Project ids use `project-<slug>`. `README.md` explains authority boundaries. Roadmap items live under `roadmap/<roadmap-id>/`, with closed machine state in `item.yaml` and reader-owned outcome prose in `outcome.md`; the root `roadmap/README.md` is explanatory, not a dynamic index. Native Specs are lazy under `specs/<spec-id>/{spec.yaml,specification.md}` and explicitly promote current constraints from Analysis or Task without changing their source. Project-selected `relay/` and `extensions/` remain lazy. Sources, analyses, Tasks, Systems, and `.assay/` runtime state retain their own authority. See [Roadmap items](docs/roadmap.md) and [Native specifications](docs/spec.md).
 
 
 ## Add workspace plugins without another setup lifecycle
@@ -194,7 +194,7 @@ In `overlay` mode, Assay should not enter your product repo by default. `assay a
 - [Layout modes](docs/layout-modes.md)
 - [Command reference](docs/commands.md)
 - [Task records](docs/task.md)
-- [Donor adoption](docs/donor-adoption.md)
+- [Source adoption](docs/source-adoption.md)
 - [Workspace layout](docs/workspace-layout.md)
 - [Contributing](CONTRIBUTING.md)
 

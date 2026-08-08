@@ -18,7 +18,7 @@ A durable workflow system needs more than instructions. It needs files that can 
 That managed layer sits beside the visible workspace:
 
 ```text
-references/ -> analyses/ -> systems/ + knowledge/
+sources/ -> analyses/ -> systems/ + knowledge/
 ```
 
 The visible folders hold user artifacts. The hidden `.assay/` layer holds lifecycle metadata. This split keeps daily work readable while still allowing the framework to evolve safely.
@@ -29,7 +29,7 @@ Large context files become hard to maintain and expensive for assistants to load
 
 This is why the framework separates:
 
-- `references/` for external material;
+- `sources/` for external material;
 - `analyses/` for interpretation;
 - `systems/` for the active local implementation;
 - `tasks/` for bounded outcomes that must survive context changes;
@@ -89,4 +89,4 @@ packages/
     └── src/        # Commander command definitions, formatting, exit-code mapping
 ```
 
-This makes init, check, reference intake, update analysis, and migration planning testable as separate behaviors.
+This makes init, check, Source intake, update analysis, and conversion planning testable as separate behaviors.

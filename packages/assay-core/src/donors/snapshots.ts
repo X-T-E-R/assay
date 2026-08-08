@@ -10,12 +10,12 @@ import { resolveSourceObservation } from "../sources.js";
 import { collectGitMetadata } from "../sources/git.js";
 import { requireSystemsRegistry } from "../systems-registry.js";
 import type {
-  DonorAdoptionDefinition,
-  DonorLocatorSnapshot,
-  DonorMapping,
-  DonorPathLocator,
-  DonorSourceSnapshot,
-  DonorTargetSnapshot,
+  SourceAdoptionDefinition,
+  SourceAdoptionLocatorSnapshot,
+  SourceAdoptionMapping,
+  SourceAdoptionPathLocator,
+  SourceAdoptionSourceSnapshot,
+  SourceAdoptionTargetSnapshot,
 } from "./schemas.js";
 import {
   donorLocatorSnapshotSchema,
@@ -71,14 +71,17 @@ function recomputeSourceManifestFingerprint(manifest: z.infer<typeof sourceManif
   return { value: hash.digest("hex"), byteCount };
 }
 
-function mappingsForTarget(definition: DonorAdoptionDefinition, targetId: string): DonorMapping[] {
+function mappingsForTarget(
+  definition: SourceAdoptionDefinition,
+  targetId: string,
+): SourceAdoptionMapping[] {
   return definition.mappings.filter((mapping) => mapping.target.target_id === targetId);
 }
 
 function snapshotFromFiles(
-  locator: DonorPathLocator,
+  locator: SourceAdoptionPathLocator,
   files: readonly { readonly path: string; readonly size: number; readonly sha256: string }[],
-): DonorLocatorSnapshot {
+): SourceAdoptionLocatorSnapshot {
   const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
   return donorLocatorSnapshotSchema.parse({
     locator,
@@ -94,7 +97,10 @@ function snapshotFromFiles(
  * Shared by snapshotting and by the upstream impact report, so both answer
  * "does this change touch adopted material?" the same way.
  */
-export function donorLocatorMatchesPath(locator: DonorPathLocator, filePath: string): boolean {
+export function donorLocatorMatchesPath(
+  locator: SourceAdoptionPathLocator,
+  filePath: string,
+): boolean {
   const normalized = filePath.replaceAll("\\", "/");
   if (locator.match === "exact") {
     return normalized === locator.path;
@@ -104,18 +110,18 @@ export function donorLocatorMatchesPath(locator: DonorPathLocator, filePath: str
 
 export function snapshotManifestLocator(
   manifest: z.infer<typeof sourceManifestSchema>,
-  locator: DonorPathLocator,
-): DonorLocatorSnapshot {
+  locator: SourceAdoptionPathLocator,
+): SourceAdoptionLocatorSnapshot {
   const files = manifest.files.filter((file) => donorLocatorMatchesPath(locator, file.path));
   return snapshotFromFiles(locator, files);
 }
 
 export async function snapshotDonorSource(
   root: string,
-  definition: DonorAdoptionDefinition,
+  definition: SourceAdoptionDefinition,
   targetId: string,
   observation?: string,
-): Promise<DonorSourceSnapshot> {
+): Promise<SourceAdoptionSourceSnapshot> {
   const resolved = await resolveSourceObservation({
     root,
     alias: definition.source.alias,
@@ -127,14 +133,14 @@ export async function snapshotDonorSource(
     parsed = JSON.parse(await readFile(manifestPath, "utf8"));
   } catch (error) {
     throw new FrameworkError(`source manifest is not valid JSON: ${resolved.manifestFile}`, {
-      code: "INVALID_DONOR",
+      code: "INVALID_SOURCE_ADOPTION",
       cause: error,
     });
   }
   const result = sourceManifestSchema.safeParse(parsed);
   if (!result.success) {
     throw new FrameworkError(`source manifest failed validation: ${resolved.manifestFile}`, {
-      code: "INVALID_DONOR",
+      code: "INVALID_SOURCE_ADOPTION",
       details: result.error.flatten(),
       cause: result.error,
     });
@@ -149,11 +155,11 @@ export async function snapshotDonorSource(
   ) {
     throw new FrameworkError(
       `source observation and manifest fingerprints do not agree: ${resolved.observation.observation_id}`,
-      { code: "INVALID_DONOR" },
+      { code: "INVALID_SOURCE_ADOPTION" },
     );
   }
 
-  const locators: Record<string, DonorLocatorSnapshot> = {};
+  const locators: Record<string, SourceAdoptionLocatorSnapshot> = {};
   for (const mapping of mappingsForTarget(definition, targetId)) {
     locators[mapping.id] = snapshotManifestLocator(manifest, mapping.source);
   }
@@ -193,7 +199,7 @@ async function collectTargetFiles(
     if (entry.isSymbolicLink()) {
       throw new FrameworkError(
         `target locator contains a symbolic link: ${toPosixPath(path.relative(systemRoot, absolute))}`,
-        { code: "INVALID_DONOR" },
+        { code: "INVALID_SOURCE_ADOPTION" },
       );
     }
     if (entry.isDirectory()) {
@@ -217,12 +223,15 @@ async function collectTargetFiles(
  * and the deepest existing ancestor stands in for locators that do not exist
  * yet (a draft target), so a missing file cannot bypass the check.
  */
-async function containedTargetPath(systemRoot: string, locator: DonorPathLocator): Promise<string> {
+async function containedTargetPath(
+  systemRoot: string,
+  locator: SourceAdoptionPathLocator,
+): Promise<string> {
   const absolute = path.resolve(systemRoot, ...locator.path.split("/"));
   const relative = path.relative(systemRoot, absolute);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new FrameworkError(`target locator escapes registered system: ${locator.path}`, {
-      code: "INVALID_DONOR",
+      code: "INVALID_SOURCE_ADOPTION",
     });
   }
 
@@ -240,7 +249,7 @@ async function containedTargetPath(systemRoot: string, locator: DonorPathLocator
   ) {
     throw new FrameworkError(
       `target locator escapes registered system through a symbolic link: ${locator.path}`,
-      { code: "INVALID_DONOR" },
+      { code: "INVALID_SOURCE_ADOPTION" },
     );
   }
   return absolute;
@@ -281,8 +290,8 @@ async function canonicalExistingAncestor(
 
 async function snapshotTargetLocator(
   systemRoot: string,
-  locator: DonorPathLocator,
-): Promise<DonorLocatorSnapshot> {
+  locator: SourceAdoptionPathLocator,
+): Promise<SourceAdoptionLocatorSnapshot> {
   const absolute = await containedTargetPath(systemRoot, locator);
   let info: Stats;
   try {
@@ -351,13 +360,13 @@ async function snapshotTargetLocator(
 
 export async function snapshotDonorTarget(
   root: string,
-  definition: DonorAdoptionDefinition,
+  definition: SourceAdoptionDefinition,
   targetId: string,
-): Promise<DonorTargetSnapshot> {
+): Promise<SourceAdoptionTargetSnapshot> {
   const target = definition.targets.find((candidate) => candidate.id === targetId);
   if (!target) {
     throw new FrameworkNotFoundError(
-      `target '${targetId}' is not declared by donor adoption '${definition.id}'`,
+      `target '${targetId}' is not declared by Source adoption '${definition.id}'`,
     );
   }
   const registry = await requireSystemsRegistry(root);
@@ -433,7 +442,7 @@ export async function snapshotDonorTarget(
     });
   }
 
-  const locators: Record<string, DonorLocatorSnapshot> = {};
+  const locators: Record<string, SourceAdoptionLocatorSnapshot> = {};
   for (const mapping of mappingsForTarget(definition, targetId)) {
     locators[mapping.id] = await snapshotTargetLocator(systemRoot, {
       path: mapping.target.path,
@@ -460,17 +469,16 @@ export async function snapshotDonorTarget(
 }
 
 export function sameLocatorSnapshot(
-  left: DonorLocatorSnapshot | null | undefined,
-  right: DonorLocatorSnapshot,
+  left: SourceAdoptionLocatorSnapshot | null | undefined,
+  right: SourceAdoptionLocatorSnapshot,
 ): boolean {
   if (!left) return false;
   return left.state === right.state && left.digest === right.digest;
 }
 
-export function sameTargetSnapshot(left: DonorTargetSnapshot, right: DonorTargetSnapshot): boolean {
-  return (
-    left.system === right.system &&
-    left.registered_path === right.registered_path &&
-    left.fingerprint === right.fingerprint
-  );
+export function sameTargetSnapshot(
+  left: SourceAdoptionTargetSnapshot,
+  right: SourceAdoptionTargetSnapshot,
+): boolean {
+  return left.system === right.system && left.fingerprint === right.fingerprint;
 }

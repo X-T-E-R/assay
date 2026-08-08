@@ -1,9 +1,9 @@
 
-# Reference Analysis Card
+# Source Analysis Card
 
-- Reference:
-- Source:
-- Freeze path:
+- Source alias:
+- Source observation:
+- Source materials:
 - Date:
 
 ## Problem it solves

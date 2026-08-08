@@ -6,7 +6,6 @@ import { execa } from "execa";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  addReference,
   addSource,
   applyUpdate,
   archiveRoadmap,
@@ -233,36 +232,7 @@ describe("native Project scaffold", () => {
     ).toBe(true);
   });
 
-  it("keeps Reference and Analysis lazy for solve, then recognizes first use", async () => {
-    const root = path.join(await tempDirs.createTempDir(), "lazy");
-    await initFramework({ target: root, name: "Lazy", archetype: "solve" });
-    expect(await exists(path.join(root, "references"))).toBe(false);
-    expect(await exists(path.join(root, "analyses"))).toBe(false);
-
-    const before = await getFrameworkStatus({ root });
-    expect(before.nativeProject).toEqual(
-      expect.objectContaining({ path: "project/project.yaml", authority: "native:README.md" }),
-    );
-    expect(before.zones).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ path: "references", files: 0 }),
-        expect.objectContaining({ path: "analyses", files: 0 }),
-      ]),
-    );
-
-    const source = path.join(await tempDirs.createTempDir(), "source");
-    await mkdir(source, { recursive: true });
-    await writeFile(path.join(source, "README.md"), "# Source\n", "utf8");
-    await addReference({ root, source, name: "Source" });
-    await createAnalysis({ root, title: "First analysis" });
-    const check = await checkFramework({ root, includeAdvisories: true });
-    expect(check.ok).toBe(true);
-    expect(check.rows.some((row) => row.message?.includes("not declared by archetype"))).toBe(
-      false,
-    );
-  });
-
-  it("creates the native Reference zone on first source use in explore", async () => {
+  it("creates the native Source zone on first source use in explore", async () => {
     const root = path.join(await tempDirs.createTempDir(), "lazy-source");
     await initFramework({ target: root, name: "Lazy source", archetype: "explore" });
     const source = path.join(await tempDirs.createTempDir(), "living-source");
@@ -271,7 +241,7 @@ describe("native Project scaffold", () => {
 
     await addSource({ root, source, alias: "living", capture: "archive" });
 
-    expect(await exists(path.join(root, "references", "living", "source.yaml"))).toBe(true);
+    expect(await exists(path.join(root, "sources", "living", "source.yaml"))).toBe(true);
     expect(await exists(path.join(root, "analyses"))).toBe(false);
     const check = await checkFramework({ root, includeAdvisories: true });
     expect(check.ok).toBe(true);
@@ -302,10 +272,10 @@ describe("native Project scaffold", () => {
       expect(await exists(path.join(root, ".assay", retiredName))).toBe(false);
       expect(await exists(path.join(root, retiredName))).toBe(false);
       if (archetype === "study") {
-        expect(await exists(path.join(root, ".assay", "references"))).toBe(true);
+        expect(await exists(path.join(root, ".assay", "sources"))).toBe(true);
         expect(await exists(path.join(root, ".assay", "analyses"))).toBe(true);
       } else {
-        expect(await exists(path.join(root, ".assay", "references"))).toBe(false);
+        expect(await exists(path.join(root, ".assay", "sources"))).toBe(false);
         expect(await exists(path.join(root, ".assay", "analyses"))).toBe(false);
       }
       expect((await checkFramework({ root })).ok).toBe(true);

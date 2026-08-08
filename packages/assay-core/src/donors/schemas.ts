@@ -14,7 +14,7 @@ export const donorIdSchema = z
   .min(1)
   .max(128)
   .regex(/^[a-z0-9][a-z0-9._-]*$/)
-  .refine((value) => value !== "." && value !== "..", "reserved donor identifier");
+  .refine((value) => value !== "." && value !== "..", "reserved Source adoption identifier");
 
 function normalizeRelativePath(value: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
@@ -307,21 +307,21 @@ export const donorDecisionSchema = z
   })
   .strict();
 
-export type DonorAdoptionDefinition = z.infer<typeof donorAdoptionDefinitionSchema>;
-export type DonorPathLocator = z.infer<typeof donorPathLocatorSchema>;
-export type DonorTargetDefinition = z.infer<typeof donorTargetDefinitionSchema>;
-export type DonorMapping = z.infer<typeof donorMappingSchema>;
-export type DonorEvidenceRequirement = z.infer<typeof donorEvidenceRequirementSchema>;
-export type DonorLocatorSnapshot = z.infer<typeof donorLocatorSnapshotSchema>;
-export type DonorSourceSnapshot = z.infer<typeof donorSourceSnapshotSchema>;
-export type DonorTargetSnapshot = z.infer<typeof donorTargetSnapshotSchema>;
-export type DonorAcceptedBaseline = z.infer<typeof donorAcceptedBaselineSchema>;
-export type DonorState = z.infer<typeof donorStateSchema>;
-export type DonorDiagnostic = z.infer<typeof donorDiagnosticSchema>;
-export type DonorMappingInspection = z.infer<typeof donorMappingInspectionSchema>;
-export type DonorInspection = z.infer<typeof donorInspectionSchema>;
-export type DonorEvidenceInput = z.infer<typeof donorEvidenceInputSchema>;
-export type DonorEvidence = z.infer<typeof donorEvidenceSchema>;
-export type DonorPolicyEvaluation = z.infer<typeof donorPolicyEvaluationSchema>;
-export type DonorDecisionOutcome = z.infer<typeof donorDecisionOutcomeSchema>;
-export type DonorDecision = z.infer<typeof donorDecisionSchema>;
+export type SourceAdoptionDefinition = z.infer<typeof donorAdoptionDefinitionSchema>;
+export type SourceAdoptionPathLocator = z.infer<typeof donorPathLocatorSchema>;
+export type SourceAdoptionTargetDefinition = z.infer<typeof donorTargetDefinitionSchema>;
+export type SourceAdoptionMapping = z.infer<typeof donorMappingSchema>;
+export type SourceAdoptionEvidenceRequirement = z.infer<typeof donorEvidenceRequirementSchema>;
+export type SourceAdoptionLocatorSnapshot = z.infer<typeof donorLocatorSnapshotSchema>;
+export type SourceAdoptionSourceSnapshot = z.infer<typeof donorSourceSnapshotSchema>;
+export type SourceAdoptionTargetSnapshot = z.infer<typeof donorTargetSnapshotSchema>;
+export type SourceAdoptionAcceptedBaseline = z.infer<typeof donorAcceptedBaselineSchema>;
+export type SourceAdoptionState = z.infer<typeof donorStateSchema>;
+export type SourceAdoptionDiagnostic = z.infer<typeof donorDiagnosticSchema>;
+export type SourceAdoptionMappingInspection = z.infer<typeof donorMappingInspectionSchema>;
+export type SourceAdoptionInspection = z.infer<typeof donorInspectionSchema>;
+export type SourceAdoptionEvidenceInput = z.infer<typeof donorEvidenceInputSchema>;
+export type SourceAdoptionEvidence = z.infer<typeof donorEvidenceSchema>;
+export type SourceAdoptionPolicyEvaluation = z.infer<typeof donorPolicyEvaluationSchema>;
+export type SourceAdoptionDecisionOutcome = z.infer<typeof donorDecisionOutcomeSchema>;
+export type SourceAdoptionDecision = z.infer<typeof donorDecisionSchema>;

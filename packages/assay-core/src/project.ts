@@ -41,7 +41,7 @@ Native Specs under \`specs/<id>/{spec.yaml,specification.md}\` own current norma
 
 Authority remains separate elsewhere:
 
-- \`references/\` owns living and frozen external evidence.
+- \`sources/\` owns living and frozen external evidence.
 - \`analyses/\` owns analysis records.
 - \`tasks/\` owns Assay-native Task records.
 - \`systems/\` owns registered System contracts and implementations.

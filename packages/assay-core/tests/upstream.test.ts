@@ -11,7 +11,7 @@ import {
   initFramework,
   registerSystem,
   syncSource,
-  takeDonorMaterial,
+  takeSourceAdoptionMaterial,
 } from "../src/index.js";
 
 const tempDirs = createTempDirectoryFixture("assay-core-upstream");
@@ -53,7 +53,7 @@ async function workspaceWithGitSource(
   await initFramework({ target: root, name });
   const origin = await gitOrigin(`${name}-origin`);
   await addSource({ root, source: origin, alias: "upstream", branch: "main" });
-  const checkout = path.join(root, "references", "upstream", "checkout");
+  const checkout = path.join(root, "sources", "upstream", "checkout");
   await identify(checkout);
   return { root, origin, checkout };
 }
@@ -114,7 +114,7 @@ describe("upstream drift in status", () => {
     await writeFile(path.join(source, "README.md"), "# Plain\n", "utf8");
     await addSource({ root, source, alias: "plain" });
     await writeFile(
-      path.join(root, "references", "plain", "checkout", "README.md"),
+      path.join(root, "sources", "plain", "checkout", "README.md"),
       "# Plain edited\n",
       "utf8",
     );
@@ -170,7 +170,7 @@ describe("upstream drift in status", () => {
   );
 
   it(
-    "counts the donor mappings an upstream change reaches",
+    "counts the Source adoption mappings an upstream change reaches",
     async () => {
       const { root, origin, checkout } = await workspaceWithGitSource("UpstreamImpact");
       const system = path.join(root, "systems", "product");
@@ -182,7 +182,7 @@ describe("upstream drift in status", () => {
         vcs: "none",
         primary: true,
       });
-      await takeDonorMaterial({
+      await takeSourceAdoptionMaterial({
         root,
         sourceAlias: "upstream",
         sourcePath: "src/alpha.txt",
