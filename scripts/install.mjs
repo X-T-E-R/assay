@@ -18,6 +18,23 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(realpathSync(fileURLToPath(import.meta.url))));
 const skillSrc = join(repoRoot, "skills", "assay-builder");
+const minimumNodeVersion = [22, 13, 0];
+
+function assertSupportedNodeVersion() {
+  const current = process.versions.node.split(".").map((part) => Number.parseInt(part, 10));
+  let comparison = 0;
+  for (const [index, minimum] of minimumNodeVersion.entries()) {
+    const value = current[index] ?? 0;
+    if (value === minimum) continue;
+    comparison = value > minimum ? 1 : -1;
+    break;
+  }
+  if (comparison < 0) {
+    throw new Error(
+      `Node.js >=${minimumNodeVersion.join(".")} is required by pnpm 11.3.0; found ${process.versions.node}`,
+    );
+  }
+}
 
 function parseArgs(argv) {
   const opts = {
@@ -73,6 +90,7 @@ function linkState(dest) {
 }
 
 function main() {
+  assertSupportedNodeVersion();
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
     process.stdout.write(HELP);

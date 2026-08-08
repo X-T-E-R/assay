@@ -2,15 +2,15 @@
 
 ## Change classification
 
-When `assay update` runs, it compares each managed file's current on-disk hash against the manifest hash and classifies changes into one of six categories:
+When `assay update` runs, it compares each fixed core file's current on-disk hash against its baseline in `.assay/managed-files.json` and classifies changes into one of six categories:
 
 | Category | Meaning | Default action |
 | --- | --- | --- |
-| New | Template exists in new version but not in manifest | Create the file |
-| Auto-update | File hash still matches manifest hash (unchanged by user) | Overwrite with new template |
-| Modified by user | File hash differs from manifest hash | Skip (preserve user changes) |
-| User-deleted | File recorded in manifest but absent on disk | Skip (respect deletion) |
-| Untracked-existing | File exists on disk but not in manifest | Skip |
+| New | Current fixed core contains a managed path absent from the installed receipt and disk | Create the file |
+| Auto-update | File hash still matches the managed baseline (unchanged by user) | Write the current fixed core content |
+| Modified by user | File hash differs from the managed baseline | Skip (preserve user changes) |
+| User-deleted | File is recorded in the managed receipt but absent on disk | Skip (respect deletion) |
+| Untracked-existing | A current managed path exists on disk but is absent from the installed receipt | Skip |
 | Force | Any of the above with `--force` flag | Overwrite regardless |
 
 `assay check` surfaces the same hash logic as warnings (`modified by user`) and errors (`managed file missing`), so check failures predict update conflicts before you run update.

@@ -59,7 +59,7 @@ async function createFixture(name: string, requiredEvidence = false) {
     definition,
     `${JSON.stringify(
       {
-        schema: "assay.donor-adoption/v1",
+        schema: "assay.source-adoption-definition/v1",
         id: "upstream-product",
         source: { alias: "upstream", observation },
         targets: [{ id: "product", system: "product" }],
@@ -205,7 +205,7 @@ describe("assay source adoption CLI", () => {
       await writeFile(
         evidenceFile,
         [
-          "schema: assay.donor-evidence-input/v1",
+          "schema: assay.source-adoption-evidence-input/v1",
           "check_id: focused-test",
           "result: passed",
           "producer:",

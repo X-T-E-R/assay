@@ -10,7 +10,7 @@
       "knowledge": "knowledge",
       "manifest": ".assay/manifest.json",
       "sources": "sources",
-      "systems_contracts": "systems",
+      "systems": "systems",
       "systems_registry": ".assay/systems-registry.json"
     },
     "privacy": "tracked",

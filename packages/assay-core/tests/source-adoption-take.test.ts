@@ -93,7 +93,7 @@ describe("Source adoption take", () => {
     const registered = await registerSourceAdoption({
       root: handWritten.root,
       definition: {
-        schema: "assay.donor-adoption/v1",
+        schema: "assay.source-adoption-definition/v1",
         id: "upstream-product-src-alpha-txt",
         source: { alias: "upstream", observation: handWritten.observation },
         targets: [{ id: "product", system: "product" }],

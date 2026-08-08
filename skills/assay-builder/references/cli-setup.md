@@ -2,6 +2,14 @@
 
 > 中文版: [cli-setup.zh.md](cli-setup.zh.md)
 
+## Prerequisites
+
+- Node.js >=22.13.0
+- pnpm 11.3.0, as pinned by the repository `packageManager` field
+
+Older Node versions are outside the supported installer and CLI runtime
+contract.
+
 ## How this skill finds the CLI
 
 This skill lives inside the `assay` repo at `skills/assay-builder`. It runs the repo's CLI directly — there is **no bundled copy** of the kit inside the skill. `packages/` in the repo is the single source of truth.
@@ -87,7 +95,7 @@ assay system show <selector>
 
 Use `system register` for first-time records. If a system already exists and its metadata is wrong, use `system update <selector>` instead; for example, correct a system from `embedded` to `independent-git` with `assay system update skill-creator --vcs independent-git --vcs-ref main`. Omitted fields are preserved.
 
-Selectors can be the full system name or a unique name prefix.
+System selectors are exact Project-local registry keys. Prefix fallback is not supported.
 
 ## Repository validation
 

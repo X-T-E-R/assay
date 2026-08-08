@@ -145,7 +145,7 @@ export const workspaceLayoutPathsSchema = z
     sources: z.string().min(1),
     analyses: z.string().min(1),
     knowledge: z.string().min(1),
-    systems_contracts: z.string().min(1),
+    systems: z.string().min(1),
   })
   .strict();
 
@@ -177,14 +177,14 @@ export const workspaceLayoutSchema = z
       sources: "sources",
       analyses: "analyses",
       knowledge: "knowledge",
-      systems_contracts: "systems",
+      systems: "systems",
     } as const;
     const overlay = {
       ...standalone,
       sources: ".assay/sources",
       analyses: ".assay/analyses",
       knowledge: ".assay/knowledge",
-      systems_contracts: ".assay/systems",
+      systems: ".assay/systems",
     } as const;
     const expected = layout.mode === "standalone" ? standalone : overlay;
     const expectedWorkRoot = layout.mode === "standalone" ? "." : ".assay";

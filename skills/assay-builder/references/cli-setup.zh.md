@@ -2,6 +2,13 @@
 
 > English version: [cli-setup.md](cli-setup.md)
 
+## 前置条件
+
+- Node.js >=22.13.0
+- pnpm 11.3.0（由仓库的 `packageManager` 字段固定）
+
+更旧的 Node 版本不属于 installer 与 CLI runtime 的支持范围。
+
 ## skill 如何找到 CLI
 
 这个 skill 位于 `assay` 仓库内的 `skills/assay-builder`,直接运行仓库的 CLI —— skill 里**没有**打包副本。仓库的 `packages/` 是唯一事实来源。
@@ -59,23 +66,22 @@ node <repo-root>/packages/assay-cli/dist/cli.js <command>
 
 运行命令前先 `cd <target-dir>`;只有要操作别处的工作区时,才传 `--root <path>` / `[target-dir]`。
 
-## 项目注册表
+## 工作区索引
 
-工作区索引是显式操作，位于 `~/.assay/workspaces`；普通生命周期与读取命令不会写入:
+工作区索引是显式操作，位于 `~/.assay/workspaces`；普通生命周期与读取命令不会写入：
 
 ```bash
-assay workspace list              # 列出已知工作区
-assay workspace track [root]   # 查看一个工作区(selector 必填)
-assay workspace discover <roots...>   # 按 manifest 发现工作区
-assay workspace list   # 预览清理失效记录
-assay workspace forget <selector> # 移除一条注册记录(绝不删除项目文件)
+assay workspace track [root]          # 显式跟踪一个工作区
+assay workspace discover <roots...>   # 按 manifest 发现并跟踪工作区
+assay workspace list                  # 报告记录状态，不改写记录
+assay workspace forget <selector>     # 移除一条索引记录（绝不删除项目文件）
 ```
 
 这些命令只操作注册表元数据,绝不修改项目文件。
 
 ## 系统注册表(每个工作区)
 
-与项目注册表不同,当前工作区有一份位于 `.assay/systems-registry.json` 的系统注册表。用 `system` 命令组管理它,不要直接编辑 JSON:
+与全局工作区索引不同，当前工作区有一份位于 `.assay/systems-registry.json` 的 System registry。用 `system` 命令组管理它，不要直接编辑 JSON：
 
 ```bash
 assay system register <path> [--vcs ...] [--primary] [--supersedes ...] [--system-version ...]
@@ -88,7 +94,7 @@ assay system show <selector>
 
 首次登记用 `system register`。如果系统已经存在、只是元数据错误,用 `system update <selector>` 修正;例如把误登记为 `embedded` 的系统改为独立仓库: `assay system update skill-creator --vcs independent-git --vcs-ref main`。未提供的字段会保留原值。
 
-selector 可以是完整系统名,或唯一的名称前缀。
+System selector 必须是 Project-local registry 中的精确 key，不支持前缀回退。
 
 ## 仓库验证
 

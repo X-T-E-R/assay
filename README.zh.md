@@ -2,6 +2,9 @@
 
 Assay 是一个 local-first 证据工作台，管理 Project、Source、Analysis、Knowledge、Task、Roadmap、Spec 与独立版本化的 System。
 
+仓库安装与 CLI package 要求 Node.js >=22.13.0；本仓库通过
+`packageManager` 固定使用 pnpm 11.3.0。
+
 ## 0.13 工作区契约
 
 Assay 0.13 只接受 `0.13.0+s4+l8+r3`。旧 workspace/System registry envelope 或畸形 authority 会 fail closed，必须交给外部 exact-pair cutover 工具。
@@ -23,6 +26,15 @@ assay check --root ../assay-study
 
 内置一次性 Template 只有 `study`、`solve`、`explore`。自定义 Template 必须传入显式 YAML 路径，closed schema 1 只允许 `description`、`directories`、`files`；file entry 必须且只能含 `content` 或相对 descriptor 的 `file`，`executable` 可选。绝对路径、穿越、retired path、redirect 与旧 Template 字段都会在首次 scaffold 写入前失败。Template identity 不持久化，因此 descriptor 删除后 status/check/update/convert 仍可工作。
 
+## Attach 与 convert
+
+```bash
+assay attach --root ../product --name Product --template study --privacy private
+assay convert --root ../product --to standalone --target ../product-workbench --copy
+```
+
+Standalone 把工作区放在 workspace root；overlay 把 Assay state 与工作区放在 `.assay/`，product repository root 仍是 primary System。
+
 ## 显式 workspace index
 
 普通 init/attach/adopt/update/convert/status/check 不触碰全局索引：
@@ -36,4 +48,4 @@ assay workspace forget ../assay-study
 
 记录位于 `~/.assay/workspaces`（可用 `ASSAY_WORKSPACES_ROOT` 覆盖），文件名是 canonical path hash，内容只含 schema 1 `project_id` 与 canonical `path`。同一 Project 可有多个 clone；`--rebind <old>` 必须显式给出且 Project id 相同。
 
-详见 [docs/commands.md](docs/commands.md)、[docs/workspace-layout.md](docs/workspace-layout.md) 与 [docs/layout-modes.md](docs/layout-modes.md)。
+详见 [docs/commands.md](docs/commands.md)、[docs/workspace-layout.md](docs/workspace-layout.md)、[docs/layout-modes.md](docs/layout-modes.md)、[docs/task.md](docs/task.md)、[docs/roadmap.md](docs/roadmap.md)、[docs/spec.md](docs/spec.md) 与 [docs/source-adoption.md](docs/source-adoption.md)。

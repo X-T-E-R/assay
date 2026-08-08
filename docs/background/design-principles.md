@@ -13,7 +13,7 @@ human-facing workspace
 
 ## Project Infrastructure, Not a Prompt Pack
 
-A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. Assay therefore gives each managed workspace a `.assay/` directory that stores version state, a manifest, events, migrations, and backups.
+A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. Assay therefore gives each managed workspace a `.assay/` directory that stores the manifest, the managed-file receipt, events, backups, and native operational state.
 
 That managed layer sits beside the visible workspace:
 
@@ -37,16 +37,16 @@ This is why the framework separates:
 
 ## Updates Need File Ownership
 
-Safe updates require the framework to know which files it owns. Assay uses `.assay/manifest.json` to record managed files, template identifiers, installed versions, and hashes.
+Safe updates require the framework to know which fixed core files it owns. Assay uses `.assay/managed-files.json` for their generators or assets, baseline hashes, protection flags, and executable bits. `.assay/manifest.json` separately records the exact framework/layout envelope plus bounded paths expanded from a one-shot Template; it does not persist Template identity or managed-file hashes.
 
 That enables update behavior such as:
 
-- create new managed files when they are missing;
-- auto-update files that still match the installed template hash;
+- create new fixed core files introduced by the current release;
+- auto-update files that still match their managed-receipt baseline hash;
 - preserve user-modified managed files by default;
 - respect user-deleted managed files;
 - keep user artifacts outside template overwrite logic;
-- require explicit migration for layout changes.
+- fail closed at a workspace-contract cutover instead of rewriting an unsupported layout.
 
 The important rule is simple: **framework templates can be updated; user knowledge must be protected**.
 

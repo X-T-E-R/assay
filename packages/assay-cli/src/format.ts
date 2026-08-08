@@ -350,10 +350,10 @@ export function formatSourceDiffResult(result: SourceDiffResult): string {
 
 export function formatSourceAdoptionList(result: SourceAdoptionListResult): string {
   if (result.adoptions.length === 0) {
-    return ["Source adoption adoptions", `Root: ${result.root}`, "(none)"].join("\n");
+    return ["Source adoptions", `Root: ${result.root}`, "(none)"].join("\n");
   }
   return [
-    "Source adoption adoptions",
+    "Source adoptions",
     `Root: ${result.root}`,
     ...result.adoptions.map((adoption) => {
       const accepted = adoption.targets.filter((target) => target.baselineDecision).length;
@@ -364,7 +364,7 @@ export function formatSourceAdoptionList(result: SourceAdoptionListResult): stri
 
 export function formatSourceAdoption(result: SourceAdoptionResult): string {
   return [
-    `Source adoption adoption: ${result.definition.id}`,
+    `Source adoption: ${result.definition.id}`,
     `Title: ${result.definition.title ?? "-"}`,
     `Definition: ${result.definitionDigest}`,
     `Source: ${result.definition.source.alias}@${result.definition.source.observation}`,

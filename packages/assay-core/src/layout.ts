@@ -28,18 +28,18 @@ export type WorkspaceArea =
   | "sources"
   | "analyses"
   | "knowledge"
-  | "systemsContracts";
+  | "systems";
 
 /**
  * Resolve the layout block for a current manifest. The raw manifest envelope
- * gate rejects every pre-v6 workspace before this function is reached.
+ * gate rejects every non-current workspace before this function is reached.
  */
 export function resolveWorkspaceLayout(manifest: FrameworkManifest | null): WorkspaceLayout | null {
   return manifest?.layout ?? null;
 }
 
 /**
- * Standalone layout for a freshly initialized v6 workspace. State lives in
+ * Standalone layout for a freshly initialized layout v8 workspace. State lives in
  * `.assay/`, work folders live at the workspace root.
  */
 export function defaultStandaloneLayout(): WorkspaceLayout {
@@ -90,8 +90,8 @@ export function workspacePath(root: string, layout: WorkspaceLayout, area: Works
       return path.join(root, layout.paths.analyses);
     case "knowledge":
       return path.join(root, layout.paths.knowledge);
-    case "systemsContracts":
-      return path.join(root, layout.paths.systems_contracts);
+    case "systems":
+      return path.join(root, layout.paths.systems);
   }
 }
 
@@ -125,7 +125,7 @@ const WORK_AREA_BY_SEGMENT: Readonly<Record<string, WorkspaceArea>> = {
   sources: "sources",
   analyses: "analyses",
   knowledge: "knowledge",
-  systems: "systemsContracts",
+  systems: "systems",
 };
 
 /**
@@ -181,7 +181,7 @@ export function standalonePaths() {
     sources: "sources",
     analyses: "analyses",
     knowledge: "knowledge",
-    systems_contracts: "systems",
+    systems: "systems",
   };
 }
 
@@ -198,7 +198,7 @@ export function overlayPaths() {
     sources: `${MANAGED_DIR}/sources`,
     analyses: `${MANAGED_DIR}/analyses`,
     knowledge: `${MANAGED_DIR}/knowledge`,
-    systems_contracts: `${MANAGED_DIR}/systems`,
+    systems: `${MANAGED_DIR}/systems`,
   };
 }
 

@@ -311,7 +311,7 @@ function isWorkspaceArea(value: string): value is WorkspaceArea {
     value === "sources" ||
     value === "analyses" ||
     value === "knowledge" ||
-    value === "systemsContracts"
+    value === "systems"
   );
 }
 
@@ -518,7 +518,7 @@ export async function checkFramework(
     [`${MANAGED_DIR} directory`, MANAGED_DIR],
     [`${MANAGED_DIR}/manifest.json`, `${MANAGED_DIR}/manifest.json`],
     [`${MANAGED_DIR}/managed-files.json`, `${MANAGED_DIR}/managed-files.json`],
-    ["systems directory", workspaceRelativePath(layout, "systemsContracts")],
+    ["systems directory", workspaceRelativePath(layout, "systems")],
     ["knowledge directory", workspaceRelativePath(layout, "knowledge")],
     ["native Project directory", workspaceWorkRelativePath(layout, "project")],
   ];
@@ -842,7 +842,7 @@ export async function checkFramework(
     rows.push(...(await collectSourceAdoptionIntegrityRows(root)));
   } catch (error) {
     rows.push({
-      path: `${MANAGED_DIR}/donors`,
+      path: `${MANAGED_DIR}/source-adoptions`,
       status: "error",
       message: error instanceof Error ? error.message : "source adoption state failed validation",
     });
@@ -968,7 +968,7 @@ export async function checkFramework(
  * root are the same directory, so these sit next to the work folders and must
  * not be reported as stray placement.
  */
-const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["donors", "node_modules", "tasks"]);
+const NON_ZONE_WORK_ROOT_ENTRIES = new Set(["source-adoptions", "node_modules", "tasks"]);
 
 /**
  * Name of the work-root entry a workspace-root-relative path sits under, or
@@ -1313,7 +1313,7 @@ const WORK_AREA_ZONE_PURPOSES: ReadonlyArray<readonly [WorkspaceArea, string]> =
   ["sources", "External systems captured as evidence"],
   ["analyses", "Conversion layer from Sources to decisions"],
   ["knowledge", "Accepted, reusable knowledge"],
-  ["systemsContracts", "Registered systems and local implementations"],
+  ["systems", "Registered systems and local implementations"],
 ];
 
 async function resolveStatusZones(

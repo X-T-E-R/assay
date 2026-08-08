@@ -266,7 +266,7 @@ describe("source observations", () => {
     const adoption = await registerSourceAdoption({
       root,
       definition: {
-        schema: "assay.donor-adoption/v1",
+        schema: "assay.source-adoption-definition/v1",
         id: "frozen-product",
         source: { alias: "frozen-source", observation: added.observation.observation_id },
         targets: [{ id: "product", system: "product" }],

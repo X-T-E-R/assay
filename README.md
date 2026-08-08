@@ -2,6 +2,9 @@
 
 Assay is a local-first evidence workbench for Projects, Sources, Analyses, Knowledge, Tasks, Roadmaps, Specs, and independently versioned Systems.
 
+Repository installation and the packaged CLI require Node.js >=22.13.0. This
+repository pins pnpm 11.3.0 through `packageManager`.
+
 ## 0.13 workspace contract
 
 Assay 0.13 accepts only `0.13.0+s4+l8+r3`. Older or malformed workspace or System-registry envelopes fail closed and require an external exact-pair cutover tool.
@@ -58,4 +61,4 @@ assay workspace forget ../assay-study
 
 Records live under `~/.assay/workspaces` (override: `ASSAY_WORKSPACES_ROOT`), are keyed by canonical-path hash, and contain only schema 1 `project_id` plus canonical `path`. Multiple clones of one Project are allowed. `--rebind <old>` is explicit and requires the same Project id.
 
-See [docs/commands.md](docs/commands.md), [docs/workspace-layout.md](docs/workspace-layout.md), and [docs/layout-modes.md](docs/layout-modes.md).
+See [docs/commands.md](docs/commands.md), [docs/workspace-layout.md](docs/workspace-layout.md), [docs/layout-modes.md](docs/layout-modes.md), [docs/task.md](docs/task.md), [docs/roadmap.md](docs/roadmap.md), [docs/spec.md](docs/spec.md), and [docs/source-adoption.md](docs/source-adoption.md).

@@ -6,8 +6,8 @@ a Task for bounded work that contributes to it.
 
 Roadmap and Spec are separate authorities. Roadmap records milestones and
 ordering; Spec records current normative constraints and acceptance contracts.
-Realizing or retiring a Roadmap item never changes a Spec, and Phase 1 adds no
-Spec references to Roadmap envelopes.
+Realizing or retiring a Roadmap item never changes a Spec, and Roadmap
+envelopes have no Spec references.
 
 ## Files and identity
 

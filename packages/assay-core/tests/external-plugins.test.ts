@@ -47,7 +47,7 @@ function fixtureDescriptor(id = "example.readonly-command") {
       version: "1.0.0",
       ref: "@example/assay-plugin-fixture@1.0.0",
       integrity:
-        "sha512-y7I1KGRrQ0+uiUnJECFSO4sfsU17UiL2S7CVkfTz5ty3uMfCDK+B4ER2dnA8bCISyjOxNEqI4p3VQ4BO2tltTw==",
+        "sha512-/md4kG3wODRKMZLV7fcJeWG9z3YqkmEpaDZKytHqqPARLaFsgYQhFU5ikcyXLsqEU8Hm8GEW74wlAu6F65+uxQ==",
     },
     targets: [{ host: "example.host" }, { host: "example.legacy-host", version: "1.0.0" }],
     requests: {

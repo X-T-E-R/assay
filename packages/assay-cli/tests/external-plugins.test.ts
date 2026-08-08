@@ -202,6 +202,18 @@ describe("external plugin CLI", () => {
 
     const fixtureBytes = await readFile(descriptorPath);
     const ponytailBytes = await readFile(ponytailDescriptorPath);
+    const fixtureDescriptor = JSON.parse(fixtureBytes.toString("utf8"));
+    expect(fixtureDescriptor.provenance).toEqual({
+      source: "https://github.com/X-T-E-R/assay/tree/v0.13.0/packages/assay-plugin-fixture",
+      ref: "refs/tags/v0.13.0:packages/assay-plugin-fixture",
+      license: {
+        spdx: "MIT",
+        url: "https://github.com/X-T-E-R/assay/blob/v0.13.0/LICENSE",
+      },
+    });
+    expect(fixtureDescriptor.payload.integrity).toBe(
+      `sha512-${createHash("sha512").update(fixtureDescriptor.payload.ref, "utf8").digest("base64")}`,
+    );
     const fixtureHash = createHash("sha256").update(fixtureBytes).digest("hex");
     const ponytailHash = createHash("sha256").update(ponytailBytes).digest("hex");
 

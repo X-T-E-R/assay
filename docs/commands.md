@@ -54,7 +54,10 @@ assay source add|sync|switch|status|log|diff ...
 assay source adoption register|take|list|show|status|inspect|evidence|verify|decide|history|rollback|update ...
 ```
 
-Source and Source-adoption storage and contracts are unchanged.
+Source adoption definitions and receipts use the `assay.source-adoption-*/v1`
+schema family and lazy `.assay/source-adoptions/` storage. The command namespace
+remains `assay source adoption ...`; there is no separate product object or
+compatibility reader for earlier unpublished record names.
 
 ## Analysis and Knowledge
 

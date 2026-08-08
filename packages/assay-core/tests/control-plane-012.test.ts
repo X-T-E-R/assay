@@ -175,6 +175,25 @@ describe("0.13 control-plane cleanup", () => {
       framework_version: "0.13.0",
       layout: { version: 8, entries: expect.any(Array) },
     });
+    expect(manifest?.layout.paths).toEqual({
+      manifest: ".assay/manifest.json",
+      events: ".assay/events",
+      backups: ".assay/backups",
+      systems_registry: ".assay/systems-registry.json",
+      sources: "sources",
+      analyses: "analyses",
+      knowledge: "knowledge",
+      systems: "systems",
+    });
+    const { systems: staleSystemsPath, ...stalePaths } = manifest?.layout.paths ?? {};
+    const staleLayoutName = {
+      ...manifest,
+      layout: {
+        ...manifest?.layout,
+        paths: { ...stalePaths, systems_contracts: staleSystemsPath },
+      },
+    };
+    expect(publicCore.frameworkManifestSchema.safeParse(staleLayoutName).success).toBe(false);
     expect(Object.hasOwn(manifest as object, "entries")).toBe(false);
     expect(JSON.stringify(manifest)).not.toMatch(/template|archetype|profile|managed_files/);
     expect(Object.hasOwn(manifest as object, "project")).toBe(false);

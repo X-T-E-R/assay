@@ -4,7 +4,6 @@ import path from "node:path";
 import { createTempDirectoryFixture, pathExists as exists } from "assay-test-support";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { inspectAdoptionLock, releaseAdoptionLock } from "../src/donors/index.js";
 import {
   addSource,
   checkFramework,
@@ -17,6 +16,7 @@ import {
   registerSourceAdoption,
   registerSystem,
 } from "../src/index.js";
+import { inspectAdoptionLock, releaseAdoptionLock } from "../src/source-adoption/index.js";
 
 const tempDirs = createTempDirectoryFixture("assay-source-adoption-persistence");
 
@@ -61,7 +61,7 @@ async function createFixture(name: string): Promise<SourceAdoptionFixture> {
 
 function definition(fixture: SourceAdoptionFixture, targetPath = "integrations/alpha.txt") {
   return {
-    schema: "assay.donor-adoption/v1" as const,
+    schema: "assay.source-adoption-definition/v1" as const,
     id: "upstream-product",
     source: { alias: "upstream", observation: fixture.observation },
     targets: [{ id: "product", system: "product", adapter: "local-system/v1" as const }],
@@ -86,7 +86,7 @@ async function registeredFixture(name: string): Promise<SourceAdoptionFixture> {
 }
 
 const adoptionStorePath = (root: string, ...segments: readonly string[]): string =>
-  path.join(root, ".assay", "donors", ...segments);
+  path.join(root, ".assay", "source-adoptions", ...segments);
 
 const lockFile = (root: string, adoptionId: string): string =>
   adoptionStorePath(root, adoptionId, ".lock");
@@ -162,7 +162,7 @@ describe("Source adoption state does not drift from the rest of the workspace st
     const row = check.rows.find(
       (candidate) =>
         candidate.path ===
-        `.assay/donors/upstream-product/inspections/${inspected.inspection.id}.json`,
+        `.assay/source-adoptions/upstream-product/inspections/${inspected.inspection.id}.json`,
     );
     expect(row, JSON.stringify(check.rows, null, 2)).toBeDefined();
     expect(row?.status).toBe("error");
@@ -209,7 +209,9 @@ describe("Source adoption state does not drift from the rest of the workspace st
 
     const check = await checkFramework({ root: fixture.root });
     expect(
-      check.rows.some((row) => row.path.startsWith(".assay/donors/") && row.status === "error"),
+      check.rows.some(
+        (row) => row.path.startsWith(".assay/source-adoptions/") && row.status === "error",
+      ),
       JSON.stringify(check.rows, null, 2),
     ).toBe(false);
   });
@@ -226,7 +228,7 @@ describe("Source adoption state does not drift from the rest of the workspace st
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
       evidence: {
-        schema: "assay.donor-evidence-input/v1",
+        schema: "assay.source-adoption-evidence-input/v1",
         check_id: "supplemental-note",
         result: "passed",
       },
@@ -256,7 +258,7 @@ describe("Source adoption state does not drift from the rest of the workspace st
       "decisions",
       "decision-000000000000000000000000.json",
     );
-    await writeFile(orphan, '{"schema":"assay.donor-decision/v1"', "utf8");
+    await writeFile(orphan, '{"schema":"assay.source-adoption-decision/v1"', "utf8");
 
     // History used to throw on the unreadable file even though it is not part
     // of committed history.
@@ -270,7 +272,7 @@ describe("Source adoption state does not drift from the rest of the workspace st
     const row = check.rows.find(
       (candidate) =>
         candidate.path ===
-        ".assay/donors/upstream-product/decisions/decision-000000000000000000000000.json",
+        ".assay/source-adoptions/upstream-product/decisions/decision-000000000000000000000000.json",
     );
     expect(row, JSON.stringify(check.rows, null, 2)).toBeDefined();
     expect(row?.status).toBe("error");
@@ -297,7 +299,9 @@ describe("Source adoption state does not drift from the rest of the workspace st
     // A record an accepted decision points at is history: it must fail loudly
     // rather than be quietly skipped.
     expect(
-      check.rows.some((row) => row.path.startsWith(".assay/donors/") && row.status === "error"),
+      check.rows.some(
+        (row) => row.path.startsWith(".assay/source-adoptions/") && row.status === "error",
+      ),
       JSON.stringify(check.rows, null, 2),
     ).toBe(true);
   });

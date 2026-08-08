@@ -22,9 +22,9 @@ import type {
   SourceAdoptionTargetSnapshot,
 } from "./schemas.js";
 import {
-  donorLocatorSnapshotSchema,
-  donorSourceSnapshotSchema,
-  donorTargetSnapshotSchema,
+  sourceAdoptionLocatorSnapshotSchema,
+  sourceAdoptionSourceSnapshotSchema,
+  sourceAdoptionTargetSnapshotSchema,
 } from "./schemas.js";
 
 const sourceManifestFileSchema = z
@@ -87,7 +87,7 @@ function snapshotFromFiles(
   files: readonly { readonly path: string; readonly size: number; readonly sha256: string }[],
 ): SourceAdoptionLocatorSnapshot {
   const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
-  return donorLocatorSnapshotSchema.parse({
+  return sourceAdoptionLocatorSnapshotSchema.parse({
     locator,
     state: sorted.length > 0 ? "present" : "missing",
     digest: sorted.length > 0 ? hashJson({ locator, files: sorted }) : null,
@@ -101,7 +101,7 @@ function snapshotFromFiles(
  * Shared by snapshotting and by the upstream impact report, so both answer
  * "does this change touch adopted material?" the same way.
  */
-export function donorLocatorMatchesPath(
+export function sourceAdoptionLocatorMatchesPath(
   locator: SourceAdoptionPathLocator,
   filePath: string,
 ): boolean {
@@ -116,11 +116,13 @@ export function snapshotManifestLocator(
   manifest: z.infer<typeof sourceManifestSchema>,
   locator: SourceAdoptionPathLocator,
 ): SourceAdoptionLocatorSnapshot {
-  const files = manifest.files.filter((file) => donorLocatorMatchesPath(locator, file.path));
+  const files = manifest.files.filter((file) =>
+    sourceAdoptionLocatorMatchesPath(locator, file.path),
+  );
   return snapshotFromFiles(locator, files);
 }
 
-export async function snapshotDonorSource(
+export async function snapshotSourceAdoptionSource(
   root: string,
   definition: SourceAdoptionDefinition,
   targetId: string,
@@ -168,7 +170,7 @@ export async function snapshotDonorSource(
     locators[mapping.id] = snapshotManifestLocator(manifest, mapping.source);
   }
 
-  return donorSourceSnapshotSchema.parse({
+  return sourceAdoptionSourceSnapshotSchema.parse({
     alias: definition.source.alias,
     lineage_id: resolved.observation.lineage_id,
     observation_id: resolved.observation.observation_id,
@@ -302,14 +304,14 @@ async function snapshotTargetLocator(
     info = await lstat(absolute);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return donorLocatorSnapshotSchema.parse({
+      return sourceAdoptionLocatorSnapshotSchema.parse({
         locator,
         state: "missing",
         digest: null,
         files: [],
       });
     }
-    return donorLocatorSnapshotSchema.parse({
+    return sourceAdoptionLocatorSnapshotSchema.parse({
       locator,
       state: "unresolvable",
       digest: null,
@@ -319,7 +321,7 @@ async function snapshotTargetLocator(
   }
 
   if (info.isSymbolicLink()) {
-    return donorLocatorSnapshotSchema.parse({
+    return sourceAdoptionLocatorSnapshotSchema.parse({
       locator,
       state: "unresolvable",
       digest: null,
@@ -341,7 +343,7 @@ async function snapshotTargetLocator(
       await collectTargetFiles(systemRoot, absolute, files);
       return snapshotFromFiles(locator, files);
     }
-    return donorLocatorSnapshotSchema.parse({
+    return sourceAdoptionLocatorSnapshotSchema.parse({
       locator,
       state: "unresolvable",
       digest: null,
@@ -352,7 +354,7 @@ async function snapshotTargetLocator(
           : "locator did not resolve to a regular file or directory",
     });
   } catch (error) {
-    return donorLocatorSnapshotSchema.parse({
+    return sourceAdoptionLocatorSnapshotSchema.parse({
       locator,
       state: "unresolvable",
       digest: null,
@@ -362,7 +364,7 @@ async function snapshotTargetLocator(
   }
 }
 
-export async function snapshotDonorTarget(
+export async function snapshotSourceAdoptionTarget(
   root: string,
   definition: SourceAdoptionDefinition,
   targetId: string,
@@ -387,7 +389,7 @@ export async function snapshotDonorTarget(
       const locators = Object.fromEntries(
         mappingsForTarget(definition, targetId).map((mapping) => [
           mapping.id,
-          donorLocatorSnapshotSchema.parse({
+          sourceAdoptionLocatorSnapshotSchema.parse({
             locator: {
               path: mapping.target.path,
               match: mapping.target.match,
@@ -399,7 +401,7 @@ export async function snapshotDonorTarget(
           }),
         ]),
       );
-      return donorTargetSnapshotSchema.parse({
+      return sourceAdoptionTargetSnapshotSchema.parse({
         system: target.system,
         registered_path: system.path,
         adapter: target.adapter,
@@ -419,7 +421,7 @@ export async function snapshotDonorTarget(
     const locators = Object.fromEntries(
       mappingsForTarget(definition, targetId).map((mapping) => [
         mapping.id,
-        donorLocatorSnapshotSchema.parse({
+        sourceAdoptionLocatorSnapshotSchema.parse({
           locator: {
             path: mapping.target.path,
             match: mapping.target.match,
@@ -431,7 +433,7 @@ export async function snapshotDonorTarget(
         }),
       ]),
     );
-    return donorTargetSnapshotSchema.parse({
+    return sourceAdoptionTargetSnapshotSchema.parse({
       system: target.system,
       registered_path: system.path,
       adapter: target.adapter,
@@ -461,7 +463,7 @@ export async function snapshotDonorTarget(
     registered_path: system.path,
     locators,
   });
-  return donorTargetSnapshotSchema.parse({
+  return sourceAdoptionTargetSnapshotSchema.parse({
     system: target.system,
     registered_path: system.path,
     adapter: target.adapter,

@@ -22,6 +22,7 @@ import {
   registerSourceAdoption,
   registerSystem,
   setConvertRoadmapProbeForTests,
+  sourceAdoptionDefinitionSchema,
   syncSource,
   updateSourceAdoption,
   updateSystem,
@@ -138,7 +139,7 @@ function definition(
     });
   }
   return {
-    schema: "assay.donor-adoption/v1" as const,
+    schema: "assay.source-adoption-definition/v1" as const,
     id: options.id ?? "upstream-product",
     title: "Upstream adoption",
     source: {
@@ -165,6 +166,16 @@ function definition(
 }
 
 describe("Source adoption lifecycle", () => {
+  it("rejects the unpublished Donor definition token without a compatibility alias", async () => {
+    const fixture = await createFixture("no-donor-codec");
+    expect(
+      sourceAdoptionDefinitionSchema.safeParse({
+        ...definition(fixture),
+        schema: "assay.donor-adoption/v1",
+      }).success,
+    ).toBe(false);
+  });
+
   it("fail-closes a Source adoption decision after a move boundary and preserves a usable target snapshot", async () => {
     const root = path.join(await tempDir(), "root");
     await mkdir(path.join(root, "integrations"), { recursive: true });
@@ -196,7 +207,7 @@ describe("Source adoption lifecycle", () => {
     const registered = await registerSourceAdoption({
       root,
       definition: {
-        schema: "assay.donor-adoption/v1",
+        schema: "assay.source-adoption-definition/v1",
         id: "upstream-root",
         title: "Concurrent Source adoption",
         source: { alias: "upstream", observation: source.observation.observation_id },
@@ -233,7 +244,7 @@ describe("Source adoption lifecycle", () => {
     const opaqueReceipt = path.join(
       root,
       ".assay",
-      "donors",
+      "source-adoptions",
       "upstream-root",
       "opaque",
       "note.bin",
@@ -241,7 +252,7 @@ describe("Source adoption lifecycle", () => {
     await mkdir(path.dirname(opaqueReceipt), { recursive: true });
     await writeFile(opaqueReceipt, "unknown-receipt-bytes\n", "utf8");
     await writeFile(
-      path.join(root, ".assay", "donors", "upstream-root", ".lock"),
+      path.join(root, ".assay", "source-adoptions", "upstream-root", ".lock"),
       '{"stale":true}\n',
       "utf8",
     );
@@ -299,11 +310,11 @@ describe("Source adoption lifecycle", () => {
       (await getSourceAdoptionHistory({ root: target, adoptionId: "upstream-root" })).decisions,
     ).toEqual([]);
     await expect(
-      stat(path.join(target, ".assay", "donors", "upstream-root", ".lock")),
+      stat(path.join(target, ".assay", "source-adoptions", "upstream-root", ".lock")),
     ).rejects.toMatchObject({ code: "ENOENT" });
     expect(
       await readFile(
-        path.join(target, ".assay", "donors", "upstream-root", "opaque", "note.bin"),
+        path.join(target, ".assay", "source-adoptions", "upstream-root", "opaque", "note.bin"),
         "utf8",
       ),
     ).toBe("unknown-receipt-bytes\n");
@@ -343,7 +354,7 @@ describe("Source adoption lifecycle", () => {
     await registerSourceAdoption({
       root,
       definition: {
-        schema: "assay.donor-adoption/v1",
+        schema: "assay.source-adoption-definition/v1",
         id: "upstream-docs",
         source: { alias: "upstream", observation: source.observation.observation_id },
         targets: [{ id: "docs", system: "docs", adapter: "local-system/v1" }],
@@ -383,14 +394,14 @@ describe("Source adoption lifecycle", () => {
         path.join(
           fixture.root,
           ".assay",
-          "donors",
+          "source-adoptions",
           "upstream-product",
           "definitions",
           `${registered.definitionDigest}.json`,
         ),
         "utf8",
       ),
-    ).toContain('"schema": "assay.donor-adoption/v1"');
+    ).toContain('"schema": "assay.source-adoption-definition/v1"');
 
     const listed = await listSourceAdoptions({ root: fixture.root });
     expect(listed.adoptions[0]?.targets[0]?.baselineDecision).toBeNull();
@@ -405,12 +416,13 @@ describe("Source adoption lifecycle", () => {
     expect(
       check.rows.some(
         (row) =>
-          row.path.includes(".assay/donors/upstream-product/state.json") && row.status === "ok",
+          row.path.includes(".assay/source-adoptions/upstream-product/state.json") &&
+          row.status === "ok",
       ),
     ).toBe(true);
-    expect(check.rows.some((row) => row.path.includes("donors") && row.status === "warning")).toBe(
-      false,
-    );
+    expect(
+      check.rows.some((row) => row.path.includes("source-adoptions") && row.status === "warning"),
+    ).toBe(false);
 
     const frameworkStatus = await getFrameworkStatus({ root: fixture.root });
     expect(frameworkStatus.sourceAdoptions).toEqual({
@@ -460,7 +472,7 @@ describe("Source adoption lifecycle", () => {
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
       evidence: {
-        schema: "assay.donor-evidence-input/v1",
+        schema: "assay.source-adoption-evidence-input/v1",
         check_id: "focused-test",
         result: "passed",
         producer: { id: "vitest", version: "2" },
@@ -472,7 +484,7 @@ describe("Source adoption lifecycle", () => {
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
       evidence: {
-        schema: "assay.donor-evidence-input/v1",
+        schema: "assay.source-adoption-evidence-input/v1",
         check_id: "review-note",
         result: "inconclusive",
         summary: "Reviewer did not record a conclusion.",
@@ -534,7 +546,7 @@ describe("Source adoption lifecycle", () => {
     expect(inspected.inspection.target.working_tree).toBe("dirty");
     expect(
       inspected.inspection.diagnostics.some(
-        (diagnostic) => diagnostic.code === "donor.target.working_tree_dirty",
+        (diagnostic) => diagnostic.code === "source-adoption.target.working_tree_dirty",
       ),
     ).toBe(true);
 
@@ -739,7 +751,7 @@ describe("Source adoption lifecycle", () => {
     expect(verification.current).toBe(false);
     expect(
       verification.diagnostics.some(
-        (diagnostic) => diagnostic.code === "donor.inspection.definition_stale",
+        (diagnostic) => diagnostic.code === "source-adoption.inspection.definition_stale",
       ),
     ).toBe(true);
   });
@@ -760,7 +772,7 @@ describe("Source adoption lifecycle", () => {
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
       evidence: {
-        schema: "assay.donor-evidence-input/v1",
+        schema: "assay.source-adoption-evidence-input/v1",
         check_id: "supplemental-note",
         result: "passed",
       },
@@ -802,7 +814,7 @@ describe("Source adoption lifecycle", () => {
       adoptionId: "upstream-product",
       inspectionId: inspected.inspection.id,
       evidence: {
-        schema: "assay.donor-evidence-input/v1",
+        schema: "assay.source-adoption-evidence-input/v1",
         check_id: "supplemental-note",
         result: "passed",
       },
@@ -834,7 +846,13 @@ describe("Source adoption lifecycle", () => {
       outcome: "accept",
     });
 
-    const statePath = path.join(fixture.root, ".assay", "donors", "upstream-product", "state.json");
+    const statePath = path.join(
+      fixture.root,
+      ".assay",
+      "source-adoptions",
+      "upstream-product",
+      "state.json",
+    );
     const state = JSON.parse(await readFile(statePath, "utf8")) as {
       targets: { product: { baseline: { decision_id: string } } };
     };

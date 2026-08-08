@@ -236,7 +236,7 @@ const RELOCATED_PATH_KEYS = [
   "sources",
   "analyses",
   "knowledge",
-  "systems_contracts",
+  "systems",
 ] as const satisfies readonly (keyof WorkspaceLayout["paths"])[];
 
 type ConvertRoadmapProbe = () => void | Promise<void>;
@@ -360,7 +360,7 @@ async function convertOverlayToStandaloneLocked(
       !directory.startsWith(".") &&
       !OVERLAY_WORK_AREAS.includes(directory as (typeof OVERLAY_WORK_AREAS)[number]) &&
       !OVERLAY_WORK_DIRECTORIES.includes(directory as (typeof OVERLAY_WORK_DIRECTORIES)[number]) &&
-      !["systems", "backups", "events", "donors"].includes(directory),
+      !["systems", "backups", "events", "source-adoptions"].includes(directory),
   );
   if (move && !keepOverlay) {
     await assertNoUnknownOverlayState(sourceRoot, sourceLayout, additionalWorkDirectories);
@@ -438,7 +438,7 @@ async function convertOverlayToStandaloneLocked(
       await copyOrMoveDir(from, to, move);
     }
   }
-  for (const directory of ["donors"] as const) {
+  for (const directory of ["source-adoptions"] as const) {
     const from = path.join(sourceRoot, sourceLayout.state_root, directory);
     const to = path.join(targetRoot, targetLayout.state_root, directory);
     if (await exists(from)) {
@@ -479,11 +479,11 @@ async function convertOverlayToStandaloneLocked(
   // Transfer `.assay/systems/` as ordinary content. Even for `--move`, preserve
   // the source tree: it may contain unknown user bytes that core has no
   // authority to delete.
-  const sourceContracts = workspacePath(sourceRoot, sourceLayout, "systemsContracts");
-  const targetContracts = workspacePath(targetRoot, targetLayout, "systemsContracts");
-  if (await exists(sourceContracts)) {
-    await mkdir(targetContracts, { recursive: true });
-    await copyOrMoveDir(sourceContracts, targetContracts, false);
+  const sourceSystems = workspacePath(sourceRoot, sourceLayout, "systems");
+  const targetSystems = workspacePath(targetRoot, targetLayout, "systems");
+  if (await exists(sourceSystems)) {
+    await mkdir(targetSystems, { recursive: true });
+    await copyOrMoveDir(sourceSystems, targetSystems, false);
   }
 
   // Rewrite the target manifest: standalone layout, drop overlay specifics.
@@ -771,7 +771,7 @@ async function assertRealDirectoryTree(directory: string, label: string): Promis
 }
 
 /**
- * The codec-stable Source adoption store is opaque conversion state. Validate
+ * The Source adoption receipt store is opaque conversion state. Validate
  * its complete physical tree before semantic readers or target creation so
  * `cp` cannot follow a redirect outside either workspace. Unknown ordinary
  * files and directories remain portable; only redirects and special entries
@@ -784,12 +784,12 @@ async function assertSourceAdoptionStoreTransferSafe(
   targetRoot: string,
   targetLayout: WorkspaceLayout,
 ): Promise<void> {
-  const sourceStore = path.join(sourceRoot, sourceLayout.state_root, "donors");
+  const sourceStore = path.join(sourceRoot, sourceLayout.state_root, "source-adoptions");
   if (await assertRealDirectory(sourceStore, "source Source adoption receipt store", true)) {
     await assertContainedRealTree(sourceStore, "source Source adoption receipt store");
   }
 
-  const targetStore = path.join(targetRoot, targetLayout.state_root, "donors");
+  const targetStore = path.join(targetRoot, targetLayout.state_root, "source-adoptions");
   const targetAncestor = await nearestExistingAncestor(targetStore);
   await assertRealDirectory(targetAncestor, "Source adoption target ancestor", false);
   if (await assertRealDirectory(targetStore, "target Source adoption receipt store", true)) {
@@ -881,7 +881,7 @@ async function assertNoUnknownOverlayState(
     path.basename(MANAGED_FILES_FILE),
     "events",
     "backups",
-    "donors",
+    "source-adoptions",
     "external-plugins.json",
     "README.md",
     "task-contexts.json",

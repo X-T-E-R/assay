@@ -7,18 +7,18 @@
     "version": "0.13.0"
   },
   "provenance": {
-    "source": "npm:@assay/plugin-fixture",
-    "ref": "@assay/plugin-fixture@1.0.0",
+    "source": "https://github.com/X-T-E-R/assay/tree/v0.13.0/packages/assay-plugin-fixture",
+    "ref": "refs/tags/v0.13.0:packages/assay-plugin-fixture",
     "license": {
       "spdx": "MIT",
-      "url": "https://github.com/X-T-E-R/assay/blob/master/LICENSE"
+      "url": "https://github.com/X-T-E-R/assay/blob/v0.13.0/LICENSE"
     }
   },
   "payload": {
     "locator": "urn:assay-fixture:readonly-command-contract",
     "version": "1.0.0",
     "ref": "urn:assay-fixture:readonly-command-contract@1.0.0",
-    "integrity": "sha512-y7I1KGRrQ0+uiUnJECFSO4sfsU17UiL2S7CVkfTz5ty3uMfCDK+B4ER2dnA8bCISyjOxNEqI4p3VQ4BO2tltTw=="
+    "integrity": "sha512-z4k7h6Zn4l3YakaEKdQYsE0/Si+U4l7JECGOjuYxLSfI6KhyK4pl+17xSH4JSpejgrg12VIMv3XYw0EMiJQVBw=="
   },
   "targets": [
     {

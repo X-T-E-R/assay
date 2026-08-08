@@ -350,7 +350,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 
   program
     .command("update")
-    .description("Update managed workspace files using manifest hashes")
+    .description("Update fixed core files using managed-receipt baselines")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--dry-run", "plan update without applying writes")
     .option("--agents", "install or refresh the Assay managed block in root AGENTS.md")

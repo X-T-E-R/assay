@@ -17,6 +17,9 @@ scripts/                      validation, smoke, and install helpers
 
 ## Local development
 
+Use Node.js >=22.13.0 and the repository-pinned pnpm 11.3.0. Older Node
+versions are outside the supported install and CLI runtime contract.
+
 ```bash
 pnpm install
 pnpm build

@@ -9,7 +9,7 @@ Build and maintain an Assay evidence workbench — a versioned project layer tha
 
 ## Prerequisites
 
-- Node.js >= 18, `pnpm`
+- Node.js >=22.13.0 and pnpm 11.3.0 (pinned by the repository)
 - This skill lives inside the `assay` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running the repo-root installer from the cloned repository; it builds the workspace and links this skill into the selected skills directory so it resolves back to the repo.
 - Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs the built TypeScript CLI at `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
 - When maintaining this repository itself, use the repo-root release scripts (`../../scripts/check.sh` on POSIX, `../../scripts/check.ps1` on Windows). They run the built CLI checks and the committed public-example gate.
@@ -177,7 +177,7 @@ the valid rows for discovery, but do not report the storage as healthy until
 the issues are repaired.
 
 Keep roadmaps, specifications, and acceptance in the native Project. Use
-Use `assay spec` for closed envelopes plus reader-owned specification prose,
+`assay spec` for closed envelopes plus reader-owned specification prose,
 and use explicit `spec promote` only with an independent clean body and an
 Analysis or Task provenance source. Activation validates structure; it is not
 approval or Project acceptance. Keep agent DAGs, dispatch, ownership, and
@@ -271,7 +271,7 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 
 ## Validation
 
-After any init, adopt, update, or migrate operation:
+After any init, attach, adopt, update, or convert operation:
 
 ```bash
 assay check
@@ -295,7 +295,7 @@ Report:
 - Target root and CLI command used.
 - Created/updated/skipped/conflicted files.
 - Current `.assay/managed-files.json` and layout version.
-- Whether migration was only planned or applied.
+- Whether conversion or adoption was only previewed or applied.
 - Which Source, Analysis, Task, or Knowledge artifacts were produced.
 - Registered systems and the current `primary`.
 - **Content-completeness**: count of living Sources and whether latest observations have provenance/fingerprints/manifests; count of living and frozen Source modes; count of open draft analyses and whether their `Key observations` are non-empty; whether `.old/` still contains un-migrated stamps. This is what distinguishes "files were created" from "content was actually evaluated".

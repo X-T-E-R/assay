@@ -17,12 +17,12 @@ import {
   type SourceAdoptionEvidence,
   type SourceAdoptionInspection,
   type SourceAdoptionState,
-  donorAdoptionDefinitionSchema,
-  donorDecisionSchema,
-  donorEvidenceSchema,
-  donorIdSchema,
-  donorInspectionSchema,
-  donorStateSchema,
+  sourceAdoptionDecisionSchema,
+  sourceAdoptionDefinitionSchema,
+  sourceAdoptionEvidenceSchema,
+  sourceAdoptionIdSchema,
+  sourceAdoptionInspectionSchema,
+  sourceAdoptionStateSchema,
 } from "./schemas.js";
 
 async function exists(target: string): Promise<boolean> {
@@ -46,12 +46,12 @@ function recordDigest(value: unknown): string {
  * callers report the record that is actually damaged instead of blaming
  * `state.json`, which is usually intact.
  */
-export class DonorRecordFileError extends FrameworkError {
+export class SourceAdoptionRecordFileError extends FrameworkError {
   readonly file: string;
 
   constructor(file: string, message: string, options: { readonly cause?: unknown } = {}) {
     super(message, { ...options, code: "INVALID_SOURCE_ADOPTION" });
-    this.name = "DonorRecordFileError";
+    this.name = "SourceAdoptionRecordFileError";
     this.file = file;
   }
 }
@@ -61,27 +61,27 @@ function expectedRecordId(prefix: string, value: unknown): string {
 }
 
 /**
- * Root directory for Source adoption state: always `<root>/.assay/donors`.
+ * Root directory for Source adoption state: always `<root>/.assay/source-adoptions`.
  *
- * Donor records are Assay-owned state, like the event log and systems registry,
- * systems registry, all of which address `.assay/` through the shared
- * constants rather than the layout path map. Every v4 layout — standalone and
+ * Source adoption records are Assay-owned state, like the event log and
+ * systems registry, all of which address `.assay/` through shared constants
+ * rather than the layout path map. Every layout v8 workspace — standalone and
  * overlay alike — puts state under `.assay/`, so using the constant costs
  * nothing and removes a whole failure mode: a manifest with a stale or
  * mis-derived `state_root` can no longer split Source adoption records off from the rest
  * of the workspace state, where a partial copy would leave them behind and
- * `donor list` would report `(none)`.
+ * `source adoption list` would report `(none)`.
  */
-export async function donorWorkspaceRoot(root: string): Promise<string> {
+export async function sourceAdoptionWorkspaceRoot(root: string): Promise<string> {
   const manifest = await loadManifest(root);
   if (!manifest) {
     throw new FrameworkNotFoundError(`No Assay manifest found at ${root}.`);
   }
-  return path.join(root, MANAGED_DIR, "donors");
+  return path.join(root, MANAGED_DIR, "source-adoptions");
 }
 
-export function assertDonorId(value: string): string {
-  const result = donorIdSchema.safeParse(value);
+export function assertSourceAdoptionId(value: string): string {
+  const result = sourceAdoptionIdSchema.safeParse(value);
   if (!result.success) {
     throw new FrameworkError(`invalid Source adoption identifier '${value}'`, {
       code: "INVALID_SOURCE_ADOPTION",
@@ -92,8 +92,8 @@ export function assertDonorId(value: string): string {
 }
 
 export async function adoptionRoot(root: string, adoptionId: string): Promise<string> {
-  const safeId = assertDonorId(adoptionId);
-  return path.join(await donorWorkspaceRoot(root), safeId);
+  const safeId = assertSourceAdoptionId(adoptionId);
+  return path.join(await sourceAdoptionWorkspaceRoot(root), safeId);
 }
 
 export async function readStructuredFile(file: string): Promise<unknown> {
@@ -117,7 +117,7 @@ export async function readStructuredFile(file: string): Promise<unknown> {
   }
 }
 
-export function parseDonorValue<TSchema extends z.ZodTypeAny>(
+export function parseSourceAdoptionValue<TSchema extends z.ZodTypeAny>(
   schema: TSchema,
   value: unknown,
   label: string,
@@ -145,11 +145,13 @@ async function readJson<TSchema extends z.ZodTypeAny>(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new FrameworkNotFoundError(`${label} not found: ${file}`);
     }
-    throw new DonorRecordFileError(file, `${label} is not valid JSON: ${file}`, { cause: error });
+    throw new SourceAdoptionRecordFileError(file, `${label} is not valid JSON: ${file}`, {
+      cause: error,
+    });
   }
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new DonorRecordFileError(file, `${label}: ${file} failed validation`, {
+    throw new SourceAdoptionRecordFileError(file, `${label}: ${file} failed validation`, {
       cause: result.error,
     });
   }
@@ -194,7 +196,7 @@ async function isCommittedRecordFile(file: string): Promise<boolean> {
 
 async function readStateForCommitCheck(directory: string): Promise<SourceAdoptionState | null> {
   try {
-    return await readJson(stateFile(directory), donorStateSchema, "Source adoption state");
+    return await readJson(stateFile(directory), sourceAdoptionStateSchema, "Source adoption state");
   } catch {
     // No readable state means there is no committed history to protect.
     return null;
@@ -208,7 +210,7 @@ async function readDecisionForCommitCheck(
   try {
     return await readJson(
       decisionFile(directory, decisionId),
-      donorDecisionSchema,
+      sourceAdoptionDecisionSchema,
       "Source adoption decision",
     );
   } catch {
@@ -309,7 +311,7 @@ interface AdoptionLockPayload {
   readonly acquired_at: string;
 }
 
-export interface DonorLockStatus {
+export interface SourceAdoptionLockStatus {
   /** Absolute path of the lock file. */
   readonly file: string;
   readonly adoptionId: string;
@@ -404,7 +406,10 @@ async function readLockPayload(lockFile: string): Promise<AdoptionLockPayload | 
  * hour, `process.kill` reporting EPERM waited forever, and a reused pid waited
  * forever.
  */
-async function evaluateLock(lockFile: string, adoptionId: string): Promise<DonorLockStatus | null> {
+async function evaluateLock(
+  lockFile: string,
+  adoptionId: string,
+): Promise<SourceAdoptionLockStatus | null> {
   let ageMs: number;
   try {
     ageMs = Date.now() - (await stat(lockFile)).mtimeMs;
@@ -506,9 +511,9 @@ function busyError(adoptionId: string, reason: string): FrameworkError {
 export async function inspectAdoptionLock(
   root: string,
   adoptionId: string,
-): Promise<DonorLockStatus | null> {
+): Promise<SourceAdoptionLockStatus | null> {
   const directory = await adoptionRoot(root, adoptionId);
-  return evaluateLock(path.join(directory, ".lock"), assertDonorId(adoptionId));
+  return evaluateLock(path.join(directory, ".lock"), assertSourceAdoptionId(adoptionId));
 }
 
 /**
@@ -520,7 +525,7 @@ export async function releaseAdoptionLock(
   root: string,
   adoptionId: string,
   options: { readonly force?: boolean } = {},
-): Promise<{ readonly released: boolean; readonly lock: DonorLockStatus | null }> {
+): Promise<{ readonly released: boolean; readonly lock: SourceAdoptionLockStatus | null }> {
   const lock = await inspectAdoptionLock(root, adoptionId);
   if (lock === null) {
     return { released: false, lock: null };
@@ -566,7 +571,7 @@ export async function readSourceAdoptionStateFromDirectory(
 ): Promise<SourceAdoptionState> {
   const state = await readJson(
     stateFile(directory),
-    donorStateSchema,
+    sourceAdoptionStateSchema,
     `Source adoption state '${adoptionId}'`,
   );
   if (state.adoption_id !== adoptionId) {
@@ -578,7 +583,7 @@ export async function readSourceAdoptionStateFromDirectory(
   return state;
 }
 
-export async function readDonorDefinition(
+export async function readSourceAdoptionDefinition(
   root: string,
   adoptionId: string,
   digest?: string,
@@ -588,7 +593,7 @@ export async function readDonorDefinition(
   const selected = digest ?? state.current_definition;
   const definition = await readJson(
     definitionFile(directory, selected),
-    donorAdoptionDefinitionSchema,
+    sourceAdoptionDefinitionSchema,
     `Source adoption definition '${adoptionId}'`,
   );
   if (recordDigest(definition) !== selected) {
@@ -611,10 +616,10 @@ export async function readSourceAdoptionInspection(
   inspectionId: string,
 ): Promise<SourceAdoptionInspection> {
   const directory = await adoptionRoot(root, adoptionId);
-  const selectedId = assertDonorId(inspectionId);
+  const selectedId = assertSourceAdoptionId(inspectionId);
   const inspection = await readJson(
     inspectionFile(directory, selectedId),
-    donorInspectionSchema,
+    sourceAdoptionInspectionSchema,
     `Source adoption inspection '${inspectionId}'`,
   );
   if (inspection.id !== selectedId) {
@@ -644,10 +649,10 @@ export async function readSourceAdoptionDecision(
   decisionId: string,
 ): Promise<SourceAdoptionDecision> {
   const directory = await adoptionRoot(root, adoptionId);
-  const selectedId = assertDonorId(decisionId);
+  const selectedId = assertSourceAdoptionId(decisionId);
   const decision = await readJson(
     decisionFile(directory, selectedId),
-    donorDecisionSchema,
+    sourceAdoptionDecisionSchema,
     `Source adoption decision '${decisionId}'`,
   );
   if (decision.id !== selectedId) {
@@ -693,14 +698,14 @@ export async function readSourceAdoptionDecision(
 
 interface RecordDirectoryScan<T> {
   readonly records: T[];
-  readonly skipped: DonorRecordFileError[];
+  readonly skipped: SourceAdoptionRecordFileError[];
 }
 
-function asRecordFileError(file: string, error: unknown): DonorRecordFileError {
-  if (error instanceof DonorRecordFileError) {
+function asRecordFileError(file: string, error: unknown): SourceAdoptionRecordFileError {
+  if (error instanceof SourceAdoptionRecordFileError) {
     return error;
   }
-  return new DonorRecordFileError(
+  return new SourceAdoptionRecordFileError(
     file,
     error instanceof Error ? error.message : `Source adoption record failed validation: ${file}`,
     { cause: error },
@@ -750,7 +755,7 @@ async function scanSourceAdoptionInspections(
   const directory = await adoptionRoot(root, adoptionId);
   const scan = await scanRecordDirectory(
     path.join(directory, "inspections"),
-    donorInspectionSchema,
+    sourceAdoptionInspectionSchema,
     `Source adoption inspection '${adoptionId}'`,
     (fileId, record) => {
       if (fileId !== record.id) {
@@ -784,7 +789,7 @@ async function scanSourceAdoptionEvidence(
   const directory = await adoptionRoot(root, adoptionId);
   const scan = await scanRecordDirectory(
     path.join(directory, "evidence"),
-    donorEvidenceSchema,
+    sourceAdoptionEvidenceSchema,
     `Source adoption evidence '${adoptionId}'`,
     (fileId, record) => {
       if (fileId !== record.id) {
@@ -841,7 +846,7 @@ export async function listSourceAdoptionDecisions(
   const committed = new Set(state.decisions);
   const scan = await scanRecordDirectory(
     path.join(directory, "decisions"),
-    donorDecisionSchema,
+    sourceAdoptionDecisionSchema,
     `Source adoption decision '${adoptionId}'`,
     (fileId, record) => {
       if (fileId !== record.id) {
@@ -871,11 +876,11 @@ export async function listSourceAdoptionDecisions(
  * fails the adoption for it. This scan stops at the first such record rather
  * than duplicating the error under a different path.
  */
-export async function collectDonorRecordIssues(
+export async function collectSourceAdoptionRecordIssues(
   root: string,
   adoptionId: string,
-): Promise<DonorRecordFileError[]> {
-  const issues: DonorRecordFileError[] = [];
+): Promise<SourceAdoptionRecordFileError[]> {
+  const issues: SourceAdoptionRecordFileError[] = [];
   for (const scan of [
     () => scanSourceAdoptionInspections(root, adoptionId),
     () => scanSourceAdoptionEvidence(root, adoptionId),
@@ -897,20 +902,20 @@ async function scanSourceAdoptionDecisionFiles(
   const directory = await adoptionRoot(root, adoptionId);
   return scanRecordDirectory(
     path.join(directory, "decisions"),
-    donorDecisionSchema,
+    sourceAdoptionDecisionSchema,
     `Source adoption decision '${adoptionId}'`,
     () => {},
   );
 }
 
 export async function listSourceAdoptionStateIds(root: string): Promise<string[]> {
-  const donorsRoot = await donorWorkspaceRoot(root);
-  if (!(await exists(donorsRoot))) return [];
-  const entries = await readdir(donorsRoot, { withFileTypes: true });
+  const sourceAdoptionsRoot = await sourceAdoptionWorkspaceRoot(root);
+  if (!(await exists(sourceAdoptionsRoot))) return [];
+  const entries = await readdir(sourceAdoptionsRoot, { withFileTypes: true });
   const ids: string[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || !donorIdSchema.safeParse(entry.name).success) continue;
-    if (await exists(path.join(donorsRoot, entry.name, "state.json"))) {
+    if (!entry.isDirectory() || !sourceAdoptionIdSchema.safeParse(entry.name).success) continue;
+    if (await exists(path.join(sourceAdoptionsRoot, entry.name, "state.json"))) {
       ids.push(entry.name);
     }
   }

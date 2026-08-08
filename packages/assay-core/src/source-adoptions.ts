@@ -1,16 +1,15 @@
 /**
  * Public Source adoption surface.
  *
- * The operational records intentionally keep their existing codec and
- * `.assay/donors` location so content-addressed ids and historical digests do
- * not change. Product callers reach that store only through these Source-owned
- * names.
+ * Operational records use Source-owned schema names and live under
+ * `.assay/source-adoptions`. Product callers reach that store only through
+ * this workspace-aware surface.
  */
 import path from "node:path";
 
-import * as codec from "./donors/index.js";
 import { FrameworkNotFoundError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
+import * as codec from "./source-adoption/index.js";
 import { withWorkspaceMutationCoordination } from "./tasks/task-storage.js";
 
 async function preflight(root: string): Promise<string> {
@@ -42,29 +41,29 @@ export type SourceAdoptionHistoryResult = codec.SourceAdoptionHistoryResult;
 export type SourceAdoptionSummary = codec.SourceAdoptionSummary;
 export type SourceAdoptionSourceMapping = codec.SourceAdoptionSourceMapping;
 
-export const sourceAdoptionDefinitionSchema = codec.donorAdoptionDefinitionSchema;
+export const sourceAdoptionDefinitionSchema = codec.sourceAdoptionDefinitionSchema;
 export function sourceAdoptionLocatorMatchesPath(
   locator: SourceAdoptionPathLocator,
   filePath: string,
 ): boolean {
-  return codec.donorLocatorMatchesPath(locator, filePath);
+  return codec.sourceAdoptionLocatorMatchesPath(locator, filePath);
 }
 
 export async function registerSourceAdoption(options: codec.RegisterSourceAdoptionOptions) {
   const root = await preflight(options.root);
-  return codec.registerDonorAdoption({ ...options, root });
+  return codec.registerSourceAdoption({ ...options, root });
 }
 
 export async function registerSourceAdoptionFromFile(
   options: codec.RegisterSourceAdoptionFileOptions,
 ) {
   const root = await preflight(options.root);
-  return codec.registerDonorAdoptionFromFile({ ...options, root });
+  return codec.registerSourceAdoptionFromFile({ ...options, root });
 }
 
 export async function updateSourceAdoption(options: codec.UpdateSourceAdoptionOptions) {
   const root = await preflight(options.root);
-  return codec.updateDonorAdoption({ ...options, root });
+  return codec.updateSourceAdoption({ ...options, root });
 }
 
 export async function updateSourceAdoptionFromFile(options: {
@@ -74,12 +73,12 @@ export async function updateSourceAdoptionFromFile(options: {
   readonly now?: Date;
 }) {
   const root = await preflight(options.root);
-  return codec.updateDonorAdoptionFromFile({ ...options, root });
+  return codec.updateSourceAdoptionFromFile({ ...options, root });
 }
 
 export async function takeSourceAdoptionMaterial(options: codec.TakeSourceAdoptionMaterialOptions) {
   const root = await preflight(options.root);
-  return codec.takeDonorMaterial({ ...options, root });
+  return codec.takeSourceAdoptionMaterial({ ...options, root });
 }
 
 export async function listSourceAdoptionSourceMappings(root: string) {
@@ -89,9 +88,9 @@ export async function listSourceAdoptionSourceMappings(root: string) {
 
 export async function inspectSourceAdoption(options: codec.InspectSourceAdoptionOptions) {
   const root = await preflight(options.root);
-  if (options.persist === false) return codec.inspectDonorAdoption({ ...options, root });
+  if (options.persist === false) return codec.inspectSourceAdoption({ ...options, root });
   return withWorkspaceMutationCoordination(root, () =>
-    codec.inspectDonorAdoption({ ...options, root }),
+    codec.inspectSourceAdoption({ ...options, root }),
   );
 }
 
@@ -128,7 +127,7 @@ export async function verifySourceAdoptionInspection(options: {
 
 export async function decideSourceAdoption(options: codec.DecideSourceAdoptionOptions) {
   const root = await preflight(options.root);
-  return codec.decideDonorAdoption({ ...options, root });
+  return codec.decideSourceAdoption({ ...options, root });
 }
 
 export async function recordSourceAdoptionRollback(options: {
@@ -139,12 +138,12 @@ export async function recordSourceAdoptionRollback(options: {
   readonly now?: Date;
 }) {
   const root = await preflight(options.root);
-  return codec.recordDonorRollback({ ...options, root });
+  return codec.recordSourceAdoptionRollback({ ...options, root });
 }
 
 export async function listSourceAdoptions(options: { readonly root: string }) {
   const root = await preflight(options.root);
-  return codec.listDonorAdoptions({ root });
+  return codec.listSourceAdoptions({ root });
 }
 
 export async function getSourceAdoption(options: {
@@ -152,7 +151,7 @@ export async function getSourceAdoption(options: {
   readonly adoptionId: string;
 }) {
   const root = await preflight(options.root);
-  return codec.getDonorAdoption({ ...options, root });
+  return codec.getSourceAdoption({ ...options, root });
 }
 
 export async function getSourceAdoptionStatus(options: {
@@ -161,7 +160,7 @@ export async function getSourceAdoptionStatus(options: {
   readonly targetId?: string;
 }) {
   const root = await preflight(options.root);
-  return codec.getDonorStatus({ ...options, root });
+  return codec.getSourceAdoptionStatus({ ...options, root });
 }
 
 export async function getSourceAdoptionHistory(options: {
@@ -170,7 +169,7 @@ export async function getSourceAdoptionHistory(options: {
   readonly targetId?: string;
 }) {
   const root = await preflight(options.root);
-  return codec.getDonorHistory({ ...options, root });
+  return codec.getSourceAdoptionHistory({ ...options, root });
 }
 
 export async function getSourceAdoptionSummary(root: string) {
@@ -180,5 +179,5 @@ export async function getSourceAdoptionSummary(root: string) {
 
 export async function collectSourceAdoptionIntegrityRows(root: string) {
   const resolved = await preflight(root);
-  return codec.collectDonorIntegrityRows(resolved);
+  return codec.collectSourceAdoptionIntegrityRows(resolved);
 }

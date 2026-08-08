@@ -3,7 +3,7 @@
 `assay task` keeps one bounded outcome identifiable across sessions, agents,
 context compaction, and repeated implementation attempts. Create a Task when
 the outcome needs a durable boundary. Keep using that Task while the outcome is
-the same; a new attempt is not a new product object in v0.1.
+the same; a new attempt is not a new product object in Assay 0.13.
 
 A Task is not a permission token, an acceptance decision, or an agent job. It
 is a file-based contract and continuation anchor that other tools can address
@@ -76,8 +76,8 @@ When a current normative contract should outlive the Task, promote it explicitly
 with `assay spec promote --from-task <id> --task-file <allowed-file> --body
 <clean-specification>`. Promotion records exact provenance but does not edit,
 finish, archive, or add a back-reference to the Task. Task lifecycle never
-activates, retires, replaces, or archives a Spec; Phase 1 adds no `spec_refs` to
-Task records.
+activates, retires, replaces, or archives a Spec, and Task records have no
+`spec_refs`.
 
 ## Create the durable boundary, not every attempt
 

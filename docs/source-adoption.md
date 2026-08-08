@@ -71,7 +71,7 @@ required evidence.
 Register a complete JSON or YAML definition:
 
 ```yaml
-schema: assay.donor-adoption/v1
+schema: assay.source-adoption-definition/v1
 id: readseek-pipi
 title: ReadSeek capabilities adopted by Pipi
 
@@ -183,7 +183,7 @@ whole-file hashes.
 Evidence inputs use a small shape:
 
 ```yaml
-schema: assay.donor-evidence-input/v1
+schema: assay.source-adoption-evidence-input/v1
 check_id: anchor-contract
 result: passed
 producer:
@@ -262,13 +262,13 @@ unchanged.
 
 ## Storage And Integrity
 
-State is created lazily. The on-disk `.assay/donors` path and
-`assay.donor-*/v1` schema tokens are codec-stable internal serialization: they
-form a Source-owned operational receipt store, not a public product entity or
-command namespace.
+State is created lazily. The on-disk `.assay/source-adoptions` path and
+`assay.source-adoption-*/v1` schema family form the current closed
+serialization for a Source-owned operational receipt store, not a separate
+product entity or command namespace.
 
 ```text
-.assay/donors/<adoption-id>/
+.assay/source-adoptions/<adoption-id>/
   definitions/<digest>.json
   inspections/<inspection-id>.json
   evidence/<evidence-id>.json

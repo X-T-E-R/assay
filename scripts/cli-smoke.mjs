@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -15,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tsCli = path.join(repoRoot, "packages", "assay-cli", "dist", "cli.js");
+const requiredNodeEngine = ">=22.13.0";
 
 function fail(message) {
   throw new Error(message);
@@ -35,7 +37,27 @@ function run(label, args, options = {}) {
   }
 }
 
+function assertReleaseMetadata() {
+  const manifests = [
+    path.join(repoRoot, "package.json"),
+    path.join(repoRoot, "packages", "assay-core", "package.json"),
+    path.join(repoRoot, "packages", "assay-cli", "package.json"),
+  ].map((file) => ({ file, value: JSON.parse(readFileSync(file, "utf8")) }));
+  for (const { file, value } of manifests) {
+    if (value.version !== "0.13.0") {
+      fail(`${path.relative(repoRoot, file)} must declare version 0.13.0.`);
+    }
+    if (value.engines?.node !== requiredNodeEngine) {
+      fail(`${path.relative(repoRoot, file)} must require Node.js ${requiredNodeEngine}.`);
+    }
+  }
+  if (manifests[0].value.packageManager !== "pnpm@11.3.0") {
+    fail("root package.json must pin pnpm@11.3.0.");
+  }
+}
+
 function main() {
+  assertReleaseMetadata();
   if (!existsSync(tsCli)) {
     fail(`Built TypeScript CLI not found: ${tsCli}. Run "pnpm build" first.`);
   }
@@ -90,7 +112,7 @@ function main() {
       adoptionDefinition,
       `${JSON.stringify(
         {
-          schema: "assay.donor-adoption/v1",
+          schema: "assay.source-adoption-definition/v1",
           id: "smoke-adoption",
           source: { alias: "adoption-source", observation },
           targets: [{ id: "product", system: "product" }],
