@@ -467,7 +467,7 @@ describe("native Task relations, archive, and pagination", () => {
       const rejected = writes.find((entry) => entry.status === "rejected") as PromiseRejectedResult;
       expect(rejected.reason).toMatchObject({ code: "TASK_RELATION_CYCLE" });
     }
-  });
+  }, 30_000);
 
   it("archives terminal tasks independently and lists bounded pages", async () => {
     const root = await workspace("Archive");

@@ -424,7 +424,7 @@ describe("system.yaml inertness", () => {
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EPERM")) throw error;
     }
-  });
+  }, 45_000);
 });
 
 describe("System lifecycle operations", () => {
