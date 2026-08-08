@@ -16,6 +16,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { MANAGED_DIR, MANAGED_FILES_FILE, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import {
   type WorkspaceArea,
   defaultStandaloneLayout,
@@ -684,8 +685,8 @@ async function nearestExistingAncestor(target: string): Promise<string> {
 
 /**
  * Require a directory whose own entry and resolved ancestry are ordinary.
- * `lstat` rejects a symlink/junction at the named path; `realpath` catches an
- * earlier reparse point that would redirect later conversion writes/removals.
+ * The shared identity-safe resolver rejects a symlink/junction or earlier
+ * reparse point without mistaking a Windows DOS short name for a redirect.
  */
 async function assertRealDirectory(
   target: string,
@@ -708,12 +709,7 @@ async function assertRealDirectory(
     );
   }
 
-  const resolved = path.normalize(path.resolve(target));
-  const resolvedRealPath = path.normalize(await realpath(target));
-  const comparableResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
-  const comparableReal =
-    process.platform === "win32" ? resolvedRealPath.toLowerCase() : resolvedRealPath;
-  if (comparableResolved !== comparableReal) {
+  if (!(await identitySafeRealpath(target))) {
     throw new FrameworkError(
       `${label} resolves through a symlink, junction, or reparse point: ${target}`,
     );
@@ -738,12 +734,7 @@ async function assertRealFile(
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new FrameworkError(`${label} must be a regular file, not a redirect: ${target}`);
   }
-  const resolved = path.normalize(path.resolve(target));
-  const resolvedRealPath = path.normalize(await realpath(target));
-  const comparableResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
-  const comparableReal =
-    process.platform === "win32" ? resolvedRealPath.toLowerCase() : resolvedRealPath;
-  if (comparableResolved !== comparableReal) {
+  if (!(await identitySafeRealpath(target))) {
     throw new FrameworkError(`${label} resolves through a redirect: ${target}`);
   }
   return true;

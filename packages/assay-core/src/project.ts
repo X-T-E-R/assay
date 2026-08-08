@@ -1,11 +1,12 @@
 import type { Stats } from "node:fs";
-import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { parse, stringify } from "yaml";
 
 import { MANAGED_DIR, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import { workspaceWorkRelativePath } from "./layout.js";
 import { projectReadableId } from "./readable-id.js";
 import { type NativeProject, type WorkspaceLayout, nativeProjectSchema } from "./schemas/index.js";
@@ -278,9 +279,7 @@ async function assertOrdinaryDirectory(
       `${label} must be a real directory, not a symlink or junction: ${target}`,
     );
   }
-  const resolved = comparable(path.resolve(target));
-  const actual = comparable(await realpath(target));
-  if (resolved !== actual) {
+  if (!(await identitySafeRealpath(target))) {
     throw new FrameworkError(
       `${label} resolves through a symlink, junction, or reparse point: ${target}`,
     );
@@ -299,14 +298,9 @@ async function assertOrdinaryFile(target: string, label: string): Promise<void> 
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new FrameworkError(`${label} must be a regular file, not a redirect: ${target}`);
   }
-  if (comparable(path.resolve(target)) !== comparable(await realpath(target))) {
+  if (!(await identitySafeRealpath(target))) {
     throw new FrameworkError(`${label} resolves through a redirect: ${target}`);
   }
-}
-
-function comparable(value: string): string {
-  const normalized = path.normalize(value);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 async function nearestExistingAncestor(target: string): Promise<string> {

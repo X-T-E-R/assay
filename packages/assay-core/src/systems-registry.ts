@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -16,6 +16,7 @@ import {
   SystemsRegistryCutoverRequiredError,
 } from "./errors.js";
 import { appendEvent } from "./events.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import { loadManifest } from "./manifest.js";
 import {
   type SystemRecord,
@@ -226,8 +227,8 @@ async function assertLocatorBoundary(
   locator: NormalizedLocator,
 ): Promise<void> {
   const resolvedRoot = path.resolve(root);
-  const rootReal = await realpath(resolvedRoot);
-  if (!samePath(rootReal, resolvedRoot)) {
+  const rootIdentity = await identitySafeRealpath(resolvedRoot);
+  if (!rootIdentity) {
     throw new FrameworkError(`workspace root resolves through a redirect: ${root}`);
   }
   const ancestor = await nearestExistingAncestor(locator.absolute);
@@ -242,14 +243,17 @@ async function assertLocatorBoundary(
       `system '${selector}' locator is not a directory: ${locator.recorded}`,
     );
   }
-  const ancestorReal = await realpath(ancestor);
-  if (!samePath(ancestorReal, ancestor)) {
+  const ancestorIdentity = await identitySafeRealpath(ancestor);
+  if (!ancestorIdentity) {
     throw new FrameworkError(
       `system '${selector}' locator resolves through a redirect: ${locator.recorded}`,
     );
   }
-  const canonicalTarget = path.resolve(ancestorReal, path.relative(ancestor, locator.absolute));
-  const canonicalInside = isContained(rootReal, canonicalTarget);
+  const canonicalTarget = path.resolve(
+    ancestorIdentity.canonical,
+    path.relative(ancestor, locator.absolute),
+  );
+  const canonicalInside = isContained(rootIdentity.canonical, canonicalTarget);
   if (locator.external ? canonicalInside : !canonicalInside) {
     throw new FrameworkError(
       `system '${selector}' locator crosses its ${locator.external ? "external" : "workspace"} boundary: ${locator.recorded}`,
@@ -391,7 +395,7 @@ async function readRegistryAuthority(file: string, allowTransactionLink = false)
   ) {
     throw new FrameworkError(`systems registry must be an ordinary, unshared file: ${file}`);
   }
-  if (!samePath(await realpath(file), file)) {
+  if (!(await identitySafeRealpath(file))) {
     throw new FrameworkError(`systems registry must not resolve through a redirect: ${file}`);
   }
   const handle = await open(file, "r");

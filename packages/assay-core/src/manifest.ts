@@ -1,4 +1,4 @@
-import { lstat, open, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, open, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -8,6 +8,7 @@ import {
 } from "./authority-file-write.js";
 import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
 import { InvalidManifestError, WorkspaceCutoverRequiredError } from "./errors.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import { defaultStandaloneLayout } from "./layout.js";
 import {
   type FrameworkManifest,
@@ -118,7 +119,7 @@ async function readManifestAuthority(file: string): Promise<string> {
   if (!namedBefore.isFile() || namedBefore.isSymbolicLink() || namedBefore.nlink !== 1) {
     throw new InvalidManifestError(file, "Framework manifest must be an ordinary, unshared file.");
   }
-  if (!samePath(await realpath(file), file)) {
+  if (!(await identitySafeRealpath(file))) {
     throw new InvalidManifestError(file, "Framework manifest must not resolve through a redirect.");
   }
   const handle = await open(file, "r");
@@ -141,12 +142,6 @@ async function readManifestAuthority(file: string): Promise<string> {
   } finally {
     await handle.close();
   }
-}
-
-function samePath(left: string, right: string): boolean {
-  const one = path.normalize(path.resolve(left));
-  const two = path.normalize(path.resolve(right));
-  return process.platform === "win32" ? one.toLowerCase() === two.toLowerCase() : one === two;
 }
 
 function validateExistingManifestBytes(bytes: Buffer, file: string): void {

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Dirent, Stats } from "node:fs";
-import { lstat, mkdir, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { parse, stringify } from "yaml";
 
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import {
   defaultStandaloneLayout,
   resolveWorkspaceLayout,
@@ -512,10 +513,7 @@ async function assertRealDirectory(root: string, target: string): Promise<void> 
       `roadmap path is not a real directory: ${target}`,
     );
   }
-  const actual = await realpath(target);
-  const normalize = (value: string) =>
-    process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
-  if (normalize(actual) !== normalize(target)) {
+  if (!(await identitySafeRealpath(target))) {
     throw new RoadmapError(
       "ROADMAP_STORAGE_BOUNDARY",
       `roadmap path crosses a reparse boundary: ${target}`,

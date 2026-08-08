@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { safelyWriteAuthorityFile } from "./authority-file-write.js";
 import { CURRENT_VERSION, LAYOUT_VERSION, MANIFEST_FILE } from "./constants.js";
 import { FrameworkError, FrameworkNotFoundError, WorkspaceCutoverRequiredError } from "./errors.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import { projectFileRelativePath } from "./project.js";
 import {
   type FrameworkManifest,
@@ -102,11 +103,11 @@ async function canonicalSafeWorkspacePath(rootInput: string): Promise<string> {
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new FrameworkError(`workspace rebind source is redirected: ${lexical}`);
   }
-  const canonical = path.normalize(await realpath(lexical));
-  if (!samePath(canonical, lexical)) {
+  const safePath = await identitySafeRealpath(lexical);
+  if (!safePath) {
     throw new FrameworkError(`workspace rebind source is redirected: ${lexical}`);
   }
-  return canonical;
+  return safePath.canonical;
 }
 
 export async function discoverWorkspaces(
@@ -156,7 +157,7 @@ export async function listWorkspaces(
         listed.push({ file, record, status: "invalid", message: "Workspace path is redirected" });
         continue;
       }
-      if (!samePath(await realpath(record.path), record.path)) {
+      if (!(await identitySafeRealpath(record.path))) {
         listed.push({
           file,
           record,
@@ -245,7 +246,7 @@ async function authorityRootForIndex(indexRoot: string): Promise<string> {
       if (!info.isDirectory() || info.isSymbolicLink()) {
         throw new FrameworkError(`workspace index ancestor is redirected: ${cursor}`);
       }
-      if (!samePath(await realpath(cursor), cursor)) {
+      if (!(await identitySafeRealpath(cursor))) {
         throw new FrameworkError(`workspace index ancestor is not canonical: ${cursor}`);
       }
       return cursor;
@@ -369,18 +370,14 @@ async function readWorkspaceAuthority(rootInput: string, relative: string): Prom
     throw new FrameworkError(`workspace authority escapes root: ${relative}`);
   }
   const rootInfo = await lstat(root);
-  if (
-    !rootInfo.isDirectory() ||
-    rootInfo.isSymbolicLink() ||
-    !samePath(await realpath(root), root)
-  ) {
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || !(await identitySafeRealpath(root))) {
     throw new FrameworkError(`workspace root is redirected: ${root}`);
   }
   let cursor = root;
   for (const segment of path.dirname(rel).split(path.sep).filter(Boolean)) {
     cursor = path.join(cursor, segment);
     const info = await lstat(cursor);
-    if (!info.isDirectory() || info.isSymbolicLink() || !samePath(await realpath(cursor), cursor)) {
+    if (!info.isDirectory() || info.isSymbolicLink() || !(await identitySafeRealpath(cursor))) {
       throw new FrameworkError(`workspace authority ancestor is redirected: ${cursor}`);
     }
   }
@@ -390,7 +387,7 @@ async function readWorkspaceAuthority(rootInput: string, relative: string): Prom
     before.isSymbolicLink() ||
     before.nlink !== 1 ||
     before.size > 1024 * 1024 ||
-    !samePath(await realpath(target), target)
+    !(await identitySafeRealpath(target))
   ) {
     throw new FrameworkError(`workspace authority file is unsafe: ${target}`);
   }

@@ -79,7 +79,60 @@ async function customTemplate(parent: string, content = "custom output\n"): Prom
   return file;
 }
 
+async function windowsShortPath(target: string): Promise<string | null> {
+  if (process.platform !== "win32") return null;
+  const script = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class AssayPathNative {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern uint GetShortPathName(string longPath, StringBuilder shortPath, uint size);
+}
+'@
+$buffer = New-Object System.Text.StringBuilder 32768
+$length = [AssayPathNative]::GetShortPathName($args[0], $buffer, $buffer.Capacity)
+if ($length -eq 0) { exit 2 }
+$buffer.ToString()
+`;
+  try {
+    const { stdout } = await execFileAsync("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script,
+      target,
+    ]);
+    const candidate = stdout.trim();
+    return candidate === "" ? null : candidate;
+  } catch {
+    return null;
+  }
+}
+
 describe("0.13 control-plane cleanup", () => {
+  it("accepts a Windows DOS short-name workspace alias without accepting redirects", async () => {
+    if (process.platform !== "win32") return;
+    const temp = path.resolve(tmpdir());
+    const canonicalTemp = await import("node:fs/promises").then(({ realpath }) => realpath(temp));
+    const shortTemp =
+      temp.toLowerCase() !== canonicalTemp.toLowerCase() ? temp : await windowsShortPath(temp);
+    if (!shortTemp || !/~[0-9]+(?:\\|$)/i.test(shortTemp)) return;
+
+    const parent = await mkdtemp(path.join(shortTemp, "assay-short-path-"));
+    roots.push(parent);
+    const descriptor = await customTemplate(parent);
+    const root = path.join(parent, "workspace");
+    await initFramework({ target: root, name: "Short Path", template: descriptor });
+
+    await expect(loadManifest(root)).resolves.toMatchObject({
+      framework_version: "0.13.0",
+      layout: { version: 8 },
+    });
+    await expect(checkFramework({ root })).resolves.toMatchObject({ ok: true });
+  });
+
   it("exposes exactly three built-ins and requires an explicit strict YAML path for custom templates", async () => {
     expect((await listAvailableTemplates()).map((entry) => entry.name)).toEqual([
       "study",

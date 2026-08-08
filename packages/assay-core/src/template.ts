@@ -6,6 +6,7 @@ import { parse } from "yaml";
 
 import { MANAGED_DIR } from "./constants.js";
 import { FrameworkError } from "./errors.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 
 export type BuiltinTemplateName = "study" | "solve" | "explore";
 export type TemplateSelection = BuiltinTemplateName | string;
@@ -215,12 +216,23 @@ export async function assertTemplateWriteBoundary(
   paths: readonly string[],
 ): Promise<void> {
   const root = path.resolve(rootInput);
-  const canonicalRoot = await realpath(await nearestExistingAncestor(root));
+  const rootAncestor = await nearestExistingAncestor(root);
+  const rootIdentity = await identitySafeRealpath(rootAncestor);
+  if (!rootIdentity) {
+    throw templateError(`template output boundary crosses a reparse point: ${rootAncestor}`);
+  }
+  const canonicalRoot = rootIdentity.canonical;
   for (const relative of paths) {
     assertScaffoldPath(relative, "template output");
     const target = path.join(root, relative);
     const existingAncestor = await nearestExistingAncestor(target);
-    const canonicalAncestor = await realpath(existingAncestor);
+    const ancestorIdentity = await identitySafeRealpath(existingAncestor);
+    if (!ancestorIdentity) {
+      throw templateError(
+        `template output boundary contains a symlink or reparse point: ${existingAncestor}`,
+      );
+    }
+    const canonicalAncestor = ancestorIdentity.canonical;
     if (!isContained(canonicalRoot, canonicalAncestor)) {
       throw templateError(
         `template output boundary is redirected outside the workspace: ${relative}`,
@@ -333,8 +345,7 @@ async function assertOrdinaryFile(file: string, label: string): Promise<void> {
   }
   if (!info.isFile() || info.isSymbolicLink())
     throw templateError(`${label} must be an ordinary file: ${file}`);
-  const canonical = await realpath(file);
-  if (path.resolve(canonical) !== path.resolve(file)) {
+  if (!(await identitySafeRealpath(file))) {
     throw templateError(`${label} must not cross a reparse point: ${file}`);
   }
 }

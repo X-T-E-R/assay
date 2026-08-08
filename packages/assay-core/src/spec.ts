@@ -1,21 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Dirent, Stats } from "node:fs";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  rmdir,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { parse, stringify } from "yaml";
 
 import { FrameworkError } from "./errors.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import {
   defaultStandaloneLayout,
   resolveWorkspaceLayout,
@@ -589,11 +580,7 @@ function pathKey(value: string): string {
 async function assertRealDirectory(root: string, target: string): Promise<void> {
   await assertTaskStorageBoundary(root, target);
   const info = await lstat(target);
-  if (
-    !info.isDirectory() ||
-    info.isSymbolicLink() ||
-    pathKey(await realpath(target)) !== pathKey(target)
-  ) {
+  if (!info.isDirectory() || info.isSymbolicLink() || !(await identitySafeRealpath(target))) {
     throw new SpecError("SPEC_STORAGE_BOUNDARY", `spec path is not a real directory: ${target}`);
   }
 }
@@ -627,11 +614,7 @@ async function readSnapshot(file: string, rootBoundary?: string): Promise<FileSn
   if (rootBoundary) await assertTaskStorageBoundary(rootBoundary, file);
   const resolved = path.resolve(file);
   const info = await lstat(resolved);
-  if (
-    !info.isFile() ||
-    info.isSymbolicLink() ||
-    pathKey(await realpath(resolved)) !== pathKey(resolved)
-  ) {
+  if (!info.isFile() || info.isSymbolicLink() || !(await identitySafeRealpath(resolved))) {
     throw new SpecError("SPEC_STORAGE_BOUNDARY", `spec source is not a real regular file: ${file}`);
   }
   if (info.size > MAX_FILE_BYTES) {

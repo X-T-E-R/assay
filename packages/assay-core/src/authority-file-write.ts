@@ -1,21 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  link,
-  lstat,
-  mkdir,
-  open,
-  opendir,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  rmdir,
-} from "node:fs/promises";
+import { link, lstat, mkdir, open, opendir, readFile, rename, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 
 import { z } from "zod";
 
 import { AuthorityRepairRequiredError, AuthorityWriteConflictError } from "./errors.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import { stringifySortedJson } from "./serialization.js";
 
 export type AuthorityWriteProbePhase =
@@ -192,11 +182,11 @@ async function realDirectory(
   if (!info || !info.isDirectory() || info.isSymbolicLink()) {
     throw error(`authority parent is not a real directory or is a redirect: ${directory}`);
   }
-  const canonical = await realpath(directory);
-  if (pathKey(canonical) !== pathKey(directory)) {
+  const safePath = await identitySafeRealpath(directory);
+  if (!safePath) {
     throw error(`authority parent resolves through a redirect: ${directory}`);
   }
-  return { lexical: directory, canonical, ...identity(info) };
+  return { lexical: directory, canonical: safePath.canonical, ...identity(info) };
 }
 
 async function prepareParent(
@@ -256,13 +246,13 @@ async function transactionSnapshot(directory: string): Promise<TransactionSnapsh
       `authority transaction directory is not a real directory: ${directory}`,
     );
   }
-  const canonical = await realpath(directory);
-  if (pathKey(canonical) !== pathKey(directory)) {
+  const safePath = await identitySafeRealpath(directory);
+  if (!safePath) {
     throw new AuthorityRepairRequiredError(
       `authority transaction directory is redirected: ${directory}`,
     );
   }
-  return { lexical: directory, canonical, ...identity(info) };
+  return { lexical: directory, canonical: safePath.canonical, ...identity(info) };
 }
 
 async function assertTransaction(
@@ -315,7 +305,7 @@ async function snapshotFile(file: string, allowHardlink = false): Promise<FileSn
   ) {
     throw new AuthorityRepairRequiredError(`authority transaction found an unsafe file: ${file}`);
   }
-  if (pathKey(await realpath(file)) !== pathKey(file)) {
+  if (!(await identitySafeRealpath(file))) {
     throw new AuthorityRepairRequiredError(
       `authority transaction found a redirected file: ${file}`,
     );
@@ -411,7 +401,7 @@ async function readJsonReceipt<T>(file: string, schema: z.ZodType<T>): Promise<T
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
     throw new AuthorityRepairRequiredError(`authority transaction receipt is unsafe: ${file}`);
   }
-  if (pathKey(await realpath(file)) !== pathKey(file)) {
+  if (!(await identitySafeRealpath(file))) {
     throw new AuthorityRepairRequiredError(`authority transaction receipt is redirected: ${file}`);
   }
   if (info.size > MAX_RECEIPT_BYTES) {

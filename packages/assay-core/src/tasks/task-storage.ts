@@ -1,18 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
-import {
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  rmdir,
-} from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
+
+import { identitySafeRealpath } from "../filesystem-boundary.js";
 
 export type TaskStorageProbePhase = "after-temp-sync" | "before-commit";
 type TaskStorageProbe = (phase: TaskStorageProbePhase, target: string) => void | Promise<void>;
@@ -126,8 +118,7 @@ export async function assertTaskStorageBoundary(root: string, target: string): P
           "task storage crosses a symbolic link or junction",
         );
       }
-      const canonical = await realpath(current);
-      if (pathKey(canonical) !== pathKey(current)) {
+      if (!(await identitySafeRealpath(current))) {
         throw new TaskStorageBoundaryError(current, "task storage crosses a reparse boundary");
       }
     } catch (error) {

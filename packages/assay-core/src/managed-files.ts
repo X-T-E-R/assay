@@ -1,9 +1,10 @@
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 
 import { recoverAuthorityFile, safelyWriteAuthorityFile } from "./authority-file-write.js";
 import { MANAGED_FILES_FILE } from "./constants.js";
 import { InvalidManifestError } from "./errors.js";
+import { identitySafeRealpath } from "./filesystem-boundary.js";
 import { computeHash } from "./hashing.js";
 import {
   type ManagedFileRecord,
@@ -137,7 +138,7 @@ async function readReceiptAuthority(file: string): Promise<string> {
   if (!namedBefore.isFile() || namedBefore.isSymbolicLink() || namedBefore.nlink !== 1) {
     throw invalid(file, "Managed receipt must be an ordinary, unshared file.");
   }
-  if (!samePath(await realpath(file), file)) {
+  if (!(await identitySafeRealpath(file))) {
     throw invalid(file, "Managed receipt must not resolve through a redirect.");
   }
   const handle = await open(file, "r");
@@ -160,12 +161,6 @@ async function readReceiptAuthority(file: string): Promise<string> {
   } finally {
     await handle.close();
   }
-}
-
-function samePath(left: string, right: string): boolean {
-  const one = path.normalize(path.resolve(left));
-  const two = path.normalize(path.resolve(right));
-  return process.platform === "win32" ? one.toLowerCase() === two.toLowerCase() : one === two;
 }
 
 function invalid(file: string, message: string, cause?: unknown): InvalidManifestError {
