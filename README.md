@@ -7,7 +7,7 @@ repository pins pnpm 11.3.0 through `packageManager`.
 
 ## 0.13 workspace contract
 
-Assay 0.13 accepts only `0.13.0+s4+l8+r3`. Older or malformed workspace or System-registry envelopes fail closed and require an external exact-pair cutover tool.
+Assay 0.13 accepts only `0.13.0+s4+l8+r3`. Older or malformed workspace or System-registry envelopes fail closed. Compatible updates stay native; when Assay reports a cutover locator, follow [Major workspace cutovers](docs/legacy-cutover.md).
 
 - `.assay/manifest.json` schema 4 stores only the literal framework version and exact layout 8 block. `layout.entries` contains only bounded, expanded one-shot Template paths; deterministic native/core paths are resolved rather than duplicated.
 - `project/project.yaml` (or `.assay/project/project.yaml` in overlay mode) is the single native Project id/name authority.

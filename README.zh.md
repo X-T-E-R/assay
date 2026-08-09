@@ -7,7 +7,7 @@ Assay 是一个 local-first 证据工作台，管理 Project、Source、Analysis
 
 ## 0.13 工作区契约
 
-Assay 0.13 只接受 `0.13.0+s4+l8+r3`。旧 workspace/System registry envelope 或畸形 authority 会 fail closed，必须交给外部 exact-pair cutover 工具。
+Assay 0.13 只接受 `0.13.0+s4+l8+r3`。旧 workspace/System registry envelope 或畸形 authority 会 fail closed。兼容升级仍使用 Assay 原生路径；Assay 输出 cutover locator 时，请按[工作区跨边界 cutover](docs/legacy-cutover.md)处理。
 
 - `.assay/manifest.json` schema 4 只保存固定 framework version 与精确 layout 8；`layout.entries` 仅含一次性 Template 展开后的有界路径，不重复 deterministic native/core path。
 - `project/project.yaml`（overlay 中是 `.assay/project/project.yaml`）是唯一 Project id/name authority。

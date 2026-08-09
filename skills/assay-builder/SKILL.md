@@ -216,6 +216,8 @@ Never hand-edit `.assay/systems-registry.json`. For the full registry schema, vc
 
 Always run `update --dry-run` before applying. User-modified files are skipped by default; use `--create-new` for sidecar copies or `--force` only with explicit user consent. For change classification rules, conflict flags, and backup behavior, read `references/update-policy.md`.
 
+If Assay reports a cutover error with an `assay-cutover:<observed>-><required>` locator, stop normal Assay mutation and follow [the canonical major-cutover handoff](../../docs/legacy-cutover.md).
+
 ## Workflow
 
 1. Inspect the target folder and any supplied external repository.

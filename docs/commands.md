@@ -34,7 +34,7 @@ assay workspace list [--json]
 assay workspace forget <path|hash|filename> [--json]
 ```
 
-Only these commands write `~/.assay/workspaces` (override `ASSAY_WORKSPACES_ROOT`). `list` reports `current`, `missing`, `cutover_required`, or `invalid` without repairing or rewriting records.
+Only these commands write `~/.assay/workspaces` (override `ASSAY_WORKSPACES_ROOT`). `list` reports `current`, `missing`, `cutover_required`, or `invalid` without repairing or rewriting records. If it reports `cutover_required`, or another command emits an `assay-cutover:<observed>-><required>` locator, stop normal Assay mutation and follow [Major workspace cutovers](legacy-cutover.md).
 
 ## Native product objects
 
