@@ -9,7 +9,7 @@ Manifest schema 4 records one-shot Template expansion under `layout.entries`, no
   manifest.json
   managed-files.json
   events/
-  backups/
+  backups/                     # compatibility storage; ordinary update adds nothing
   systems-registry.json        # created when Systems are registered
 project/
   project.yaml                 # unique Project id/name authority
@@ -31,3 +31,5 @@ Each `layout.entries` item is `{ path, kind: directory|file, purpose }`. Paths a
 ## Managed receipt
 
 `.assay/managed-files.json` schema 1 records only fixed core files with `path`, exactly one of `asset` or `generator`, `baseline_hash`, `protected`, and `executable`. It is a separate authority file with the same fail-closed transaction boundary as the manifest. Template output is user-owned and excluded.
+
+Managed fixed-core and AGENTS writes use transient recoverable authority transactions. A successful write, or recovery of an interrupted write, removes its transaction stage and rollback artifact rather than retaining file history. `.assay/backups/` remains in the layout for compatibility with existing rollback copies and `.gitkeep`; ordinary `assay update` neither creates new entries nor changes existing ones.

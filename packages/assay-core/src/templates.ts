@@ -112,7 +112,7 @@ export function rootReadme(project: string): string {
 
     | Path | Purpose |
     | --- | --- |
-    | \`.assay/\` | Runtime metadata: manifest, managed receipt, events, backups |
+    | \`.assay/\` | Runtime metadata: manifest, managed receipt, events, and compatibility backup storage |
     | \`project/\` | Native Project identity, charter, and Roadmap items |
     | \`systems/\` | Registered active systems and local implementations |
     | \`knowledge/\` | Accepted reusable knowledge |
@@ -146,7 +146,7 @@ export function frameworkReadme(): string {
     - \`systems-registry.json\`: registered systems and the current primary system after \`assay system register\`.
     - \`events/\`: JSONL event ledger.
 
-    - \`backups/\`: timestamped backups before managed updates.
+    - \`backups/\`: compatibility storage for existing rollback copies. Ordinary \`assay update\` leaves existing entries untouched and does not add retained backups.
 
     Current Assay release is ${CURRENT_VERSION}; layout release is ${LAYOUT_VERSION}.
     `);

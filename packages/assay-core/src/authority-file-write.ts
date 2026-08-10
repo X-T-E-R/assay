@@ -51,6 +51,7 @@ interface FileSnapshot extends NodeIdentity {
   readonly digest: string;
   readonly bytes: Buffer;
   readonly nlink: number;
+  readonly mode: number;
 }
 
 interface ParentSnapshot extends NodeIdentity {
@@ -128,6 +129,15 @@ export interface SafeAuthorityWriteOptions {
   readonly validateExisting: (bytes: Buffer | null) => void | Promise<void>;
   readonly error: (message: string, cause?: unknown) => Error;
   readonly probe?: AuthorityWriteProbe;
+  /**
+   * Opt-in behavior for ordinary text files. Existing targets retain their
+   * permission bits; new targets use createMode subject to the process umask.
+   * Authority JSON callers retain the protocol's 0600 default when omitted.
+   */
+  readonly textFileMode?: {
+    readonly preserveExisting: true;
+    readonly createMode: number;
+  };
 }
 
 export interface RecoverAuthorityFileOptions {
@@ -135,6 +145,18 @@ export interface RecoverAuthorityFileOptions {
   readonly file: string;
   readonly error: (message: string, cause?: unknown) => Error;
   readonly probe?: AuthorityWriteProbe;
+}
+
+export type AuthorityRecoveryDisposition =
+  | "none"
+  | "replacement-installed"
+  | "previous-retained"
+  | "concurrent-winner-retained";
+
+export interface AuthorityRecoveryResult {
+  readonly disposition: AuthorityRecoveryDisposition;
+  readonly recovered: boolean;
+  readonly replacementInstalled: boolean;
 }
 
 const activeTokens = new Set<string>();
@@ -199,7 +221,7 @@ async function prepareParent(
   const file = path.resolve(fileValue);
   const parent = path.dirname(file);
   const relative = path.relative(root, parent);
-  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+  if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
     throw error(`authority path escapes its workspace: ${file}`);
   }
   if (!(await lstatOrNull(root))) {
@@ -352,7 +374,13 @@ async function snapshotFile(file: string, allowHardlink = false): Promise<FileSn
         `authority file identity changed while reading: ${file}`,
       );
     }
-    return { ...identity(opened), digest: digest(bytes), bytes, nlink: opened.nlink };
+    return {
+      ...identity(opened),
+      digest: digest(bytes),
+      bytes,
+      nlink: opened.nlink,
+      mode: opened.mode,
+    };
   } finally {
     await handle.close();
   }
@@ -764,9 +792,11 @@ async function recoverExistingTransaction(
   parent: ParentSnapshot,
   file: string,
   probe?: AuthorityWriteProbe,
-): Promise<boolean> {
+): Promise<AuthorityRecoveryResult> {
   const initialPaths = pathsFor(parent, file);
-  if (!(await lstatOrNull(initialPaths.directory))) return false;
+  if (!(await lstatOrNull(initialPaths.directory))) {
+    return { disposition: "none", recovered: false, replacementInstalled: false };
+  }
   const transaction = await transactionSnapshot(initialPaths.directory);
   await assertTransaction(parent, transaction);
   const owner = await readJsonReceipt(initialPaths.owner, ownerSchema);
@@ -830,7 +860,7 @@ async function recoverExistingTransaction(
       await writeDurableNewJson(paths.staged, stagedSchema.parse(stagedReceipt));
     } else if (matches(current, owner.expected) && !rollback) {
       await cleanupTransactionDirectory(parent, transaction, paths, owner);
-      return true;
+      return { disposition: "previous-retained", recovered: true, replacementInstalled: false };
     } else {
       throw new AuthorityRepairRequiredError("authority transaction lacks its governed stage");
     }
@@ -843,11 +873,15 @@ async function recoverExistingTransaction(
   if (owner.expected && !rollback && matches(current, owner.expected) && stage?.nlink === 1) {
     await removeOwnedFile(parent, transaction, paths.stage, stage);
     await cleanupTransactionDirectory(parent, transaction, paths, owner);
-    return true;
+    return { disposition: "previous-retained", recovered: true, replacementInstalled: false };
   }
   if (!owner.expected && !rollback && !current && stage?.nlink === 1) {
     await finishGovernedTransaction(parent, transaction, file, owner, paths, stagedReceipt);
-    return true;
+    return {
+      disposition: "replacement-installed",
+      recovered: true,
+      replacementInstalled: true,
+    };
   }
   if (
     !owner.expected &&
@@ -858,11 +892,19 @@ async function recoverExistingTransaction(
   ) {
     await removeOwnedFile(parent, transaction, paths.stage, stage);
     await cleanupTransactionDirectory(parent, transaction, paths, owner);
-    return true;
+    return {
+      disposition: "concurrent-winner-retained",
+      recovered: true,
+      replacementInstalled: false,
+    };
   }
   if (matches(current, replacement) || rollback) {
     await finishGovernedTransaction(parent, transaction, file, owner, paths, stagedReceipt);
-    return true;
+    return {
+      disposition: "replacement-installed",
+      recovered: true,
+      replacementInstalled: true,
+    };
   }
   throw new AuthorityRepairRequiredError(
     `authority transaction requires repair before reading ${file}`,
@@ -870,8 +912,14 @@ async function recoverExistingTransaction(
 }
 
 export async function recoverAuthorityFile(options: RecoverAuthorityFileOptions): Promise<boolean> {
+  return (await recoverAuthorityFileWithResult(options)).recovered;
+}
+
+export async function recoverAuthorityFileWithResult(
+  options: RecoverAuthorityFileOptions,
+): Promise<AuthorityRecoveryResult> {
   const parent = await prepareParent(options.root, options.file, options.error, false);
-  if (!parent) return false;
+  if (!parent) return { disposition: "none", recovered: false, replacementInstalled: false };
   return recoverExistingTransaction(parent, path.resolve(options.file), options.probe);
 }
 
@@ -915,6 +963,11 @@ export async function safelyWriteAuthorityFile(options: SafeAuthorityWriteOption
   const current = await snapshotFile(file);
   if (!matches(current, expected)) {
     throw new AuthorityWriteConflictError(`authority file changed after validation: ${file}`);
+  }
+
+  const createMode = options.textFileMode?.createMode ?? 0o600;
+  if (!Number.isInteger(createMode) || createMode < 0 || createMode > 0o7777) {
+    throw options.error(`authority create mode is invalid: ${createMode}`);
   }
 
   const token = randomUUID();
@@ -962,10 +1015,13 @@ export async function safelyWriteAuthorityFile(options: SafeAuthorityWriteOption
       rollback: paths.rollback,
     });
     await assertTransaction(parent, transaction);
-    const handle = await open(paths.stage, "wx", 0o600);
+    const handle = await open(paths.stage, "wx", createMode);
     let stagedReceipt: StagedReceipt;
     try {
       await handle.writeFile(options.content, "utf8");
+      if (options.textFileMode?.preserveExisting && expected) {
+        await handle.chmod(expected.mode & 0o7777);
+      }
       await handle.sync();
       const stageInfo = await handle.stat();
       stagedReceipt = {

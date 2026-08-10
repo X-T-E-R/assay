@@ -13,7 +13,7 @@ human-facing workspace
 
 ## Project Infrastructure, Not a Prompt Pack
 
-A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. Assay therefore gives each managed workspace a `.assay/` directory that stores the manifest, the managed-file receipt, events, backups, and native operational state.
+A durable workflow system needs more than instructions. It needs files that can be checked, updated, and reviewed. Assay therefore gives each managed workspace a `.assay/` directory that stores the manifest, the managed-file receipt, events, native operational state, and compatibility storage for existing backups. Ordinary update does not add retained rollback copies there.
 
 That managed layer sits beside the visible workspace:
 
@@ -45,6 +45,8 @@ That enables update behavior such as:
 - auto-update files that still match their managed-receipt baseline hash;
 - preserve user-modified managed files by default;
 - respect user-deleted managed files;
+- apply admitted managed and AGENTS changes with recoverable compare-and-swap transactions, cleaning transient rollback artifacts after success or recovery;
+- refuse an occupied exact `.new` sidecar before any update write rather than overwrite or suffix it;
 - keep user artifacts outside template overwrite logic;
 - fail closed at a workspace-contract cutover instead of rewriting an unsupported layout.
 

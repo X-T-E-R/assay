@@ -33,6 +33,10 @@ import {
   loadSystemsRegistry,
   loadTemplate,
   registerSystem,
+  saveManagedFiles,
+  setAssayAgentsWriteProbeForTests,
+  setManagedFilesWriteProbeForTests,
+  setUpdateWriteProbeForTests,
   trackWorkspace,
   workspaceRecordFilename,
 } from "../src/index.js";
@@ -57,6 +61,9 @@ async function tempRoot(name: string): Promise<string> {
 }
 
 afterEach(async () => {
+  setAssayAgentsWriteProbeForTests(undefined);
+  setManagedFilesWriteProbeForTests(undefined);
+  setUpdateWriteProbeForTests(undefined);
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
@@ -319,6 +326,282 @@ describe("0.13 control-plane cleanup", () => {
     expect(result.report.skipped_files).toEqual(
       expect.arrayContaining(["README.md", "systems/README.md"]),
     );
+  });
+
+  it("updates managed files without retained backups and preserves existing file modes", async () => {
+    const root = await tempRoot("zero-backup");
+    await initFramework({ target: root, name: "Zero Backup", agents: false });
+    const target = path.join(root, ".assay", "README.md");
+    const targetMode = (await stat(target)).mode & 0o7777;
+    await writeFile(target, "user edit\n", "utf8");
+
+    const backups = path.join(root, ".assay", "backups");
+    const sentinel = path.join(backups, "existing", "nested", "sentinel.bin");
+    await mkdir(path.dirname(sentinel), { recursive: true });
+    await writeFile(sentinel, Buffer.from([0, 1, 2, 255]));
+    const backupEntriesBefore = (await readdir(backups, { recursive: true })).sort();
+    const sentinelBefore = await readFile(sentinel);
+
+    const result = await applyUpdate({ root, action: "force", now: new Date("2020-01-02") });
+
+    expect(result).not.toHaveProperty("backup");
+    expect(result.report.updated_files).toContain(".assay/README.md");
+    expect((await readdir(backups, { recursive: true })).sort()).toEqual(backupEntriesBefore);
+    expect(await readFile(sentinel)).toEqual(sentinelBefore);
+    expect((await stat(target)).mode & 0o7777).toBe(targetMode);
+    expect(await exists(path.join(root, ".assay", ".authority-README.md.txn"))).toBe(false);
+  });
+
+  it("recovers a managed-file crash window and reconciles its stale receipt on rerun", async () => {
+    const root = await tempRoot("managed-recovery");
+    await initFramework({ target: root, name: "Managed Recovery", agents: false });
+    const target = path.join(root, ".assay", "README.md");
+    const desired = await readFile(target, "utf8");
+    const oldGenerated = "old generated framework guide\n";
+    await writeFile(target, oldGenerated, "utf8");
+    const receipt = await loadManagedFiles(root);
+    await saveManagedFiles(root, {
+      ...receipt,
+      files: receipt.files.map((record) =>
+        record.path === ".assay/README.md"
+          ? {
+              ...record,
+              baseline_hash: publicCore.computeHash(oldGenerated),
+            }
+          : record,
+      ),
+    });
+
+    let crashed = false;
+    setUpdateWriteProbeForTests((phase, context) => {
+      if (!crashed && phase === "after-new-installed" && context.file === target) {
+        crashed = true;
+        throw new Error("simulated managed write crash");
+      }
+    });
+    await expect(applyUpdate({ root })).rejects.toThrow("simulated managed write crash");
+    expect(await exists(path.join(root, ".assay", ".authority-README.md.txn"))).toBe(true);
+
+    setUpdateWriteProbeForTests(undefined);
+    await expect(applyUpdate({ root })).resolves.toMatchObject({ dryRun: false });
+    expect(await readFile(target, "utf8")).toBe(desired);
+    expect(await exists(path.join(root, ".assay", ".authority-README.md.txn"))).toBe(false);
+    expect(
+      (await loadManagedFiles(root)).files.find((record) => record.path === ".assay/README.md")
+        ?.baseline_hash,
+    ).toBe(publicCore.computeHash(desired));
+    const converged = await applyUpdate({ root });
+    expect(converged.report.updated_files).not.toContain(".assay/README.md");
+    expect(converged.report.updated_files).not.toContain(".assay/managed-files.json");
+  }, 30_000);
+
+  it.each(["after-stage", "after-old-moved", "after-new-installed", "before-cleanup"] as const)(
+    "recovers and retries a managed receipt write interrupted at %s",
+    async (crashPhase) => {
+      const root = await tempRoot(`managed-receipt-${crashPhase}`);
+      await initFramework({ target: root, name: "Managed Receipt", agents: false });
+      const original = await loadManagedFiles(root);
+      const next = {
+        ...original,
+        files: original.files.map((record, index) =>
+          index === 0 ? { ...record, baseline_hash: "a".repeat(64) } : record,
+        ),
+      };
+      const receipt = path.join(root, ".assay", "managed-files.json");
+      const transaction = path.join(root, ".assay", ".authority-managed-files.json.txn");
+      let crashed = false;
+      setManagedFilesWriteProbeForTests((phase, context) => {
+        if (!crashed && phase === crashPhase && context.file === receipt) {
+          crashed = true;
+          throw new Error(`simulated receipt crash at ${crashPhase}`);
+        }
+      });
+
+      await expect(saveManagedFiles(root, next)).rejects.toThrow(
+        `simulated receipt crash at ${crashPhase}`,
+      );
+      expect(await exists(transaction)).toBe(true);
+
+      setManagedFilesWriteProbeForTests(undefined);
+      await expect(saveManagedFiles(root, next)).resolves.toEqual(next);
+      await expect(loadManagedFiles(root)).resolves.toEqual(next);
+      expect(await exists(transaction)).toBe(false);
+    },
+  );
+
+  it("fails closed on a missing or corrupt managed receipt without a valid transaction", async () => {
+    const missingRoot = await tempRoot("managed-receipt-missing");
+    await initFramework({ target: missingRoot, name: "Missing Receipt", agents: false });
+    await rm(path.join(missingRoot, ".assay", "managed-files.json"));
+    await expect(loadManagedFiles(missingRoot)).rejects.toThrow("Managed receipt is missing");
+
+    const corruptRoot = await tempRoot("managed-receipt-corrupt");
+    await initFramework({ target: corruptRoot, name: "Corrupt Receipt", agents: false });
+    await writeFile(path.join(corruptRoot, ".assay", "managed-files.json"), "not json\n", "utf8");
+    await expect(loadManagedFiles(corruptRoot)).rejects.toThrow("not valid JSON");
+  });
+
+  it("recovers an AGENTS managed-block crash window on rerun", async () => {
+    const root = await tempRoot("agents-recovery");
+    await initFramework({ target: root, name: "Agents Recovery" });
+    const agents = path.join(root, "AGENTS.md");
+    await writeFile(
+      agents,
+      (await readFile(agents, "utf8")).replace(
+        "This workspace is managed by Assay.",
+        "This workspace has a stale Assay block.",
+      ),
+      "utf8",
+    );
+
+    let crashed = false;
+    setAssayAgentsWriteProbeForTests((phase, context) => {
+      if (!crashed && phase === "after-new-installed" && context.file === agents) {
+        crashed = true;
+        throw new Error("simulated AGENTS write crash");
+      }
+    });
+    await expect(applyUpdate({ root })).rejects.toThrow("simulated AGENTS write crash");
+    expect(await exists(path.join(root, ".authority-AGENTS.md.txn"))).toBe(true);
+
+    setAssayAgentsWriteProbeForTests(undefined);
+    await expect(applyUpdate({ root })).resolves.toMatchObject({ dryRun: false });
+    expect(await readFile(agents, "utf8")).toContain("This workspace is managed by Assay.");
+    expect(await exists(path.join(root, ".authority-AGENTS.md.txn"))).toBe(false);
+    const converged = await applyUpdate({ root });
+    expect(converged.report.updated_files).not.toContain("AGENTS.md");
+  });
+
+  it("refuses an existing .new sidecar before any ordinary update write", async () => {
+    const root = await tempRoot("sidecar-no-clobber");
+    await initFramework({ target: root, name: "Sidecar No Clobber" });
+    const target = path.join(root, ".assay", "README.md");
+    const agents = path.join(root, "AGENTS.md");
+    const receipt = path.join(root, ".assay", "managed-files.json");
+    const sidecar = `${target}.new`;
+    await writeFile(target, "user-owned managed edit\n", "utf8");
+    await writeFile(
+      agents,
+      (await readFile(agents, "utf8")).replace(
+        "This workspace is managed by Assay.",
+        "This workspace has a stale Assay block.",
+      ),
+      "utf8",
+    );
+    await writeFile(sidecar, "unique existing sidecar bytes\n", "utf8");
+    const before = {
+      target: await readFile(target),
+      agents: await readFile(agents),
+      receipt: await readFile(receipt),
+      sidecar: await readFile(sidecar),
+      events: (await readdir(path.join(root, ".assay", "events"))).sort(),
+      backups: (await readdir(path.join(root, ".assay", "backups"), { recursive: true })).sort(),
+    };
+
+    await expect(applyUpdate({ root, action: "create-new" })).rejects.toThrow(
+      "sidecar already exists",
+    );
+    expect(await readFile(target)).toEqual(before.target);
+    expect(await readFile(agents)).toEqual(before.agents);
+    expect(await readFile(receipt)).toEqual(before.receipt);
+    expect(await readFile(sidecar)).toEqual(before.sidecar);
+    expect((await readdir(path.join(root, ".assay", "events"))).sort()).toEqual(before.events);
+    expect(
+      (await readdir(path.join(root, ".assay", "backups"), { recursive: true })).sort(),
+    ).toEqual(before.backups);
+  });
+
+  it.each(["after-stage", "after-new-installed", "before-cleanup"] as const)(
+    "recovers its planned .new sidecar interrupted at %s and reports it on retry",
+    async (crashPhase) => {
+      const root = await tempRoot(`sidecar-recovery-${crashPhase}`);
+      await initFramework({ target: root, name: "Sidecar Recovery", agents: false });
+      const target = path.join(root, ".assay", "README.md");
+      const sidecar = `${target}.new`;
+      const desired = await readFile(target);
+      await writeFile(target, "user-owned managed edit\n", "utf8");
+      let crashed = false;
+      setUpdateWriteProbeForTests((phase, context) => {
+        if (!crashed && phase === crashPhase && context.file === sidecar) {
+          crashed = true;
+          throw new Error(`simulated sidecar crash at ${crashPhase}`);
+        }
+      });
+
+      await expect(applyUpdate({ root, action: "create-new" })).rejects.toThrow(
+        `simulated sidecar crash at ${crashPhase}`,
+      );
+      expect(await exists(path.join(root, ".assay", ".authority-README.md.new.txn"))).toBe(true);
+
+      setUpdateWriteProbeForTests(undefined);
+      const result = await applyUpdate({ root, action: "create-new" });
+      expect(result.report.new_copies).toContain(".assay/README.md.new");
+      expect(await readFile(sidecar)).toEqual(desired);
+      expect(await exists(path.join(root, ".assay", ".authority-README.md.new.txn"))).toBe(false);
+    },
+  );
+
+  it("retains and preflight-blocks an exact-byte concurrent .new sidecar winner", async () => {
+    const root = await tempRoot("sidecar-concurrent-winner");
+    await initFramework({ target: root, name: "Sidecar Concurrent Winner" });
+    const target = path.join(root, ".assay", "README.md");
+    const sidecar = `${target}.new`;
+    const desired = await readFile(target);
+    await writeFile(target, "user-owned managed edit\n", "utf8");
+    let installedWinner = false;
+    setUpdateWriteProbeForTests(async (phase, context) => {
+      if (!installedWinner && phase === "after-stage" && context.file === sidecar) {
+        installedWinner = true;
+        await writeFile(sidecar, desired);
+        throw new Error("simulated concurrent sidecar winner");
+      }
+    });
+    await expect(applyUpdate({ root, action: "create-new" })).rejects.toThrow(
+      "simulated concurrent sidecar winner",
+    );
+
+    setUpdateWriteProbeForTests(undefined);
+    const agents = path.join(root, "AGENTS.md");
+    await writeFile(
+      agents,
+      (await readFile(agents, "utf8")).replace(
+        "This workspace is managed by Assay.",
+        "This workspace has a stale Assay block.",
+      ),
+      "utf8",
+    );
+    const receipt = path.join(root, ".assay", "managed-files.json");
+    const before = {
+      target: await readFile(target),
+      agents: await readFile(agents),
+      receipt: await readFile(receipt),
+      sidecar: await readFile(sidecar),
+      events: (await readdir(path.join(root, ".assay", "events"))).sort(),
+    };
+
+    await expect(applyUpdate({ root, action: "create-new" })).rejects.toThrow(
+      "sidecar already exists",
+    );
+    expect(await readFile(target)).toEqual(before.target);
+    expect(await readFile(agents)).toEqual(before.agents);
+    expect(await readFile(receipt)).toEqual(before.receipt);
+    expect(await readFile(sidecar)).toEqual(before.sidecar);
+    expect((await readdir(path.join(root, ".assay", "events"))).sort()).toEqual(before.events);
+  });
+
+  it("does not recreate deleted native Project guide files during ordinary update", async () => {
+    const root = await tempRoot("project-guides");
+    await initFramework({ target: root, name: "Project Guides", agents: false });
+    const guides = [
+      path.join(root, "project", "README.md"),
+      path.join(root, "project", "roadmap", "README.md"),
+    ];
+    for (const guide of guides) await rm(guide);
+
+    await expect(applyUpdate({ root })).resolves.toMatchObject({ dryRun: false });
+    for (const guide of guides) {
+      await expect(stat(guide)).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 
   it("fails closed on malformed or shared managed receipts without workspace writes", async () => {

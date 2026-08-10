@@ -1,4 +1,4 @@
-import { chmod, copyFile, cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -8,8 +8,19 @@ import {
   applyAssayAgentsBlock,
   describeAssayAgentsBlockAction,
 } from "./agents.js";
+import {
+  type AuthorityWriteProbe,
+  recoverAuthorityFile,
+  recoverAuthorityFileWithResult,
+  safelyWriteAuthorityFile,
+} from "./authority-file-write.js";
 import { BACKUPS_DIR, MANAGED_FILES_FILE, MANIFEST_FILE } from "./constants.js";
-import { FrameworkError, FrameworkNotFoundError } from "./errors.js";
+import {
+  AuthorityWriteConflictError,
+  FrameworkAlreadyExistsError,
+  FrameworkError,
+  FrameworkNotFoundError,
+} from "./errors.js";
 import { appendEvent } from "./events.js";
 import { computeHash, fileHash } from "./hashing.js";
 import { resolveWorkspaceLayout } from "./layout.js";
@@ -17,7 +28,6 @@ import { loadManagedFiles, managedFileRecord, saveManagedFiles } from "./managed
 import { loadManifest } from "./manifest.js";
 import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
 import {
-  ensureNativeProject,
   loadNativeProject,
   preflightNativeProjectBoundary,
   preflightWorkspaceManifestBoundary,
@@ -58,8 +68,13 @@ export interface ApplyUpdateResult {
   readonly analysis: UpdateAnalysis;
   readonly plan: UpdatePlan;
   readonly report: OperationReport;
-  readonly backup?: BackupResult;
   readonly eventFile?: string;
+}
+
+let updateWriteProbe: AuthorityWriteProbe | undefined;
+
+export function setUpdateWriteProbeForTests(probe: AuthorityWriteProbe | undefined): void {
+  updateWriteProbe = probe;
 }
 
 function updateAgentsMode(value: boolean | undefined): AssayAgentsBlockMode {
@@ -138,12 +153,20 @@ export async function analyzeUpdate(options: AnalyzeUpdateOptions): Promise<Upda
   const layout = requireLayout(manifest);
   await preflightNativeProjectBoundary(root, layout);
   const receipt = await loadManagedFiles(root);
-  const byPath = new Map(receipt.files.map((record) => [record.path, record]));
   const desired = await desiredCore(root, manifest);
   await assertTemplateWriteBoundary(root, [
     ...desired.map((template) => template.path),
     MANAGED_FILES_FILE,
   ]);
+  for (const template of desired) {
+    const file = path.join(root, template.path);
+    await recoverAuthorityFile({
+      root,
+      file,
+      error: (message, cause) => new FrameworkError(message, cause === undefined ? {} : { cause }),
+    });
+  }
+  const byPath = new Map(receipt.files.map((record) => [record.path, record]));
   const desiredPaths = new Set(desired.map((template) => template.path));
   for (const record of receipt.files) {
     if (!desiredPaths.has(record.path)) {
@@ -234,8 +257,15 @@ function allChanges(changes: UpdateAnalysis["changes"]): UpdateChange[] {
 }
 
 export async function planUpdate(options: PlanUpdateOptions): Promise<UpdatePlan> {
-  const action = options.action ?? "skip";
   const analysis = await analyzeUpdate(options);
+  return planAnalyzedUpdate(analysis, options);
+}
+
+async function planAnalyzedUpdate(
+  analysis: UpdateAnalysis,
+  options: Pick<PlanUpdateOptions, "action" | "dryRun">,
+): Promise<UpdatePlan> {
+  const action = options.action ?? "skip";
   const receipt = await loadManagedFiles(analysis.root);
   const records = new Map(receipt.files.map((record) => [record.path, record]));
   const changes = allChanges(analysis.changes).map((item): UpdateChange => {
@@ -285,11 +315,93 @@ export async function createBackup(
   return { path: backup, relativePath: relativeDisplayPath(backup, root), copied };
 }
 
-async function writeTemplate(root: string, template: TemplateFile): Promise<void> {
+function updateAuthorityError(message: string, cause?: unknown): FrameworkError {
+  return new FrameworkError(message, cause === undefined ? {} : { cause });
+}
+
+async function writeTemplate(
+  root: string,
+  template: TemplateFile,
+  expectedHash: string | undefined,
+): Promise<void> {
   const target = path.join(root, template.path);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, template.content, "utf8");
-  if (template.executable) await chmod(target, (await stat(target)).mode | 0o755);
+  await safelyWriteAuthorityFile({
+    root,
+    file: target,
+    content: template.content,
+    validateExisting: (bytes) => {
+      const currentHash = bytes ? computeHash(bytes.toString("utf8")) : undefined;
+      if (currentHash !== expectedHash) {
+        throw new AuthorityWriteConflictError(
+          `managed file changed after update planning: ${template.path}`,
+        );
+      }
+    },
+    error: updateAuthorityError,
+    textFileMode: {
+      preserveExisting: true,
+      createMode: template.executable ? 0o777 : 0o666,
+    },
+    ...(updateWriteProbe ? { probe: updateWriteProbe } : {}),
+  });
+}
+
+async function preflightNewSidecars(
+  root: string,
+  plan: UpdatePlan,
+  desired: ReadonlyMap<string, TemplateFile>,
+): Promise<Set<string>> {
+  const planned = plan.changes.filter((item) => item.action === "create-new");
+  const recoveredInstalled = new Set<string>();
+  if (planned.length === 0) return recoveredInstalled;
+  await assertTemplateWriteBoundary(
+    root,
+    planned.map((item) => `${item.path}.new`),
+  );
+  for (const item of planned) {
+    const relative = `${item.path}.new`;
+    const file = path.join(root, relative);
+    const recovery = await recoverAuthorityFileWithResult({
+      root,
+      file,
+      error: updateAuthorityError,
+    });
+    if (recovery.replacementInstalled) {
+      const template = desired.get(item.path);
+      if (!template || !(await readFile(file)).equals(Buffer.from(template.content, "utf8"))) {
+        throw new AuthorityWriteConflictError(
+          `Recovered update sidecar does not match the current plan: ${relative}`,
+        );
+      }
+      recoveredInstalled.add(relative);
+      continue;
+    }
+    if (await exists(file)) {
+      throw new FrameworkAlreadyExistsError(
+        `Update sidecar already exists and will not be overwritten: ${relative}`,
+      );
+    }
+  }
+  return recoveredInstalled;
+}
+
+async function writeNewSidecar(root: string, template: TemplateFile): Promise<void> {
+  const relative = `${template.path}.new`;
+  await safelyWriteAuthorityFile({
+    root,
+    file: path.join(root, relative),
+    content: template.content,
+    validateExisting: (bytes) => {
+      if (bytes !== null) {
+        throw new AuthorityWriteConflictError(
+          `Update sidecar was concurrently created and will not be overwritten: ${relative}`,
+        );
+      }
+    },
+    error: updateAuthorityError,
+    textFileMode: { preserveExisting: true, createMode: 0o666 },
+    ...(updateWriteProbe ? { probe: updateWriteProbe } : {}),
+  });
 }
 
 export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpdateResult> {
@@ -297,61 +409,64 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
   const dryRun = options.dryRun ?? false;
   const action = options.action ?? "skip";
   const analysis = await analyzeUpdate({ root });
-  const plan = await planUpdate({
-    root,
+  const plan = await planAnalyzedUpdate(analysis, {
     dryRun,
     action,
-    ...(options.agents === undefined ? {} : { agents: options.agents }),
   });
   const report = createEmptyReport();
-  const agentsResult = await applyAssayAgentsBlock({
-    root,
-    mode: updateAgentsMode(options.agents),
-    dryRun,
-  });
-  recordAssayAgentsResult(report, agentsResult);
-  if (dryRun) return { root, dryRun, action, analysis, plan, report };
+  if (dryRun) {
+    const agentsResult = await applyAssayAgentsBlock({
+      root,
+      mode: updateAgentsMode(options.agents),
+      dryRun,
+      authorityWrite: true,
+    });
+    recordAssayAgentsResult(report, agentsResult);
+    return { root, dryRun, action, analysis, plan, report };
+  }
 
   const manifest = requireManifest(await loadManifest(root), root);
   const layout = requireLayout(manifest);
   const project = await loadNativeProject(root, layout);
   if (!project)
     throw new FrameworkNotFoundError("native Project envelope is required before update");
-  await ensureNativeProject(root, layout, project.name);
   const desired = new Map(
     (await desiredCore(root, manifest)).map((template) => [template.path, template]),
   );
+  const recoveredSidecars = await preflightNewSidecars(root, plan, desired);
+  const agentsResult = await applyAssayAgentsBlock({
+    root,
+    mode: updateAgentsMode(options.agents),
+    dryRun,
+    authorityWrite: true,
+  });
+  recordAssayAgentsResult(report, agentsResult);
   const receipt = await loadManagedFiles(root);
   const receiptByPath = new Map(receipt.files.map((record) => [record.path, record]));
   const mutating = plan.changes.filter((item) =>
     ["create", "update", "force", "create-new"].includes(item.action ?? "skip"),
   );
-  const backup =
-    mutating.length > 0
-      ? await createBackup(
-          root,
-          mutating.map((item) => item.path),
-          options.now,
-        )
-      : undefined;
   let receiptChanged = false;
   for (const item of plan.changes) {
     const template = desired.get(item.path);
     if (!template) continue;
     if (item.action === "create" || item.action === "update" || item.action === "force") {
-      await writeTemplate(root, template);
+      await writeTemplate(root, template, item.current_hash);
       (item.action === "create" ? report.created_files : report.updated_files).push(item.path);
       receiptByPath.set(item.path, managedFileRecord(template));
       receiptChanged = true;
     } else if (item.action === "create-new") {
       const newPath = `${path.join(root, item.path)}.new`;
-      await mkdir(path.dirname(newPath), { recursive: true });
-      await writeFile(newPath, template.content, "utf8");
+      if (!recoveredSidecars.has(`${item.path}.new`)) await writeNewSidecar(root, template);
       report.new_copies.push(relativeDisplayPath(newPath, root));
-    } else if (item.kind === "unchanged" && !receiptByPath.has(item.path)) {
-      receiptByPath.set(item.path, managedFileRecord(template));
-      receiptChanged = true;
-    } else if (item.kind !== "unchanged") report.skipped_files.push(item.path);
+    } else if (item.kind === "unchanged") {
+      const desiredRecord = managedFileRecord(template);
+      const existingRecord = receiptByPath.get(item.path);
+      if (!existingRecord || JSON.stringify(existingRecord) !== JSON.stringify(desiredRecord)) {
+        receiptByPath.set(item.path, desiredRecord);
+        receiptChanged = true;
+      }
+    } else report.skipped_files.push(item.path);
   }
   if (receiptChanged) {
     await saveManagedFiles(root, {
@@ -378,7 +493,6 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
     analysis,
     plan,
     report,
-    ...(backup ? { backup } : {}),
     ...(eventFile ? { eventFile } : {}),
   };
 }

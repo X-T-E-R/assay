@@ -1,4 +1,4 @@
-import { realpath, writeFile } from "node:fs/promises";
+import { readdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type BuiltCliRunner,
@@ -71,5 +71,20 @@ describe("0.13 CLI control plane", () => {
       }),
     ]);
     expect((await runner.runCli(["workspace", "forget", trackedRecord.path])).exitCode).toBe(0);
+  });
+
+  it("does not report or retain an ordinary update backup", async () => {
+    const parent = await tempDirs.createTempDir();
+    const root = path.join(parent, "workspace");
+    expect((await runner.runCli(["init", root, "--no-agents"])).exitCode).toBe(0);
+    await writeFile(path.join(root, ".assay", "README.md"), "user edit\n", "utf8");
+    const backups = path.join(root, ".assay", "backups");
+    const before = (await readdir(backups, { recursive: true })).sort();
+
+    const updated = await runner.runCli(["update", "--root", root, "--force"]);
+
+    expect(updated.exitCode).toBe(0);
+    expect(updated.stdout).not.toContain("Backup:");
+    expect((await readdir(backups, { recursive: true })).sort()).toEqual(before);
   });
 });

@@ -1,7 +1,11 @@
 import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 
-import { recoverAuthorityFile, safelyWriteAuthorityFile } from "./authority-file-write.js";
+import {
+  type AuthorityWriteProbe,
+  recoverAuthorityFile,
+  safelyWriteAuthorityFile,
+} from "./authority-file-write.js";
 import { MANAGED_FILES_FILE } from "./constants.js";
 import { InvalidManifestError } from "./errors.js";
 import { identitySafePathNamesOpenFile, identitySafeRealpath } from "./filesystem-boundary.js";
@@ -17,6 +21,12 @@ import type { TemplateFile } from "./templates.js";
 
 export function managedFilesPath(root: string): string {
   return path.join(root, MANAGED_FILES_FILE);
+}
+
+let managedFilesWriteProbe: AuthorityWriteProbe | undefined;
+
+export function setManagedFilesWriteProbeForTests(probe: AuthorityWriteProbe | undefined): void {
+  managedFilesWriteProbe = probe;
 }
 
 export function defaultManagedFilesReceipt(): ManagedFilesReceipt {
@@ -45,13 +55,27 @@ export function receiptForTemplates(templates: readonly TemplateFile[]): Managed
 
 export async function loadManagedFiles(root: string): Promise<ManagedFilesReceipt> {
   const file = managedFilesPath(root);
-  const parsed = parseReceipt(await readReceiptAuthority(file), file);
-  const recovered = await recoverAuthorityFile({
+  const transaction = path.join(path.dirname(file), `.authority-${path.basename(file)}.txn`);
+  const transactionInfo = await lstat(transaction).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!transactionInfo) return parseReceipt(await readReceiptAuthority(file), file);
+
+  const targetInfo = await lstat(file).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  // Existing bytes must be valid before a transaction may trigger writes.
+  // A missing target is the governed after-old-moved crash window.
+  if (targetInfo) parseReceipt(await readReceiptAuthority(file, true), file);
+  await recoverAuthorityFile({
     root,
     file,
     error: (message, cause) => invalid(file, message, cause),
+    ...(managedFilesWriteProbe ? { probe: managedFilesWriteProbe } : {}),
   });
-  return recovered ? parseReceipt(await readReceiptAuthority(file), file) : parsed;
+  return parseReceipt(await readReceiptAuthority(file), file);
 }
 
 export async function saveManagedFiles(
@@ -68,10 +92,7 @@ export async function saveManagedFiles(
     const transaction = path.join(path.dirname(file), `.authority-${path.basename(file)}.txn`);
     try {
       await lstat(transaction);
-      throw invalid(
-        file,
-        `Managed receipt is missing while an authority transaction requires repair: ${transaction}`,
-      );
+      await loadManagedFiles(root);
     } catch (transactionError) {
       if (
         !(
@@ -92,6 +113,7 @@ export async function saveManagedFiles(
       if (bytes) parseReceipt(bytes.toString("utf8"), file);
     },
     error: (message, cause) => invalid(file, message, cause),
+    ...(managedFilesWriteProbe ? { probe: managedFilesWriteProbe } : {}),
   });
   return next;
 }
@@ -125,7 +147,7 @@ function parseReceipt(raw: string, file: string): ManagedFilesReceipt {
   return result.data;
 }
 
-async function readReceiptAuthority(file: string): Promise<string> {
+async function readReceiptAuthority(file: string, allowTransactionLink = false): Promise<string> {
   let namedBefore: Awaited<ReturnType<typeof lstat>>;
   try {
     namedBefore = await lstat(file);
@@ -135,7 +157,9 @@ async function readReceiptAuthority(file: string): Promise<string> {
     }
     throw error;
   }
-  if (!namedBefore.isFile() || namedBefore.isSymbolicLink() || namedBefore.nlink !== 1) {
+  const safeLinkCount = (count: number): boolean =>
+    count === 1 || (allowTransactionLink && count === 2);
+  if (!namedBefore.isFile() || namedBefore.isSymbolicLink() || !safeLinkCount(namedBefore.nlink)) {
     throw invalid(file, "Managed receipt must be an ordinary, unshared file.");
   }
   const safePath = await identitySafeRealpath(file);
@@ -147,14 +171,17 @@ async function readReceiptAuthority(file: string): Promise<string> {
     const opened = await handle.stat();
     if (
       !opened.isFile() ||
-      opened.nlink !== 1 ||
+      !safeLinkCount(opened.nlink) ||
       !(await identitySafePathNamesOpenFile(file, handle, safePath))
     ) {
       throw invalid(file, "Managed receipt identity changed while opening.");
     }
     const bytes = await handle.readFile();
     const namedAfter = await lstat(file);
-    if (namedAfter.nlink !== 1 || !(await identitySafePathNamesOpenFile(file, handle, safePath))) {
+    if (
+      !safeLinkCount(namedAfter.nlink) ||
+      !(await identitySafePathNamesOpenFile(file, handle, safePath))
+    ) {
       throw invalid(file, "Managed receipt identity changed while reading.");
     }
     return bytes.toString("utf8");

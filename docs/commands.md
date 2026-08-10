@@ -14,7 +14,7 @@ assay check [--root <dir>] [--advisories]
 assay update [--root <dir>] [--dry-run] [--agents] [--force | --skip-all | --create-new]
 ```
 
-`init` and `attach` resolve a Template exactly once. Later commands use custom `layout.entries` plus native resolvers; they never reload or persist Template identity. `update` changes only fixed core assets recorded in `.assay/managed-files.json`. User edits, deletions, protected files, and `.new` conflict handling remain no-clobber.
+`init` and `attach` resolve a Template exactly once. Later commands use custom `layout.entries` plus native resolvers; they never reload or persist Template identity. `update` changes only fixed core assets recorded in `.assay/managed-files.json` plus an existing or explicitly requested Assay block in `AGENTS.md`. Default update preserves user edits, user deletions, and untracked files; `--force` still skips protected conflicts and user-deleted files. `--create-new` writes only the exact `<target>.new` path and refuses the whole update if any planned sidecar already exists. Ordinary update uses recoverable compare-and-swap writes, creates no retained backup, leaves existing `.assay/backups/` entries untouched, and does not recreate deleted Project guide files.
 
 ## Templates
 

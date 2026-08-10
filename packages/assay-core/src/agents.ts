@@ -1,6 +1,12 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  type AuthorityWriteProbe,
+  recoverAuthorityFile,
+  safelyWriteAuthorityFile,
+} from "./authority-file-write.js";
+import { AuthorityWriteConflictError, FrameworkError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
 import { type WorkspaceZone, manifestZones, zoneTable } from "./zones.js";
 
@@ -8,6 +14,12 @@ export const ASSAY_AGENTS_FILE = "AGENTS.md";
 export const ASSAY_AGENTS_START_MARKER = "<!-- ASSAY:START -->";
 export const ASSAY_AGENTS_END_MARKER = "<!-- ASSAY:END -->";
 export const ASSAY_AGENTS_MALFORMED_REASON = "AGENTS.md has incomplete Assay managed block markers";
+
+let assayAgentsWriteProbe: AuthorityWriteProbe | undefined;
+
+export function setAssayAgentsWriteProbeForTests(probe: AuthorityWriteProbe | undefined): void {
+  assayAgentsWriteProbe = probe;
+}
 
 /**
  * Workspace facts the managed block states beyond the fixed rules. The block is
@@ -79,6 +91,8 @@ export interface PlanAssayAgentsBlockOptions {
 
 export interface ApplyAssayAgentsBlockOptions extends PlanAssayAgentsBlockOptions {
   readonly dryRun?: boolean;
+  /** Use the recoverable CAS writer for ordinary update without changing init callers. */
+  readonly authorityWrite?: boolean;
 }
 
 export interface AssayAgentsBlockPlan {
@@ -94,6 +108,7 @@ export interface AssayAgentsBlockResult extends AssayAgentsBlockPlan {
 
 interface InternalAssayAgentsBlockPlan extends AssayAgentsBlockPlan {
   readonly content?: string;
+  readonly expectedContent?: string | null;
 }
 
 type LocatedAssayAgentsBlock =
@@ -180,6 +195,7 @@ function publicPlan(plan: InternalAssayAgentsBlockPlan): AssayAgentsBlockPlan {
 
 async function buildAssayAgentsBlockPlan(
   options: PlanAssayAgentsBlockOptions,
+  authorityWrite = false,
 ): Promise<InternalAssayAgentsBlockPlan> {
   const root = path.resolve(options.root);
   const mode = options.mode ?? "install";
@@ -193,6 +209,17 @@ async function buildAssayAgentsBlockPlan(
     };
   }
 
+  if (authorityWrite) {
+    const file = path.join(root, ASSAY_AGENTS_FILE);
+    await recoverAuthorityFile({
+      root,
+      file,
+      error: (message, cause) =>
+        new FrameworkError(message, cause === undefined ? {} : { cause }),
+      ...(assayAgentsWriteProbe ? { probe: assayAgentsWriteProbe } : {}),
+    });
+  }
+
   const existing = await readAgentsFile(root);
   const layoutSection = await readAssayAgentsLayoutSection(root);
 
@@ -204,6 +231,7 @@ async function buildAssayAgentsBlockPlan(
         reason: "AGENTS.md is missing",
         changed: true,
         content: blockContentForFile(layoutSection),
+        expectedContent: null,
       };
     }
     return {
@@ -232,6 +260,7 @@ async function buildAssayAgentsBlockPlan(
         reason: "AGENTS.md exists without an Assay managed block",
         changed: true,
         content: appendAssayAgentsBlock(existing, layoutSection),
+        expectedContent: existing,
       };
     }
     return {
@@ -259,6 +288,7 @@ async function buildAssayAgentsBlockPlan(
     reason: "refresh Assay managed block",
     changed: true,
     content: nextContent,
+    expectedContent: existing,
   };
 }
 
@@ -271,11 +301,34 @@ export async function planAssayAgentsBlock(
 export async function applyAssayAgentsBlock(
   options: ApplyAssayAgentsBlockOptions,
 ): Promise<AssayAgentsBlockResult> {
-  const plan = await buildAssayAgentsBlockPlan(options);
+  const plan = await buildAssayAgentsBlockPlan(options, options.authorityWrite ?? false);
   const dryRun = options.dryRun ?? false;
 
   if (plan.changed && !dryRun && plan.content !== undefined) {
-    await writeFile(path.join(path.resolve(options.root), ASSAY_AGENTS_FILE), plan.content, "utf8");
+    const root = path.resolve(options.root);
+    const file = path.join(root, ASSAY_AGENTS_FILE);
+    if (options.authorityWrite) {
+      const expectedContent = plan.expectedContent;
+      await safelyWriteAuthorityFile({
+        root,
+        file,
+        content: plan.content,
+        validateExisting: (bytes) => {
+          const current = bytes?.toString("utf8") ?? null;
+          if (current !== expectedContent) {
+            throw new AuthorityWriteConflictError(
+              `${ASSAY_AGENTS_FILE} changed after its managed block was planned`,
+            );
+          }
+        },
+        error: (message, cause) =>
+          new FrameworkError(message, cause === undefined ? {} : { cause }),
+        textFileMode: { preserveExisting: true, createMode: 0o666 },
+        ...(assayAgentsWriteProbe ? { probe: assayAgentsWriteProbe } : {}),
+      });
+    } else {
+      await writeFile(file, plan.content, "utf8");
+    }
   }
 
   return {

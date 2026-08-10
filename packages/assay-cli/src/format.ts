@@ -513,7 +513,6 @@ export function formatUpdateResult(result: ApplyUpdateResult): string {
     ...updateCounts(result.analysis).map((line) => `  - ${line}`),
     ...formatUpdatePlan(result.plan),
     formatReport(result.report),
-    ...(result.backup ? [`Backup: ${result.backup.relativePath}`] : []),
     ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
   ].join("\n");
 }
