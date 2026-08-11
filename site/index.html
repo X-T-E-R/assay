@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assay · Study many. Build your own.</title>
+<meta name="description" content="Assay is a command-line workbench for people who build by studying. Capture sources, work them through recorded analyses, and promote what proves out into your own systems and knowledge.">
+<meta property="og:title" content="Assay · Study many. Build your own.">
+<meta property="og:description" content="A command-line workbench for people who build by studying.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://x-t-e-r.github.io/assay/">
+<meta property="og:image" content="https://x-t-e-r.github.io/assay/assets/social-preview.svg">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<style>
+:root{
+  --paper:#FAF7F2;
+  --paper-2:#F2EDE3;
+  --ink:#1E2A3A;
+  --ink-85:rgba(30,42,58,.85);
+  --ink-70:rgba(30,42,58,.70);
+  --line:rgba(30,42,58,.16);
+  --copper:#C77B3B;
+  --copper-text:#9C5A1F;
+  --copper-on-dark:#E2A45C;
+  --code-bg:#1E2A3A;
+  --code-text:#EDE7DA;
+  --code-dim:#93A0B4;
+  --serif:Georgia,'Times New Roman',serif;
+  --sans:'Avenir Next','Segoe UI','Helvetica Neue',Arial,sans-serif;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,Menlo,monospace;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  margin:0;
+  font-family:var(--serif);
+  font-size:17px;
+  line-height:1.65;
+  color:var(--ink);
+  background:var(--paper);
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:1;
+  opacity:.5;
+  background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 0.118 0 0 0 0 0.165 0 0 0 0 0.227 0 0 0 0.035 0"/></filter><rect width="140" height="140" filter="url(%23n)"/></svg>');
+}
+main,header,footer{position:relative;z-index:2}
+.wrap{max-width:1120px;margin:0 auto;padding-inline:24px}
+.zh{display:none}
+html[data-lang="zh"] .zh{display:revert}
+html[data-lang="zh"] .en{display:none}
+span.zh,span.en{display:inline}
+html[data-lang="zh"] span.zh{display:inline}
+html[data-lang="zh"] span.en{display:none}
+html[data-lang="en"] span.zh{display:none}
+
+/* ---------- header ---------- */
+.skip{
+  position:absolute;left:-999px;top:0;
+  font-family:var(--sans);font-size:13px;
+  background:var(--ink);color:var(--paper);
+  padding:8px 14px;border-radius:0 0 var(--radius) 0;z-index:10;
+}
+.skip:focus{left:0}
+header{border-bottom:1px solid var(--line);background:rgba(250,247,242,.9)}
+.navrow{display:flex;align-items:center;gap:28px;height:64px}
+.brand{
+  font-family:var(--serif);font-weight:700;font-size:24px;letter-spacing:.5px;
+  color:var(--ink);text-decoration:none;
+}
+.brand::after{content:"";display:inline-block;width:7px;height:7px;margin-left:5px;background:var(--copper);border-radius:2px;transform:translateY(-8px) rotate(45deg)}
+nav{display:flex;gap:22px;margin-left:auto}
+nav a{
+  font-family:var(--sans);font-size:13.5px;font-weight:500;letter-spacing:.04em;
+  color:var(--ink-85);text-decoration:none;padding:4px 2px;
+}
+nav a:hover{color:var(--copper-text)}
+nav a.gh{font-weight:700;color:var(--ink)}
+.lang{
+  display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--paper-2);
+}
+.lang button{
+  appearance:none;border:0;background:transparent;cursor:pointer;
+  font-family:var(--sans);font-size:12.5px;font-weight:600;letter-spacing:.05em;
+  color:var(--ink-70);padding:6px 12px;
+}
+.lang button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+:focus-visible{outline:2px solid var(--copper-text);outline-offset:3px;border-radius:4px}
+
+/* ---------- hero ---------- */
+.hero{
+  display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;
+  padding-block:72px 80px;
+}
+.dict{margin:0 0 26px;padding-bottom:20px;border-bottom:1px solid var(--line)}
+.dict .head{font-size:clamp(44px,5.4vw,64px);font-weight:700;line-height:1.05;letter-spacing:-.5px}
+.dict .phon{font-style:italic;font-size:clamp(18px,2vw,22px);color:var(--ink-85);margin-left:14px}
+.dict .pos{
+  font-family:var(--sans);font-size:11.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--copper-text);margin-left:14px;vertical-align:6px;
+}
+.dict .def{margin:12px 0 0;font-size:18px;font-style:italic;color:var(--ink-85)}
+h1{
+  margin:0 0 18px;
+  font-size:clamp(38px,4.6vw,58px);
+  line-height:1.12;
+  font-weight:700;
+  letter-spacing:-.5px;
+  padding-bottom:2px;
+}
+h1 .l2{display:block;padding-left:clamp(20px,4vw,56px)}
+.sub{margin:0 0 30px;font-size:18px;max-width:34em;color:var(--ink-85)}
+.ctas{display:flex;gap:14px;flex-wrap:wrap}
+.btn{
+  display:inline-flex;align-items:center;
+  font-family:var(--sans);font-size:14px;font-weight:600;letter-spacing:.03em;
+  text-decoration:none;white-space:nowrap;
+  padding:12px 22px;border-radius:var(--radius);
+  transition:transform .25s cubic-bezier(.16,1,.3,1),background .25s,color .25s,box-shadow .25s;
+}
+.btn-primary{background:var(--ink);color:var(--paper)}
+.btn-primary:hover{background:#2A3A50;transform:translateY(-1px)}
+.btn-ghost{color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.btn-ghost:hover{color:var(--copper-text);box-shadow:inset 0 0 0 1.5px var(--copper-text);transform:translateY(-1px)}
+.btn:active{transform:translateY(1px)}
+figure{margin:0}
+.plate{
+  border-radius:18px;
+  box-shadow:0 1px 2px rgba(30,42,58,.06),0 12px 32px -16px rgba(30,42,58,.25);
+}
+.plate img,.plate svg{display:block;width:100%;height:auto;border-radius:18px}
+figcaption{
+  font-family:var(--sans);font-size:13px;color:var(--ink-85);
+  margin-top:12px;letter-spacing:.02em;
+}
+figcaption .fig{font-weight:700;color:var(--copper-text);margin-right:8px}
+
+/* ---------- sections ---------- */
+.sec{padding-block:76px;border-top:1px solid var(--line)}
+.sec h2{
+  margin:0 0 14px;
+  font-size:clamp(28px,3.2vw,38px);line-height:1.15;font-weight:700;letter-spacing:-.3px;
+}
+.sec h2::after{
+  content:"";display:block;width:44px;height:3px;background:var(--copper);
+  border-radius:2px;margin-top:14px;
+}
+.lead{margin:0 0 40px;font-size:18px;max-width:36em;color:var(--ink-85)}
+.loopfig{max-width:960px;margin:0 auto}
+.loopfig .arc{animation:dashflow 9s linear infinite}
+@keyframes dashflow{to{stroke-dashoffset:-120}}
+
+/* study vs build */
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.duo article{padding:34px 40px 38px}
+.duo article:first-child{border-right:1px solid var(--line);padding-left:0}
+.duo article:last-child{padding-right:0;padding-top:60px}
+.duo h3{margin:0 0 14px;font-size:clamp(23px,2.4vw,28px);font-weight:700}
+.duo h3 .mark{color:var(--copper-text)}
+.duo p{margin:0;color:var(--ink-85)}
+.duo .tag{
+  display:inline-block;font-family:var(--mono);font-size:12.5px;color:var(--copper-text);
+  border:1px solid var(--line);border-radius:6px;padding:2px 8px;margin:0 2px;background:var(--paper-2);
+}
+
+/* shines */
+.shines{list-style:none;margin:0;padding:0}
+.shines li{
+  display:grid;grid-template-columns:84px 1fr;gap:28px;
+  padding:30px 0;border-top:1px solid var(--line);
+}
+.shines li:first-child{border-top:0;padding-top:8px}
+.shines .num{
+  font-size:46px;font-weight:700;line-height:1;color:var(--copper-text);
+  font-variant-numeric:lining-nums;
+}
+.shines h3{margin:0 0 8px;font-size:21px;font-weight:700}
+.shines p{margin:0;max-width:44em;color:var(--ink-85)}
+.shines code,.principles code,.note code{
+  font-family:var(--mono);font-size:.86em;
+  background:var(--paper-2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;
+}
+
+/* principles */
+.principles{display:grid;grid-template-columns:repeat(2,1fr);gap:14px 56px;margin-top:8px}
+.principles .cell{padding:22px 0;border-top:1px solid var(--line)}
+.principles h3{margin:0 0 8px;font-size:20px;font-weight:700}
+.principles h3::before{
+  content:"";display:inline-block;width:10px;height:10px;margin-right:12px;
+  background:var(--copper);border-radius:2px;transform:rotate(45deg) translateY(-1px);
+}
+.principles p{margin:0;color:var(--ink-85)}
+
+/* quick start */
+.qs-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:8px}
+.term{
+  min-width:0;
+  background:var(--code-bg);border-radius:var(--radius);overflow:hidden;
+  box-shadow:0 1px 2px rgba(30,42,58,.08),0 16px 40px -20px rgba(30,42,58,.45);
+}
+.term .bar{
+  font-family:var(--sans);font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--code-dim);padding:12px 20px;border-bottom:1px solid rgba(237,231,218,.12);
+}
+.term pre{
+  margin:0;padding:18px 20px 22px;overflow-x:auto;
+  font-family:var(--mono);font-size:13.5px;line-height:1.75;color:var(--code-text);
+}
+.term .k{color:var(--copper-on-dark)}
+.term .c{color:var(--code-dim)}
+.term pre::-webkit-scrollbar{height:8px}
+.term pre::-webkit-scrollbar-track{background:transparent}
+.term pre::-webkit-scrollbar-thumb{background:rgba(237,231,218,.22);border-radius:4px}
+.term pre{scrollbar-width:thin;scrollbar-color:rgba(237,231,218,.22) transparent}
+.note{margin:28px 0 0;font-size:16px;max-width:44em;color:var(--ink-85)}
+
+/* footer */
+footer{border-top:1px solid var(--line);margin-top:40px}
+.foot{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding-block:34px}
+.foot img{width:34px;height:34px}
+.foot .who{font-size:15px;color:var(--ink-85)}
+.foot nav{margin-left:auto}
+.foot nav a{font-size:13px}
+
+/* reduced motion: the flow arc stops, hovers go instant */
+@media (prefers-reduced-motion:reduce){
+  .loopfig .arc{animation:none}
+  .btn{transition:none}
+}
+
+/* ---------- mobile ---------- */
+@media (max-width:960px){
+  .hero{grid-template-columns:1fr;gap:40px;padding-block:56px 64px}
+  .hero-fig{max-width:620px}
+  .qs-grid{grid-template-columns:1fr}
+}
+@media (max-width:768px){
+  body{font-size:16px}
+  .wrap{padding-inline:18px}
+  .sec{padding-block:56px}
+  .duo{grid-template-columns:1fr}
+  .duo article{padding:26px 0 30px}
+  .duo article:first-child{border-right:0;border-bottom:1px solid var(--line)}
+  .duo article:last-child{padding-top:26px}
+  .principles{grid-template-columns:1fr;gap:0}
+  .shines li{grid-template-columns:1fr;gap:6px;padding:24px 0}
+  .shines .num{font-size:34px}
+  nav a.sec-link{display:none}
+  h1{font-size:clamp(34px,9vw,44px)}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main"><span class="en">Skip to content</span><span class="zh" lang="zh">跳到正文</span></a>
+
+<header>
+  <div class="wrap navrow">
+    <a class="brand" href="#top">assay</a>
+    <nav aria-label="Sections">
+      <a class="sec-link" href="#loop"><span class="en">The loop</span><span class="zh" lang="zh">闭环</span></a>
+      <a class="sec-link" href="#principles"><span class="en">Principles</span><span class="zh" lang="zh">原则</span></a>
+      <a class="sec-link" href="#quickstart"><span class="en">Quick start</span><span class="zh" lang="zh">快速开始</span></a>
+      <a class="gh" href="https://github.com/X-T-E-R/assay">GitHub</a>
+    </nav>
+    <div class="lang" role="group" aria-label="Language / 语言">
+      <button type="button" data-setlang="en" aria-pressed="true">EN</button>
+      <button type="button" data-setlang="zh" aria-pressed="false" lang="zh">中文</button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <!-- hero -->
+  <section class="hero wrap" id="top">
+    <div class="hero-text">
+      <p class="dict">
+        <span class="head">assay</span><span class="phon">/əˈseɪ/</span><span class="pos"><span class="en">verb</span><span class="zh" lang="zh">动词</span></span>
+        <span class="def" style="display:block"><span class="en">to analyze an ore and determine what it is made of.</span><span class="zh" lang="zh">化验矿石，确定它的成分。</span></span>
+      </p>
+      <h1>
+        <span class="en"><span class="l1">Study many.</span><span class="l2">Build your own.</span></span>
+        <span class="zh" lang="zh"><span class="l1">博采众长，</span><span class="l2">自成一体。</span></span>
+      </h1>
+      <p class="sub">
+        <span class="en">A command-line workbench for people who build by studying. Every fact has one authority; every decision keeps its evidence.</span>
+        <span class="zh" lang="zh">一个命令行工作台，为靠研究来建造的人而生。每个事实只有一个权威；每个决策都留着证据。</span>
+      </p>
+      <div class="ctas">
+        <a class="btn btn-primary" href="https://github.com/X-T-E-R/assay"><span class="en">View on GitHub</span><span class="zh" lang="zh">在 GitHub 查看</span></a>
+        <a class="btn btn-ghost" href="#quickstart"><span class="en">Read the quick start</span><span class="zh" lang="zh">阅读快速开始</span></a>
+      </div>
+    </div>
+    <figure class="hero-fig plate">
+      <img src="assets/hero.svg" width="1200" height="400" alt="Assay: raw material flows in, refined knowledge flows out. Hand-drawn documents feed a crucible; refined records come out.">
+      <figcaption><span class="fig">Fig. 1</span><span class="en">Raw material in, refined knowledge out.</span><span class="zh" lang="zh">原料进，知识出。</span></figcaption>
+    </figure>
+  </section>
+
+  <!-- evidence loop -->
+  <section class="sec" id="loop">
+    <div class="wrap">
+      <h2><span class="en">The evidence loop</span><span class="zh" lang="zh">证据闭环</span></h2>
+      <p class="lead">
+        <span class="en">Assay keeps one loop under your version control. The discipline is small but strict.</span>
+        <span class="zh" lang="zh">Assay 把一条闭环放进你的版本控制。纪律很小，但很严格。</span>
+      </p>
+      <figure class="loopfig plate">
+        <svg viewBox="0 0 1200 520" role="img" aria-label="The evidence loop: sources flow into analyses, analyses branch into systems and knowledge, and knowledge feeds new sources">
+          <defs>
+            <marker id="loop-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#C77B3B"/>
+            </marker>
+          </defs>
+          <rect width="1200" height="520" rx="18" fill="#FAF7F2"/>
+          <rect x="1" y="1" width="1198" height="518" rx="17" fill="none" stroke="#1E2A3A" stroke-opacity="0.12" stroke-width="2"/>
+          <path class="arc" d="M 858 412 C 1050 400, 1160 250, 1085 145 C 990 15, 400 18, 260 128 C 225 158, 205 184, 197 220"
+                fill="none" stroke="#C77B3B" stroke-width="3" stroke-dasharray="2 10" stroke-linecap="round" marker-end="url(#loop-arrow)"/>
+          <g transform="translate(10 130) scale(0.75)" stroke="#1E2A3A" stroke-width="3" fill="#FFFFFF">
+            <g transform="rotate(-12 195 235)">
+              <rect x="150" y="180" width="90" height="110" rx="4"/>
+              <line x1="164" y1="204" x2="226" y2="204" stroke-opacity="0.35" stroke-width="4"/>
+              <line x1="164" y1="224" x2="226" y2="224" stroke-opacity="0.35" stroke-width="4"/>
+              <line x1="164" y1="244" x2="210" y2="244" stroke-opacity="0.35" stroke-width="4"/>
+            </g>
+            <g transform="rotate(4 245 225)">
+              <rect x="200" y="170" width="90" height="110" rx="4"/>
+              <line x1="214" y1="194" x2="276" y2="194" stroke-opacity="0.35" stroke-width="4"/>
+              <line x1="214" y1="214" x2="276" y2="214" stroke-opacity="0.35" stroke-width="4"/>
+              <line x1="214" y1="234" x2="258" y2="234" stroke-opacity="0.35" stroke-width="4"/>
+            </g>
+            <g transform="rotate(14 285 245)">
+              <rect x="240" y="190" width="90" height="110" rx="4"/>
+              <line x1="254" y1="214" x2="316" y2="214" stroke-opacity="0.35" stroke-width="4"/>
+              <line x1="254" y1="234" x2="316" y2="234" stroke-opacity="0.35" stroke-width="4"/>
+              <line x1="254" y1="254" x2="298" y2="254" stroke-opacity="0.35" stroke-width="4"/>
+            </g>
+          </g>
+          <path d="M 275 290 C 330 290, 370 290, 412 290" fill="none" stroke="#1E2A3A" stroke-width="3" stroke-opacity="0.55" marker-end="url(#loop-arrow)"/>
+          <g stroke="#1E2A3A" stroke-width="3" fill="#FFFFFF">
+            <rect x="430" y="225" width="95" height="125" rx="6"/>
+            <line x1="446" y1="252" x2="509" y2="252" stroke-opacity="0.35" stroke-width="4"/>
+            <line x1="446" y1="274" x2="509" y2="274" stroke-opacity="0.35" stroke-width="4"/>
+            <line x1="446" y1="296" x2="494" y2="296" stroke-opacity="0.35" stroke-width="4"/>
+            <circle cx="545" cy="335" r="22"/>
+            <circle cx="545" cy="335" r="7" fill="#C77B3B" stroke="none" opacity="0.85"/>
+            <line x1="561" y1="351" x2="580" y2="370" stroke-width="5" stroke-linecap="round"/>
+          </g>
+          <path d="M 545 232 C 640 192, 690 188, 736 186" fill="none" stroke="#1E2A3A" stroke-width="3" stroke-opacity="0.55" marker-end="url(#loop-arrow)"/>
+          <path d="M 552 350 C 640 395, 690 405, 738 410" fill="none" stroke="#1E2A3A" stroke-width="3" stroke-opacity="0.55" marker-end="url(#loop-arrow)"/>
+          <g stroke="#1E2A3A" stroke-width="3" fill="#FFFFFF">
+            <rect x="772" y="140" width="96" height="64" rx="8"/>
+            <rect x="758" y="158" width="96" height="64" rx="8"/>
+            <rect x="824" y="170" width="20" height="10" rx="5" fill="#C77B3B" stroke="none"/>
+            <line x1="772" y1="194" x2="812" y2="194" stroke-opacity="0.35" stroke-width="4"/>
+            <line x1="772" y1="208" x2="830" y2="208" stroke-opacity="0.35" stroke-width="4"/>
+          </g>
+          <g stroke="#1E2A3A" stroke-width="3" fill="#FFFFFF">
+            <rect x="762" y="352" width="96" height="120" rx="8"/>
+            <rect x="778" y="352" width="26" height="14" rx="4" fill="#C77B3B" stroke="none"/>
+            <line x1="778" y1="386" x2="842" y2="386" stroke-opacity="0.35" stroke-width="4"/>
+            <line x1="778" y1="408" x2="842" y2="408" stroke-opacity="0.35" stroke-width="4"/>
+            <line x1="778" y1="430" x2="826" y2="430" stroke-opacity="0.35" stroke-width="4"/>
+          </g>
+          <g font-family="'Cascadia Code', Consolas, Menlo, monospace" font-size="19" fill="#1E2A3A" opacity="0.75" text-anchor="middle">
+            <text x="190" y="200">sources/</text>
+            <text x="480" y="200">analyses/</text>
+            <text x="810" y="118">systems/</text>
+            <text x="810" y="336">knowledge/</text>
+          </g>
+          <g font-family="Georgia, 'Times New Roman', serif" font-size="20" letter-spacing="5" fill="#1E2A3A" opacity="0.8" text-anchor="middle">
+            <text x="190" y="408">OBSERVE</text>
+            <text x="480" y="408">INTERPRET</text>
+            <text x="810" y="262">BUILD</text>
+            <text x="810" y="508">REMEMBER</text>
+          </g>
+        </svg>
+        <figcaption><span class="fig">Fig. 2</span><span class="en">Every adoption of outside material keeps its evidence; every decision is recorded, not remembered.</span><span class="zh" lang="zh">每次采纳外部材料都留下证据；每个决策都被记录，而不是被记住。</span></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- study many / build your own -->
+  <section class="sec" id="study">
+    <div class="wrap duo">
+      <article>
+        <h3>Study many<span class="mark">.</span></h3>
+        <p>
+          <span class="en">Capture frameworks, libraries, patterns, and ideas as observed <span class="tag">Sources</span>, then work them through recorded <span class="tag">Analyses</span>. Every evaluation closes with an explicit adopt, reject, or defer decision plus its evidence. Months later you can still answer: what did we take, why, and does it still hold?</span>
+          <span class="zh" lang="zh">把框架、库、模式与想法捕获为可观察的 <span class="tag">Source</span>，在留档的 <span class="tag">Analysis</span> 中逐一检验。每个评估都以明确的采纳、拒绝或暂缓决策加证据关闭。几个月后你依然能回答：拿了什么、为什么、现在是否还成立？</span>
+        </p>
+      </article>
+      <article>
+        <h3>Build your own<span class="mark">.</span></h3>
+        <p>
+          <span class="en">Promote what proves out into your own registered <span class="tag">Systems</span> and <span class="tag">Knowledge</span>. <span class="tag">Tasks</span>, <span class="tag">Roadmaps</span>, and <span class="tag">Specs</span> keep the work moving, with stable identities that survive sessions, agent switches, and context compaction.</span>
+          <span class="zh" lang="zh">把验证过的成果推进你自己的 <span class="tag">System</span> 与 <span class="tag">Knowledge</span>。<span class="tag">Task</span>、<span class="tag">Roadmap</span> 与 <span class="tag">Spec</span> 推动工作前进，它们的稳定身份能跨会话、跨 agent、跨上下文压缩存活。</span>
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <!-- where it shines -->
+  <section class="sec" id="shines">
+    <div class="wrap">
+      <h2><span class="en">Where it shines</span><span class="zh" lang="zh">最好用的场景</span></h2>
+      <p class="lead">
+        <span class="en">A general workbench, but three scenarios get the most out of it.</span>
+        <span class="zh" lang="zh">一个通用工作台，但有三类场景最能发挥它。</span>
+      </p>
+      <ol class="shines">
+        <li>
+          <span class="num" aria-hidden="true">1</span>
+          <div>
+            <h3><span class="en">Evaluating external frameworks</span><span class="zh" lang="zh">评估外部框架</span></h3>
+            <p>
+              <span class="en">Add a repo as a living or frozen <code>Source</code>, review it in an <code>Analysis</code>, and record an <code>adopt</code> / <code>reject</code> / <code>experiment</code> exit. Adoption receipts tie what you carried into your systems to evidence, so next year's you knows what came from where, and why.</span>
+              <span class="zh" lang="zh">把一个仓库加为 living 或 frozen <code>Source</code>，在 <code>Analysis</code> 中评审，记录 <code>adopt</code> / <code>reject</code> / <code>experiment</code> 出口。采纳收据把你搬进系统的材料与证据绑定，一年后的你能精确知道每块东西来自哪里、为什么。</span>
+            </p>
+          </div>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">2</span>
+          <div>
+            <h3><span class="en">Long-running projects with AI assistants</span><span class="zh" lang="zh">与 AI 助手共跑的长期项目</span></h3>
+            <p>
+              <span class="en">Tasks keep stable ids, reader-owned PRDs, and handoff checkpoints. Roadmaps and Specs hold direction and acceptance. All of it survives sessions, agent switches, and context compaction.</span>
+              <span class="zh" lang="zh">Task 有稳定 id、reader-owned PRD 与交接 checkpoint。Roadmap 与 Spec 承载方向与验收。它们都能跨会话、跨 agent、跨上下文压缩存活。</span>
+            </p>
+          </div>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">3</span>
+          <div>
+            <h3><span class="en">Evidence-driven exploration</span><span class="zh" lang="zh">证据驱动的探索</span></h3>
+            <p>
+              <span class="en">One-shot Templates scaffold the loop for different work: <code>study</code> for evaluating systems, <code>solve</code> for objectives and benchmarks, <code>explore</code> for parallel approaches. Custom Templates are plain YAML.</span>
+              <span class="zh" lang="zh">一次性 Template 为不同工作搭建闭环：<code>study</code> 评估外部系统，<code>solve</code> 跟踪目标与基准，<code>explore</code> 并行比较方案。自定义 Template 就是普通 YAML。</span>
+            </p>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- principles -->
+  <section class="sec" id="principles">
+    <div class="wrap">
+      <h2><span class="en">Principles</span><span class="zh" lang="zh">原则</span></h2>
+      <p class="lead">
+        <span class="en">The workflow is packaged; the ideas travel anywhere.</span>
+        <span class="zh" lang="zh">工作流是打包好的，思想可以用在任何地方。</span>
+      </p>
+      <div class="principles">
+        <div class="cell">
+          <h3><span class="en">One fact, one authority</span><span class="zh" lang="zh">一个事实，一个权威</span></h3>
+          <p><span class="en">Assay never guesses a current task from titles or counts, and never keeps two copies of the same truth.</span><span class="zh" lang="zh">Assay 不会从标题或数量猜当前 Task，也绝不维护同一份真相的两个副本。</span></p>
+        </div>
+        <div class="cell">
+          <h3><span class="en">Evidence before opinion</span><span class="zh" lang="zh">证据先于观点</span></h3>
+          <p><span class="en">A copied folder is not an evaluated one; an Analysis is not closed without an explicit exit.</span><span class="zh" lang="zh">复制了一个目录不等于完成了评估；没有显式出口，Analysis 就不算关闭。</span></p>
+        </div>
+        <div class="cell">
+          <h3><span class="en">Advisory, not a gate</span><span class="zh" lang="zh">建议式，而非关卡</span></h3>
+          <p><span class="en">Assay records facts and decisions, then gets out of the way. It blocks only to prevent data loss or corruption.</span><span class="zh" lang="zh">Assay 记录事实与决策，然后让开路。它只在防止数据丢失或损坏时拒绝操作。</span></p>
+        </div>
+        <div class="cell">
+          <h3><span class="en">Assistant-agnostic core</span><span class="zh" lang="zh">助手无关的内核</span></h3>
+          <p><span class="en">The artifact model stands alone; the managed <code>AGENTS.md</code> block and the bundled <code>assay-builder</code> skill are adapters, so the workbench outlives any single assistant.</span><span class="zh" lang="zh">工件模型独立成立；受管理的 <code>AGENTS.md</code> 块与内置的 <code>assay-builder</code> skill 只是适配器，工作台不依赖任何一个助手存活。</span></p>
+        </div>
+        <div class="cell">
+          <h3><span class="en">Files over services</span><span class="zh" lang="zh">文件优于服务</span></h3>
+          <p><span class="en">Git-friendly and inspectable with the tools you already have. Nothing holds your data hostage.</span><span class="zh" lang="zh">Git 友好，用你已有的工具就能检查。没有任何东西能把你的数据扣作人质。</span></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- quick start -->
+  <section class="sec" id="quickstart">
+    <div class="wrap">
+      <h2><span class="en">Quick start</span><span class="zh" lang="zh">快速开始</span></h2>
+      <p class="lead">
+        <span class="en">Requires Node.js 22.13 or later and pnpm 11.3.0.</span>
+        <span class="zh" lang="zh">要求 Node.js 22.13 或更高版本，以及 pnpm 11.3.0。</span>
+      </p>
+      <div class="qs-grid">
+        <figure class="term">
+          <figcaption class="bar"><span class="en">Install and init</span><span class="zh" lang="zh">安装与初始化</span></figcaption>
+<pre><span class="k">git</span> clone https://github.com/X-T-E-R/assay.git
+<span class="k">cd</span> assay
+<span class="k">pnpm</span> install &amp;&amp; pnpm build
+
+<span class="c"><span class="en"># create a workbench</span><span class="zh" lang="zh"># 创建一个工作台</span></span>
+<span class="k">node</span> packages/assay-cli/dist/cli.js init ../my-study --name MyStudy --template study
+<span class="k">node</span> packages/assay-cli/dist/cli.js status --root ../my-study
+<span class="k">node</span> packages/assay-cli/dist/cli.js check  --root ../my-study</pre>
+        </figure>
+        <figure class="term">
+          <figcaption class="bar"><span class="en">A typical session</span><span class="zh" lang="zh">一个典型会话</span></figcaption>
+<pre><span class="k">assay</span> source add https://github.com/some/framework --mode frozen
+<span class="k">assay</span> analysis new "Framework review" --for-source framework
+<span class="k">assay</span> analysis close analyses/&lt;file&gt;.md --exit adopt --note "Pattern X is worth reusing"
+<span class="k">assay</span> knowledge add pattern "Pattern X" --from-analysis analyses/&lt;file&gt;.md
+<span class="k">assay</span> task create --title "Port pattern X" --description "Bounded outcome with acceptance criteria"</pre>
+        </figure>
+      </div>
+      <p class="note">
+        <span class="en">Driving it from an AI assistant? Run <code>node scripts/install.mjs</code> to build the repo and link the bundled <code>assay-builder</code> skill into your skills directory.</span>
+        <span class="zh" lang="zh">想在 AI 助手中驱动它？运行 <code>node scripts/install.mjs</code>，它会构建仓库并把内置的 <code>assay-builder</code> skill 链接进你的 skills 目录。</span>
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <img src="assets/favicon.svg" width="34" height="34" alt="" aria-hidden="true">
+    <span class="who"><span class="en">Assay is open source under the MIT License.</span><span class="zh" lang="zh">Assay 以 MIT 许可证开源。</span></span>
+    <nav aria-label="Project">
+      <a href="https://github.com/X-T-E-R/assay">GitHub</a>
+      <a href="https://github.com/X-T-E-R/assay/tree/main/docs"><span class="en">Documentation</span><span class="zh" lang="zh">文档</span></a>
+      <a href="https://github.com/X-T-E-R/assay/blob/main/CONTRIBUTING.md"><span class="en">Contributing</span><span class="zh" lang="zh">贡献指南</span></a>
+      <a href="https://github.com/X-T-E-R/assay/blob/main/LICENSE"><span class="en">License</span><span class="zh" lang="zh">许可证</span></a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var KEY='assay-lang';
+  var root=document.documentElement;
+  var titles={
+    en:'Assay · Study many. Build your own.',
+    zh:'Assay · 博采众长，自成一体。'
+  };
+  function setLang(l,persist){
+    if(l!=='zh'){l='en';}
+    root.setAttribute('data-lang',l);
+    root.setAttribute('lang',l==='zh'?'zh-CN':'en');
+    document.title=titles[l];
+    var btns=document.querySelectorAll('[data-setlang]');
+    for(var i=0;i<btns.length;i++){
+      btns[i].setAttribute('aria-pressed',btns[i].getAttribute('data-setlang')===l?'true':'false');
+    }
+    if(persist){try{localStorage.setItem(KEY,l);}catch(e){}}
+  }
+  var saved='en';
+  try{saved=localStorage.getItem(KEY)||'en';}catch(e){}
+  setLang(saved,false);
+  document.addEventListener('click',function(ev){
+    var b=ev.target.closest('[data-setlang]');
+    if(b){setLang(b.getAttribute('data-setlang'),true);}
+  });
+})();
+</script>
+</body>
+</html>
