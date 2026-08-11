@@ -22,10 +22,11 @@ authority files to make the error disappear. `assay workspace list` can report
 `cutover_required`, but it only reports indexed workspace state; it does not
 repair or rewrite a workspace.
 
-Use the external [`assay-cutover`](https://github.com/X-T-E-R/assay-cutover)
-package and CLI for this boundary. It is not an Assay subcommand or a built-in
-Assay dependency. Its adapters are explicit and finite, so a close version
-number does not imply automatic support.
+Use the external [`assay-cutover v0.1.0`](https://github.com/X-T-E-R/assay-cutover/releases/tag/v0.1.0)
+public GitHub source release for this boundary. No npm package is published;
+run it from a clone or through a local package link. It is not an Assay
+subcommand or a built-in Assay dependency. Its adapters are explicit and
+finite, so a close version number does not imply automatic support.
 
 ## Follow the cutover journey
 
