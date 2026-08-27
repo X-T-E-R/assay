@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
+import { fixtureRoot } from "assay-test-support";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -29,7 +29,7 @@ import {
 const tempRoots: string[] = [];
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-registry-s3-"));
+  const root = await mkdtemp(path.join(fixtureRoot(), "assay-registry-s3-"));
   tempRoots.push(root);
   return root;
 }

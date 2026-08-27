@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/pr
 import os from "node:os";
 import path from "node:path";
 
-import { writeBareTemplate } from "assay-test-support";
+import { fixturePath, writeBareTemplate } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
@@ -37,7 +37,7 @@ import {
 const roots: string[] = [];
 
 async function workspace(name: string): Promise<string> {
-  const root = path.join(os.tmpdir(), `assay-spec-${randomUUID()}`);
+  const root = fixturePath("assay-spec");
   roots.push(root);
   const template = await writeBareTemplate(root);
   await initFramework({ target: root, name, template });
@@ -380,7 +380,7 @@ describe("native Spec", { timeout: 60_000 }, () => {
     expect((await showSpec({ root, id: first.item.id })).item.id).toBe(first.item.id);
 
     await rm(archive, { force: true });
-    const outside = path.join(os.tmpdir(), `assay-spec-archive-${randomUUID()}`);
+    const outside = fixturePath("assay-spec-archive");
     roots.push(outside);
     await mkdir(outside);
     await symlink(outside, archive, "junction");
@@ -493,7 +493,7 @@ describe("native Spec", { timeout: 60_000 }, () => {
 
     const analysisDirectory = path.join(root, "analyses", "references");
     await mkdir(analysisDirectory, { recursive: true });
-    const outside = path.join(os.tmpdir(), `assay-spec-source-${randomUUID()}`);
+    const outside = fixturePath("assay-spec-source");
     roots.push(outside);
     await mkdir(outside);
     await writeFile(path.join(outside, "source.md"), "outside", "utf8");
@@ -534,7 +534,7 @@ describe("native Spec", { timeout: 60_000 }, () => {
       createSpec({ root, title: "No", scope: "project", strength: "required" }),
     ).rejects.toMatchObject({ code: "SPEC_INVALID" });
     await rm(path.join(root, "project", "specs"), { recursive: true });
-    const outside = path.join(os.tmpdir(), `assay-spec-outside-${randomUUID()}`);
+    const outside = fixturePath("assay-spec-outside");
     roots.push(outside);
     await mkdir(outside);
     await symlink(outside, path.join(root, "project", "specs"), "junction");
@@ -645,7 +645,7 @@ describe("native Spec", { timeout: 60_000 }, () => {
   });
 
   it("stores overlays under .assay and fail-closes mutation during byte-preserving conversion", async () => {
-    const root = path.join(os.tmpdir(), `assay-spec-overlay-${randomUUID()}`);
+    const root = fixturePath("assay-spec-overlay");
     roots.push(root);
     await mkdir(root, { recursive: true });
     await writeFile(path.join(root, "package.json"), '{"name":"product"}\n', "utf8");

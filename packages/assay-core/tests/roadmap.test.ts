@@ -1,9 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { cp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
-import { writeBareTemplate } from "assay-test-support";
+import { fixturePath, writeBareTemplate } from "assay-test-support";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 
@@ -30,7 +28,7 @@ import {
 const roots: string[] = [];
 
 async function workspace(name: string): Promise<string> {
-  const root = path.join(os.tmpdir(), `assay-roadmap-${randomUUID()}`);
+  const root = fixturePath("assay-roadmap");
   roots.push(root);
   const template = await writeBareTemplate(root);
   await initFramework({ target: root, name, template });
@@ -274,7 +272,7 @@ describe("native Roadmap", { timeout: 60_000 }, () => {
   it("reports a redirecting item without following it or hiding healthy siblings", async () => {
     const root = await workspace("Redirect");
     const healthy = await createRoadmap({ root, title: "Healthy" });
-    const outside = path.join(os.tmpdir(), `assay-roadmap-outside-${randomUUID()}`);
+    const outside = fixturePath("assay-roadmap-outside");
     roots.push(outside);
     await mkdir(outside, { recursive: true });
     await symlink(

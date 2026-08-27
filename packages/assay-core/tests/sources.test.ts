@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { fixtureRoot } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -28,7 +28,7 @@ const tempRoots: string[] = [];
 const GIT_INTEGRATION_TIMEOUT_MS = 45_000;
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-core-sources-"));
+  const root = await mkdtemp(path.join(fixtureRoot(), "assay-core-sources-"));
   tempRoots.push(root);
   return root;
 }

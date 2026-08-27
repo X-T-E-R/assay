@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
+import { FIXTURE_ROOT_ENV, fixtureRoot } from "./filesystem.js";
 import {
   CLONE_REGISTRY_ENV,
   REGISTRY_ROOT_ENV,
@@ -27,9 +28,20 @@ export default async function setup(): Promise<() => Promise<void>> {
     process.env[CLONE_REGISTRY_ENV] = cloneRegistry;
   }
 
+  // Workers inherit the fixture root through the environment so every one of
+  // them files its workspaces under the same run directory.
+  const configuredFixtureRoot = process.env[FIXTURE_ROOT_ENV];
+  const ownsFixtureRoot = !configuredFixtureRoot || configuredFixtureRoot.trim() === "";
+  if (ownsFixtureRoot) process.env[FIXTURE_ROOT_ENV] = fixtureRoot();
+  const runFixtureRoot = fixtureRoot();
+  mkdirSync(runFixtureRoot, { recursive: true });
+
   return async () => {
     if (ownsTempRegistry) {
       await rm(path.dirname(registryRoot), { recursive: true, force: true });
+    }
+    if (ownsFixtureRoot) {
+      await rm(runFixtureRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
     }
   };
 }

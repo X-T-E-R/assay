@@ -13,7 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { writeBareTemplate } from "assay-test-support";
+import { fixturePath, writeBareTemplate } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -81,7 +81,7 @@ async function workspace(
   name: string,
   mode: "standalone" | "overlay" = "standalone",
 ): Promise<string> {
-  const root = path.join(os.tmpdir(), `assay-task-${randomUUID()}`);
+  const root = fixturePath("assay-task");
   roots.push(root);
   const template = await writeBareTemplate(root);
   if (mode === "standalone") {
@@ -347,7 +347,7 @@ describe("native Task creation and Markdown contract", () => {
   it("rejects a redirecting checkpoint transaction path", async () => {
     const root = await workspace("CheckpointBoundary");
     const created = await createTask({ root, title: "Checkpoint boundary" });
-    const outside = path.join(os.tmpdir(), `assay-task-transaction-${randomUUID()}.json`);
+    const outside = `${fixturePath("assay-task-transaction")}.json`;
     roots.push(outside);
     await writeFile(outside, "outside\n", "utf8");
     try {
@@ -801,7 +801,7 @@ describe("native Task persistence hardening", () => {
 
   it("rejects a redirecting tasks directory", async () => {
     const root = await workspace("Boundary");
-    const outside = path.join(os.tmpdir(), `assay-task-outside-${randomUUID()}`);
+    const outside = fixturePath("assay-task-outside");
     roots.push(outside);
     await mkdir(outside);
     const target = path.join(root, "tasks");
@@ -822,7 +822,7 @@ describe("native Task overlay conversion", () => {
   it("fail-closes a Task mutation after the conversion boundary and preserves the snapshot", async () => {
     const root = await workspace("ConvertConcurrentTask", "overlay");
     const task = await createTask({ root, title: "Stable task" });
-    const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
+    const target = fixturePath("assay-task-target");
     roots.push(target);
     let reached!: () => void;
     let release!: () => void;
@@ -862,7 +862,7 @@ describe("native Task overlay conversion", () => {
     await bindTask({ root, contextKey: "session:convert", id: task.task.id });
     const before = await readFile(taskFile(root, task.task.id, true), "utf8");
     const contextBefore = await readFile(path.join(root, ".assay", "task-contexts.json"));
-    const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
+    const target = fixturePath("assay-task-target");
     roots.push(target);
     await convertOverlayToStandalone({ root, target, move, keepOverlay });
     expect(await readFile(taskFile(target, task.task.id), "utf8")).toBe(before);
@@ -875,7 +875,7 @@ describe("native Task overlay conversion", () => {
   it("fails before writes when target tasks is nonempty", async () => {
     const root = await workspace("ConvertConflict", "overlay");
     await createTask({ root, title: "History" });
-    const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
+    const target = fixturePath("assay-task-target");
     roots.push(target);
     await mkdir(path.join(target, "tasks"), { recursive: true });
     await writeFile(path.join(target, "tasks", "owned"), "owned", "utf8");
@@ -888,7 +888,7 @@ describe("native Task overlay conversion", () => {
   it("rejects a redirecting source task tree before conversion output", async () => {
     const root = await workspace("ConvertRedirect", "overlay");
     const task = await createTask({ root, title: "History" });
-    const outside = path.join(os.tmpdir(), `assay-task-research-${randomUUID()}`);
+    const outside = fixturePath("assay-task-research");
     roots.push(outside);
     await mkdir(outside);
     const research = path.join(root, ".assay", "tasks", task.task.id, "research");
@@ -898,7 +898,7 @@ describe("native Task overlay conversion", () => {
       if ((error as NodeJS.ErrnoException).code === "EPERM") return;
       throw error;
     }
-    const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
+    const target = fixturePath("assay-task-target");
     roots.push(target);
     await expect(convertOverlayToStandalone({ root, target })).rejects.toThrow(
       /source tasks.*symlink|source tasks.*junction|source tasks.*reparse point/,
@@ -910,8 +910,8 @@ describe("native Task overlay conversion", () => {
     for (const move of [false, true]) {
       const root = await workspace(`ConvertTargetRedirect-${String(move)}`, "overlay");
       const task = await createTask({ root, title: "History" });
-      const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
-      const outside = path.join(os.tmpdir(), `assay-task-target-outside-${randomUUID()}`);
+      const target = fixturePath("assay-task-target");
+      const outside = fixturePath("assay-task-target-outside");
       roots.push(target, outside);
       await mkdir(target);
       await mkdir(outside);
@@ -949,7 +949,7 @@ describe("native Task overlay conversion", () => {
       const sourceContext = path.join(root, ".assay", "task-contexts.json");
       const sourceContextBytes = await readFile(sourceContext);
       const sourceTaskBytes = await readFile(taskFile(root, task.task.id, true));
-      const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
+      const target = fixturePath("assay-task-target");
       roots.push(target);
       const targetContext = path.join(target, ".assay", "task-contexts.json");
       await mkdir(path.dirname(targetContext), { recursive: true });
@@ -975,8 +975,8 @@ describe("native Task overlay conversion", () => {
       await bindTask({ root, contextKey: "session:redirect", id: task.task.id });
       const sourceContext = path.join(root, ".assay", "task-contexts.json");
       const sourceBefore = await readFile(sourceContext);
-      const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
-      const outside = path.join(os.tmpdir(), `assay-task-context-outside-${randomUUID()}`);
+      const target = fixturePath("assay-task-target");
+      const outside = fixturePath("assay-task-context-outside");
       roots.push(target, outside);
       await mkdir(target);
       await mkdir(outside);
@@ -1020,7 +1020,7 @@ describe("native Task overlay conversion", () => {
         ".assay-checkpoint.json",
       );
       const transactionBefore = await readFile(transaction);
-      const target = path.join(os.tmpdir(), `assay-task-target-${randomUUID()}`);
+      const target = fixturePath("assay-task-target");
       roots.push(target);
       await expect(
         convertOverlayToStandalone({ root, target, move, keepOverlay: !move }),

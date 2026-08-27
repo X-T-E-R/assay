@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fixtureRoot } from "assay-test-support";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { identitySafeRealpath } from "../src/filesystem-boundary.js";
@@ -55,7 +56,7 @@ async function exists(target: string): Promise<boolean> {
 }
 
 async function tempRoot(name: string): Promise<string> {
-  const parent = await mkdtemp(path.join(tmpdir(), "assay-012-"));
+  const parent = await mkdtemp(path.join(fixtureRoot(), "assay-012-"));
   roots.push(parent);
   return path.join(parent, name);
 }

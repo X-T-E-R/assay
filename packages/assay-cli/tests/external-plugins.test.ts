@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { fixtureRoot } from "assay-test-support";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -21,7 +21,7 @@ const tempRoots: string[] = [];
 let registryRoot = "";
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-external-plugin-cli-"));
+  const root = await mkdtemp(path.join(fixtureRoot(), "assay-external-plugin-cli-"));
   tempRoots.push(root);
   return root;
 }

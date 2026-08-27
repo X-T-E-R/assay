@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, open, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { fixtureRoot } from "assay-test-support";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { identitySafePathNamesOpenFile, identitySafeRealpath } from "../src/filesystem-boundary.js";
@@ -14,7 +14,7 @@ afterEach(async () => {
 
 describe("identity-safe filesystem boundaries", () => {
   it("accepts an ordinary path and rejects a symlink or junction", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "assay-identity-boundary-"));
+    const root = await mkdtemp(path.join(fixtureRoot(), "assay-identity-boundary-"));
     roots.push(root);
     const target = path.join(root, "target");
     const redirect = path.join(root, "redirect");
@@ -28,7 +28,7 @@ describe("identity-safe filesystem boundaries", () => {
   });
 
   it("binds an open authority file to its current name and rejects replacement", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "assay-open-identity-"));
+    const root = await mkdtemp(path.join(fixtureRoot(), "assay-open-identity-"));
     roots.push(root);
     const target = path.join(root, "authority.json");
     const displaced = path.join(root, "authority.old.json");

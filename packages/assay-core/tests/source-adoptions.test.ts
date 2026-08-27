@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
+import { fixtureRoot } from "assay-test-support";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -24,7 +24,7 @@ import {
 const tempRoots: string[] = [];
 
 async function tempDir(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "assay-source-adoptions-"));
+  const root = await mkdtemp(path.join(fixtureRoot(), "assay-source-adoptions-"));
   tempRoots.push(root);
   return root;
 }
