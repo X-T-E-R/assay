@@ -94,6 +94,41 @@ function pathKey(value: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
+/**
+ * Windows keeps a delete-pending entry named but unopenable until the last
+ * handle closes, so `lstat` and `realpath` answer EPERM/EACCES where POSIX
+ * answers ENOENT. For a lock waiter both answers carry the same fact — the
+ * entry it wanted is on its way out — and only ENOENT was being recognized.
+ */
+const WINDOWS_TEARDOWN_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/** Removal that has to succeed rides Node's documented Windows retry. */
+const REMOVAL_RETRY = { maxRetries: 10, retryDelay: 20 } as const;
+
+function isWindowsTeardown(error: unknown): boolean {
+  if (process.platform !== "win32") return false;
+  let current = error;
+  const visited = new Set<unknown>();
+  while (current instanceof Error && !visited.has(current)) {
+    visited.add(current);
+    const code = (current as NodeJS.ErrnoException).code;
+    if (code !== undefined && WINDOWS_TEARDOWN_CODES.has(code)) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
+async function withTeardownRetry<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= REMOVAL_RETRY.maxRetries || !isWindowsTeardown(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, REMOVAL_RETRY.retryDelay));
+    }
+  }
+}
+
 function isContained(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
@@ -156,6 +191,10 @@ export async function removeTaskFile(root: string, file: string): Promise<void> 
   await rm(file, { force: true });
 }
 
+/**
+ * Every entry a Task directory holds, in a stable order. Deciding which of
+ * them are Tasks, prefixes, or the reserved archive belongs to the tree walk.
+ */
 export async function listTaskDirectories(root: string, directory: string): Promise<Dirent[]> {
   await assertTaskStorageBoundary(root, directory);
   let entries: Dirent[];
@@ -165,9 +204,7 @@ export async function listTaskDirectories(root: string, directory: string): Prom
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-  return entries
-    .filter((entry) => entry.name !== "archive")
-    .sort((left, right) => left.name.localeCompare(right.name));
+  return entries.sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export async function atomicWriteTaskText(
@@ -219,6 +256,10 @@ async function withTaskLockRaw<T>(
       info = await lstat(lockDirectory);
     } catch (inspectionError) {
       if ((inspectionError as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if (isWindowsTeardown(inspectionError) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
       throw inspectionError;
     }
     if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -227,6 +268,10 @@ async function withTaskLockRaw<T>(
     try {
       await lstat(path.join(lockDirectory, "owner.json"));
     } catch (ownerError) {
+      if (isWindowsTeardown(ownerError) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
       if ((ownerError as NodeJS.ErrnoException).code === "ENOENT") {
         const current = await lstatIfPresent(lockDirectory);
         if (current === undefined || !sameDirectoryIdentity(info, current)) continue;
@@ -254,6 +299,10 @@ async function withTaskLockRaw<T>(
     } catch (error) {
       const current = await lstatIfPresent(lockDirectory);
       if (current === undefined) continue;
+      if (isWindowsTeardown(error) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
       if (errorHasCode(error, "ENOENT")) {
         if ((await lstatIfPresent(path.join(lockDirectory, "owner.json"))) !== undefined) {
           continue;
@@ -309,7 +358,7 @@ async function withTaskLockRaw<T>(
   }
   let owner: LockOwner;
   try {
-    owner = await readLockOwner(root, lockDirectory);
+    owner = await withTeardownRetry(() => readLockOwner(root, lockDirectory));
   } catch (releaseError) {
     // A callback that already detected a redirect/identity violation must not
     // have that security finding masked by our intentionally fail-closed
@@ -323,7 +372,7 @@ async function withTaskLockRaw<T>(
       `task lock ownership changed; refusing release: ${lockDirectory}`,
     );
   }
-  await rm(lockDirectory, { recursive: true, force: true });
+  await rm(lockDirectory, { recursive: true, force: true, ...REMOVAL_RETRY });
   if (!outcome.ok) throw outcome.error;
   return outcome.value;
 }
@@ -417,7 +466,9 @@ export async function withWorkspaceConversionCoordination<T>(
     );
   } finally {
     await handle.close().catch(() => undefined);
-    await rm(boundary, { force: true });
+    // The boundary file is the one removal here that must land: leaving it
+    // behind wedges the workspace as permanently "converting".
+    await rm(boundary, { force: true, ...REMOVAL_RETRY });
     await cleanupCoordinationDirectories(root, prepared);
     if (options.removeStateDirectoryWhenEmpty) {
       await rmdir(prepared.stateDirectory).catch((error: unknown) => {
@@ -473,6 +524,7 @@ async function lstatIfPresent(
     return await lstat(target);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (isWindowsTeardown(error)) return undefined;
     throw error;
   }
 }
@@ -536,6 +588,15 @@ async function prepareCoordinationDirectories(root: string): Promise<Coordinatio
   return { stateDirectory, coordinationDirectory, transientStateDirectory };
 }
 
+/**
+ * Tidy the coordination scaffolding away when this was the last participant.
+ *
+ * Every failure here means "leave it for the next caller", so none of them can
+ * be allowed to surface: the directories are recreated on demand, and a
+ * concurrent participant tearing its own claim down makes Windows answer this
+ * rmdir with EPERM rather than ENOTEMPTY. Throwing from the caller's `finally`
+ * turned completed mutations into failures.
+ */
 async function cleanupCoordinationDirectories(
   root: string,
   prepared: CoordinationDirectories,
@@ -545,18 +606,17 @@ async function cleanupCoordinationDirectories(
     await rmdir(prepared.coordinationDirectory);
     coordinationRemoved = true;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") coordinationRemoved = true;
-    else if (code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") coordinationRemoved = true;
   }
   if (!coordinationRemoved || !prepared.transientStateDirectory) return;
   const marker = path.join(prepared.stateDirectory, TRANSIENT_COORDINATION_MARKER);
-  await assertTaskStorageBoundary(root, prepared.stateDirectory);
-  await rm(marker, { force: true });
-  await rmdir(prepared.stateDirectory).catch((error: unknown) => {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
-  });
+  try {
+    await assertTaskStorageBoundary(root, prepared.stateDirectory);
+    await rm(marker, { force: true, ...REMOVAL_RETRY });
+    await rmdir(prepared.stateDirectory);
+  } catch {
+    // Same contract: an unremovable transient state root is not an error.
+  }
 }
 
 function sameDirectoryIdentity(
@@ -662,13 +722,18 @@ async function tryClaimLock(
     if (claimed) {
       const owner = await readLockOwner(root, finalDirectory).catch(() => undefined);
       if (owner?.token === token) {
-        await rm(finalDirectory, { recursive: true, force: true }).catch(() => undefined);
+        await rm(finalDirectory, { recursive: true, force: true, ...REMOVAL_RETRY }).catch(
+          () => undefined,
+        );
       }
     }
     throw error;
   } finally {
     if (!claimed) {
-      await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+      // An orphaned claim is what makes a sibling's coordination rmdir fail.
+      await rm(temporaryDirectory, { recursive: true, force: true, ...REMOVAL_RETRY }).catch(
+        () => undefined,
+      );
     }
   }
 }
@@ -681,7 +746,7 @@ async function quarantineLock(directory: string, suffix: string): Promise<void> 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
-  await rm(quarantine, { recursive: true, force: true });
+  await rm(quarantine, { recursive: true, force: true, ...REMOVAL_RETRY });
 }
 
 async function writeLockOwner(root: string, directory: string, token: string): Promise<void> {

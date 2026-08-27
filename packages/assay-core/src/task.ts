@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Dirent } from "node:fs";
 import { lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -25,11 +24,17 @@ import {
   TaskStorageBoundaryError,
   assertTaskStorageBoundary,
   atomicWriteTaskText,
-  listTaskDirectories,
   readTaskText,
   removeTaskFile,
   withTaskLock,
 } from "./tasks/task-storage.js";
+import {
+  MAX_TASK_PREFIX_DEPTH,
+  type TaskTree,
+  type TaskTreeEntry,
+  readTaskTree,
+  taskTreeLocations,
+} from "./tasks/task-tree.js";
 
 const MAX_TASK_FILE_BYTES = 1024 * 1024;
 const MAX_TASK_RECORDS = 4096;
@@ -146,6 +151,27 @@ export interface TaskListEntry {
   readonly status?: TaskStatus;
   readonly revision?: number;
   readonly issues: readonly TaskValidationIssue[];
+}
+
+/** What one Task directory says about itself, read without the lineage graph. */
+export type TaskSurveyEntry = TaskListEntry;
+
+export interface SurveyTasksOptions {
+  readonly root: string;
+  readonly includeArchived?: boolean;
+  /**
+   * `envelope` reads `task.json` only. `record` also reads the Task's own
+   * contract files and directory shape. Neither reads another Task.
+   */
+  readonly depth?: "envelope" | "record";
+}
+
+export interface SurveyTasksResult {
+  readonly root: string;
+  readonly ok: boolean;
+  readonly tasks: readonly TaskSurveyEntry[];
+  readonly context_issues: readonly TaskValidationIssue[];
+  readonly context_path: string;
 }
 
 export interface ListTasksResult {
@@ -402,6 +428,19 @@ function taskDirectory(location: TaskLocation, id: string, archived: boolean): s
   return path.join(archived ? location.archiveDirectory : location.directory, assertTaskId(id));
 }
 
+async function taskTree(location: TaskLocation, includeArchived = true): Promise<TaskTree> {
+  try {
+    return await readTaskTree({
+      root: location.root,
+      liveDirectory: location.directory,
+      archiveDirectory: location.archiveDirectory,
+      includeArchived,
+    });
+  } catch (error) {
+    throwStorage(error);
+  }
+}
+
 function displayPath(location: TaskLocation, target: string): string {
   return path.relative(location.root, target).split(path.sep).join("/");
 }
@@ -416,27 +455,43 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-async function locateTask(location: TaskLocation, idInput: string): Promise<LocatedTask> {
+function duplicateStorageError(
+  location: TaskLocation,
+  id: string,
+  found: readonly TaskTreeEntry[],
+) {
+  return new TaskError(
+    "TASK_CONFLICT",
+    withSemanticModel(
+      `task ${id} exists in more than one place: ${found
+        .map((entry) => displayPath(location, entry.directory))
+        .join(", ")}`,
+      "taskDuplicateStorage",
+    ),
+    { details: { id, paths: found.map((entry) => displayPath(location, entry.directory)) } },
+  );
+}
+
+/**
+ * Resolve a stable id to the one directory that holds it, wherever a reader
+ * filed it. The id is the identity; the prefix path is navigation, so two
+ * copies of one id are a storage conflict rather than a choice to make.
+ */
+async function locateTask(
+  location: TaskLocation,
+  idInput: string,
+  tree?: TaskTree,
+): Promise<LocatedTask> {
   const id = assertTaskId(idInput);
-  const live = taskDirectory(location, id, false);
-  const archived = taskDirectory(location, id, true);
-  const [hasLive, hasArchived] = await Promise.all([pathExists(live), pathExists(archived)]);
-  if (hasLive && hasArchived) {
-    throw new TaskError(
-      "TASK_CONFLICT",
-      withSemanticModel(
-        `task exists in both live and archive storage: ${id}`,
-        "taskDuplicateStorage",
-      ),
-      { details: { id } },
-    );
-  }
-  if (!hasLive && !hasArchived) {
+  const found = taskTreeLocations(tree ?? (await taskTree(location)), id);
+  if (found.length > 1) throw duplicateStorageError(location, id, found);
+  const only = found[0];
+  if (only === undefined) {
     throw new TaskError("TASK_NOT_FOUND", `task not found: ${id}`, {
       details: { id },
     });
   }
-  return { directory: hasLive ? live : archived, archived: hasArchived };
+  return { directory: only.directory, archived: only.archived };
 }
 
 async function readBoundedText(
@@ -797,8 +852,9 @@ async function readTaskAt(
 async function readRawLocated(
   location: TaskLocation,
   id: string,
+  tree?: TaskTree,
 ): Promise<{ located: LocatedTask; raw: RawTask }> {
-  const located = await locateTask(location, id);
+  const located = await locateTask(location, id, tree);
   return { located, raw: await rawTaskAtDirectory(location, located, id) };
 }
 
@@ -867,10 +923,18 @@ function normalizeRelations(
   });
 }
 
+/**
+ * Walk the lineage graph reachable from these relations and refuse any cycle.
+ *
+ * This is the expensive half of Task integrity: it reads every reachable
+ * record, so it belongs to writes (which must not create a cycle) and to
+ * `validate` (which reports one) — never to `list`.
+ */
 async function assertRelationsAcyclic(
   location: TaskLocation,
   sourceId: string,
   relationsInput: readonly TaskRelation[],
+  tree?: TaskTree,
 ): Promise<readonly TaskRelation[]> {
   const relations = normalizeRelations(sourceId, relationsInput);
   const visiting = new Set<string>();
@@ -892,7 +956,7 @@ async function assertRelationsAcyclic(
       });
     }
     visiting.add(id);
-    const { raw } = await readRawLocated(location, id);
+    const { raw } = await readRawLocated(location, id, tree);
     for (const relation of raw.relations) await visit(relation.task_id);
     visiting.delete(id);
     visited.add(id);
@@ -909,12 +973,9 @@ function relationLockDirectory(location: TaskLocation): string {
   return path.join(location.locksDirectory, ".relations");
 }
 
+/** Every id the tree already occupies, prefixed or not, so allocation is safe. */
 async function storedTaskIds(location: TaskLocation): Promise<string[]> {
-  const [live, archived] = await Promise.all([
-    listTaskDirectories(location.root, location.directory),
-    listTaskDirectories(location.root, location.archiveDirectory),
-  ]);
-  return [...live, ...archived].map((entry) => entry.name);
+  return (await taskTree(location)).entries.map((entry) => entry.name);
 }
 
 async function writeMutation(
@@ -1021,26 +1082,165 @@ export async function showTask(options: ShowTaskOptions): Promise<TaskRecordResu
   }).catch(throwStorage);
 }
 
+function assertRecordBudget(tree: TaskTree): void {
+  if (tree.entries.length > MAX_TASK_RECORDS) {
+    throw new TaskError("TASK_INVALID", `task storage exceeds ${MAX_TASK_RECORDS} records`);
+  }
+}
+
+function findingEntries(location: TaskLocation, tree: TaskTree): TaskSurveyEntry[] {
+  return tree.findings.map((finding) => ({
+    id: finding.name,
+    path: displayPath(location, finding.directory),
+    archived: finding.archived,
+    valid: false,
+    issues: [{ code: "TASK_INVALID" as TaskErrorCode, message: finding.message }],
+  }));
+}
+
+/** Mark every id that the tree holds twice, whatever its prefixes are. */
+function flagDuplicateIds(
+  location: TaskLocation,
+  entries: readonly TaskSurveyEntry[],
+): TaskSurveyEntry[] {
+  const byId = new Map<string, TaskSurveyEntry[]>();
+  for (const entry of entries) {
+    const matching = byId.get(entry.id) ?? [];
+    matching.push(entry);
+    byId.set(entry.id, matching);
+  }
+  const conflicted = new Map<TaskSurveyEntry, string>();
+  for (const [id, matching] of byId) {
+    if (matching.length < 2) continue;
+    const where = matching.map((entry) => entry.path).join(", ");
+    for (const entry of matching) {
+      conflicted.set(entry, `task ${id} exists in more than one place: ${where}`);
+    }
+  }
+  return entries.map((entry) => {
+    const message = conflicted.get(entry);
+    if (message === undefined) return entry;
+    const { status: _status, ...withoutStatus } = entry;
+    return {
+      ...withoutStatus,
+      valid: false,
+      issues: [...entry.issues, { code: "TASK_CONFLICT" as TaskErrorCode, message }],
+    };
+  });
+}
+
+function sortSurveyEntries(entries: TaskSurveyEntry[]): TaskSurveyEntry[] {
+  return entries.sort(
+    (left, right) =>
+      left.id.localeCompare(right.id) ||
+      Number(left.archived) - Number(right.archived) ||
+      left.path.localeCompare(right.path),
+  );
+}
+
+/**
+ * Read what each Task directory says about itself, at one of two depths.
+ *
+ * `envelope` answers discovery's question — which Tasks are here and can I
+ * address them — from `task.json` alone: an unreadable envelope, an id that
+ * disagrees with its directory, and one id filed in two places are all cheap
+ * facts found while reading records that were going to be read anyway.
+ * `record` adds the Task's own files for workspace health.
+ *
+ * Neither depth takes a lock, recovers a crashed checkpoint, or reads another
+ * Task. Whether the lineage graph is sound needs every reachable record and is
+ * a question only `validateTasks` asks.
+ */
+async function surveyTaskStorage(
+  location: TaskLocation,
+  includeArchived: boolean,
+  depth: "envelope" | "record" = "envelope",
+  known?: TaskTree,
+): Promise<TaskSurveyEntry[]> {
+  const tree = known ?? (await taskTree(location, includeArchived));
+  assertRecordBudget(tree);
+  const entries: TaskSurveyEntry[] = [];
+  for (const entry of tree.entries) {
+    const relative = displayPath(location, entry.directory);
+    const located = { directory: entry.directory, archived: entry.archived };
+    try {
+      assertTaskId(entry.name);
+      if (!entry.isDirectory || entry.isSymbolicLink) {
+        throw new TaskError("TASK_STORAGE_BOUNDARY", "task entry is not a real directory");
+      }
+      const raw = await rawTaskAtDirectory(location, located, entry.name);
+      if (depth === "record") {
+        await assertTaskDirectoryShape(location, entry.directory);
+        await readTaskAt(location, located, entry.name);
+      }
+      entries.push({
+        id: entry.name,
+        path: relative,
+        archived: entry.archived,
+        valid: true,
+        title: raw.record.title,
+        name: raw.record.name,
+        status: raw.status,
+        revision: raw.revision,
+        issues: [],
+      });
+    } catch (error) {
+      const taskError = taskErrorFrom(error, "task storage read failed");
+      entries.push({
+        id: entry.name,
+        path: relative,
+        archived: entry.archived,
+        valid: false,
+        issues: [{ code: taskError.code, message: taskError.message }],
+      });
+    }
+  }
+  return sortSurveyEntries([
+    ...flagDuplicateIds(location, entries),
+    ...findingEntries(location, tree),
+  ]);
+}
+
+/** Envelope-level discovery and storage health, without the lineage graph. */
+export async function surveyTasks(options: SurveyTasksOptions): Promise<SurveyTasksResult> {
+  const location = await taskLocation(options.root);
+  const tree = await taskTree(location, options.includeArchived ?? true);
+  const entries = await surveyTaskStorage(
+    location,
+    options.includeArchived ?? true,
+    options.depth ?? "envelope",
+    tree,
+  );
+  const contextIssues = await taskContextIssues(location, tree);
+  return {
+    root: location.root,
+    tasks: entries,
+    ok: entries.every((entry) => entry.valid) && contextIssues.length === 0,
+    context_issues: contextIssues,
+    context_path: displayPath(location, location.contextsFile),
+  };
+}
+
 async function validationForEntry(
   location: TaskLocation,
-  entry: Dirent,
-  archived: boolean,
+  entry: TaskTreeEntry,
+  tree: TaskTree,
 ): Promise<TaskValidationEntry> {
   const id = entry.name;
-  const directory = path.join(archived ? location.archiveDirectory : location.directory, id);
-  const relative = displayPath(location, directory);
+  const relative = displayPath(location, entry.directory);
+  const archived = entry.archived;
   try {
     assertTaskId(id);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+    if (!entry.isDirectory || entry.isSymbolicLink) {
       throw new TaskError("TASK_STORAGE_BOUNDARY", "task entry is not a real directory");
     }
     const task = await withTaskLock(location.root, taskLockDirectory(location, id), async () => {
-      const located = { directory, archived };
+      const located = { directory: entry.directory, archived };
       await recoverCheckpointTransaction(location, located, id);
-      await assertTaskDirectoryShape(location, directory);
+      await assertTaskDirectoryShape(location, entry.directory);
       return readTaskAt(location, located, id);
     });
-    await assertRelationsAcyclic(location, id, task.relations);
+    await assertRelationsAcyclic(location, id, task.relations, tree);
     return {
       id,
       path: relative,
@@ -1065,48 +1265,16 @@ async function allValidationEntries(
   location: TaskLocation,
   includeArchived: boolean,
 ): Promise<TaskValidationEntry[]> {
-  const live = await listTaskDirectories(location.root, location.directory);
-  const archived = includeArchived
-    ? await listTaskDirectories(location.root, location.archiveDirectory)
-    : [];
-  if (live.length + archived.length > MAX_TASK_RECORDS) {
-    throw new TaskError("TASK_INVALID", `task storage exceeds ${MAX_TASK_RECORDS} records`);
-  }
+  const tree = await taskTree(location, includeArchived);
+  assertRecordBudget(tree);
   const results: TaskValidationEntry[] = [];
-  for (const entry of live) {
-    results.push(await validationForEntry(location, entry, false));
+  for (const entry of tree.entries) {
+    results.push(await validationForEntry(location, entry, tree));
   }
-  for (const entry of archived) {
-    results.push(await validationForEntry(location, entry, true));
-  }
-  const locationsById = new Map<string, TaskValidationEntry[]>();
-  for (const result of results) {
-    const matching = locationsById.get(result.id) ?? [];
-    matching.push(result);
-    locationsById.set(result.id, matching);
-  }
-  for (const [id, matching] of locationsById) {
-    if (matching.length < 2) continue;
-    for (const conflict of matching) {
-      const index = results.indexOf(conflict);
-      const { status: _status, ...withoutStatus } = conflict;
-      results[index] = {
-        ...withoutStatus,
-        valid: false,
-        issues: [
-          ...conflict.issues,
-          {
-            code: "TASK_CONFLICT",
-            message: `task exists in both live and archive storage: ${id}`,
-          },
-        ],
-      };
-    }
-  }
-  return results.sort(
-    (left, right) =>
-      left.id.localeCompare(right.id) || Number(left.archived) - Number(right.archived),
-  );
+  return sortSurveyEntries([
+    ...flagDuplicateIds(location, results),
+    ...findingEntries(location, tree),
+  ]);
 }
 
 export async function listTasks(options: ListTasksOptions): Promise<ListTasksResult> {
@@ -1117,32 +1285,20 @@ export async function listTasks(options: ListTasksOptions): Promise<ListTasksRes
   const status = options.status === undefined ? undefined : normalizeStatus(options.status);
   if (options.cursor !== undefined) assertTaskId(options.cursor);
   const location = await taskLocation(options.root);
-  const validation = await allValidationEntries(location, true);
-  const issues = validation.filter((entry) => !entry.valid);
-  const afterCursor = validation.filter(
+  const survey = await surveyTaskStorage(location, true);
+  const matching = survey.filter(
     (entry) =>
       entry.valid &&
       (options.archived === true || !entry.archived) &&
-      (options.cursor === undefined || entry.id > options.cursor),
+      (options.cursor === undefined || entry.id > options.cursor) &&
+      (status === undefined || entry.status === status),
   );
-  const matching: TaskListEntry[] = [];
-  for (const entry of afterCursor) {
-    const task = await showTask({ root: location.root, id: entry.id });
-    if (status !== undefined && task.task.status !== status) continue;
-    matching.push({
-      ...entry,
-      title: task.task.title,
-      name: task.task.name,
-      status: task.task.status,
-      revision: task.revision,
-    });
-  }
   const page = matching.slice(0, limit);
   const last = page.at(-1);
   return {
     root: location.root,
     tasks: page,
-    issues,
+    issues: survey.filter((entry) => !entry.valid),
     ...(matching.length > page.length && last !== undefined ? { next_cursor: last.id } : {}),
   };
 }
@@ -1249,27 +1405,15 @@ export async function archiveTask(options: ArchiveTaskOptions): Promise<TaskReco
   const id = assertTaskId(options.id);
   return withTaskLock(location.root, relationLockDirectory(location), () =>
     withTaskLock(location.root, taskLockDirectory(location, id), async () => {
-      const live = taskDirectory(location, id, false);
+      // Archive storage stays flat whatever prefix the Task was filed under, so
+      // the source is wherever the tree found it and the target is always
+      // tasks/archive/<id>.
+      const located = await locateTask(location, id);
       const archived = taskDirectory(location, id, true);
-      const [hasLive, hasArchived] = await Promise.all([pathExists(live), pathExists(archived)]);
-      if (hasLive && hasArchived) {
-        throw new TaskError(
-          "TASK_CONFLICT",
-          withSemanticModel(
-            `task exists in both live and archive storage: ${id}`,
-            "taskDuplicateStorage",
-          ),
-        );
-      }
-      if (hasArchived) {
-        return readTaskAt(location, { directory: archived, archived: true }, id);
-      }
-      if (!hasLive) {
-        throw new TaskError("TASK_NOT_FOUND", `task not found: ${id}`);
-      }
-      await recoverCheckpointTransaction(location, { directory: live, archived: false }, id);
-      const current = await readTaskAt(location, { directory: live, archived: false }, id);
-      await assertTaskDirectoryShape(location, live);
+      if (located.archived) return readTaskAt(location, located, id);
+      await recoverCheckpointTransaction(location, located, id);
+      const current = await readTaskAt(location, located, id);
+      await assertTaskDirectoryShape(location, located.directory);
       if (!isTerminal(current.task.status)) {
         throw new TaskError(
           "TASK_NOT_TERMINAL",
@@ -1278,10 +1422,11 @@ export async function archiveTask(options: ArchiveTaskOptions): Promise<TaskReco
       }
       await archiveProbe?.(id);
       await mkdir(location.archiveDirectory, { recursive: true });
+      await assertTaskStorageBoundary(location.root, archived);
       if (await pathExists(archived)) {
         throw new TaskError("TASK_ALREADY_EXISTS", `archive target already exists: ${id}`);
       }
-      await rename(live, archived);
+      await rename(located.directory, archived);
       return readTaskAt(location, { directory: archived, archived: true }, id);
     }),
   ).catch(throwStorage);
@@ -1418,19 +1563,53 @@ export async function setTaskRelations(
   ).catch(throwStorage);
 }
 
+/** Every binding must still name one readable Task, wherever it is filed. */
+async function taskContextIssues(
+  location: TaskLocation,
+  tree?: TaskTree,
+): Promise<TaskValidationIssue[]> {
+  const issues: TaskValidationIssue[] = [];
+  try {
+    const contexts = await readContexts(location);
+    const bindings = Object.entries(contexts.bindings);
+    const resolved = bindings.length === 0 ? undefined : (tree ?? (await taskTree(location)));
+    for (const [contextKey, id] of bindings) {
+      try {
+        assertContextKey(contextKey);
+        const located = await locateTask(location, assertTaskId(id), resolved);
+        await readTaskAt(location, located, id);
+      } catch (error) {
+        const taskError = taskErrorFrom(error, "task context validation failed");
+        issues.push({ code: taskError.code, message: `${contextKey}: ${taskError.message}` });
+      }
+    }
+  } catch (error) {
+    const taskError = taskErrorFrom(error, "task context validation failed");
+    issues.push({ code: taskError.code, message: taskError.message });
+  }
+  return issues;
+}
+
 export async function validateTasks(options: ValidateTasksOptions): Promise<ValidateTasksResult> {
   const location = await taskLocation(options.root);
   if (options.id !== undefined) {
     const id = assertTaskId(options.id);
     try {
-      const located = await locateTask(location, id);
+      const tree = await taskTree(location);
+      const located = await locateTask(location, id, tree);
       const info = await lstat(located.directory);
-      const entry = {
-        name: id,
-        isDirectory: () => info.isDirectory(),
-        isSymbolicLink: () => info.isSymbolicLink(),
-      } as Dirent;
-      const result = await validationForEntry(location, entry, located.archived);
+      const result = await validationForEntry(
+        location,
+        {
+          name: id,
+          prefix: "",
+          directory: located.directory,
+          archived: located.archived,
+          isDirectory: info.isDirectory(),
+          isSymbolicLink: info.isSymbolicLink(),
+        },
+        tree,
+      );
       return {
         root: location.root,
         valid: result.valid,
@@ -1457,26 +1636,7 @@ export async function validateTasks(options: ValidateTasksOptions): Promise<Vali
     }
   }
   const tasks = await allValidationEntries(location, options.includeArchived ?? true);
-  const contextIssues: TaskValidationIssue[] = [];
-  try {
-    const contexts = await readContexts(location);
-    for (const [contextKey, id] of Object.entries(contexts.bindings)) {
-      try {
-        assertContextKey(contextKey);
-        const located = await locateTask(location, assertTaskId(id));
-        await readTaskAt(location, located, id);
-      } catch (error) {
-        const taskError = taskErrorFrom(error, "task context validation failed");
-        contextIssues.push({
-          code: taskError.code,
-          message: `${contextKey}: ${taskError.message}`,
-        });
-      }
-    }
-  } catch (error) {
-    const taskError = taskErrorFrom(error, "task context validation failed");
-    contextIssues.push({ code: taskError.code, message: taskError.message });
-  }
+  const contextIssues = await taskContextIssues(location);
   return {
     root: location.root,
     valid: tasks.every((task) => task.valid) && contextIssues.length === 0,

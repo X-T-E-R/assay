@@ -59,7 +59,7 @@ import {
 import { collectSourceHealthRows, getSourceStatus, resolveSourceObservation } from "./sources.js";
 import { SpecError, validateSpecs } from "./spec.js";
 import { loadSystemsRegistry, resolveRegistryPath } from "./systems-registry.js";
-import { TaskError, validateTasks } from "./task.js";
+import { TaskError, surveyTasks } from "./task.js";
 import { assertTemplateWriteBoundary, loadTemplate } from "./template.js";
 import { baseCoreTemplates, expandTemplate, manifestEntriesForScaffold } from "./templates.js";
 import { nowIso } from "./time.js";
@@ -921,11 +921,13 @@ export async function checkFramework(
     });
   }
 
-  // Semantic check 10: native Task history. Task storage is optional, and one
-  // malformed historical record must not hide validation results for others.
+  // Semantic check 10: native Task storage. This reads each Task envelope and
+  // the context bindings; the lineage graph belongs to `assay task validate`,
+  // which is the one view that can afford to read every record twice. One
+  // malformed historical record must not hide the others.
   try {
-    const taskValidation = await validateTasks({ root });
-    for (const task of taskValidation.tasks) {
+    const taskSurvey = await surveyTasks({ root, depth: "record" });
+    for (const task of taskSurvey.tasks) {
       rows.push({
         path: task.path,
         status: task.valid ? "ok" : "error",
@@ -934,11 +936,11 @@ export async function checkFramework(
           : task.issues.map((issue) => `${issue.code}: ${issue.message}`).join("; "),
       });
     }
-    if (taskValidation.context_issues.length > 0) {
+    if (taskSurvey.context_issues.length > 0) {
       rows.push({
-        path: taskValidation.context_path,
+        path: taskSurvey.context_path,
         status: "error",
-        message: taskValidation.context_issues
+        message: taskSurvey.context_issues
           .map((issue) => `${issue.code}: ${issue.message}`)
           .join("; "),
       });

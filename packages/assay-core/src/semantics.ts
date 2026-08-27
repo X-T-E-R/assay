@@ -96,8 +96,10 @@ const SEMANTICS: readonly ObjectSemantics[] = [
       "Not when the work finishes inside the current exchange and nothing needs to resume it.",
       "Not as a permission token, an acceptance decision, an agent job, or a roadmap entry.",
       "Not for a second attempt, a change of owner, or partial progress on the same outcome. Keep the Task that owns it.",
+      "Not for a repeating unit of work you have many of — one contest problem, one book section. Those are plain directories in a template area until one of them needs tracked state or a durable id.",
     ],
     commonMisuses: [
+      "Opening a Task per item in a long, uniform series. Start with directories, add a Roadmap item when an outcome needs tracked state, and create a Task only when work needs a durable cross-session identity.",
       "Creating a second Task to retry the first one's outcome, which splits the history the stable id existed to hold.",
       "Trying to reopen a terminal Task instead of creating a successor and recording `continues` or `supersedes`.",
       "Hand-editing `task.json`; edit `prd.md` directly and let `assay task` write envelope fields.",
@@ -124,6 +126,7 @@ const SEMANTICS: readonly ObjectSemantics[] = [
     whenNotToUse: [
       "Not for the bounded work itself, which is a Task.",
       "Not for normative constraints or acceptance contracts, which are Specs.",
+      "Not for every member of a repeating series. An item earns its place when that outcome needs tracked state, one step above a plain directory and one below a Task.",
     ],
     commonMisuses: [
       "Expecting `task finish` to realize a linked item, or `roadmap realize` to finish its Tasks. Lifecycle never propagates through the link.",
@@ -419,7 +422,7 @@ export const SEMANTIC_MODELS = {
   taskContextBinding:
     "One context resolves to one Task: pass `--rebind` to move it rather than creating a second Task for the same outcome.",
   taskDuplicateStorage:
-    "One Task id lives in one place: keep either the live or the archived copy, not both.",
+    "One Task id lives in one directory: prefixes under `tasks/` are navigation, so delete the copy you do not want rather than keeping both.",
   systemAlreadyRegistered:
     "A registered system keeps its record: correct it with `assay system update <selector>`.",
   sourceNotCheckoutBacked:
