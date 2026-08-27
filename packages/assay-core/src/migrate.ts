@@ -166,9 +166,13 @@ export async function applyWorkspaceMigration(options: {
   for (const step of analysis.steps) {
     changes.push(...(await step.run(context)));
   }
+  // Re-read rather than stamping the copy taken above: a step is allowed to
+  // rewrite the manifest, and writing the pre-step version back would silently
+  // undo it.
+  const stamped = (await readRawManifest(analysis.root)) ?? manifest;
   await writeFile(
     path.join(analysis.root, MANIFEST_FILE),
-    stringifySortedJson({ ...manifest, framework_version: CURRENT_VERSION }),
+    stringifySortedJson({ ...stamped, framework_version: CURRENT_VERSION }),
     "utf8",
   );
   changes.push(`${MANIFEST_FILE}: framework_version ${analysis.from} -> ${analysis.to}`);
@@ -713,10 +717,67 @@ const sourceAdoptionCollapseStep: WorkspaceMigrationStep = {
 };
 
 /**
+ * Stock 0.13 zone purposes, keyed by zone path, with the 0.14 wording.
+ *
+ * Deliberately a table of exact strings rather than a rule. The manifest is
+ * where a workspace records what it decided its own directories are for, and a
+ * purpose someone edited is theirs; only the sentence 0.13 shipped verbatim is
+ * safe to treat as vocabulary that moved on.
+ */
+const STOCK_ZONE_PURPOSES: readonly {
+  readonly path: string;
+  readonly from: string;
+  readonly to: string;
+}[] = [
+  {
+    path: "sources",
+    from: "Living and frozen external evidence",
+    to: "External material, tracked or copied",
+  },
+];
+
+/**
+ * Retire the 0.13 vocabulary still quoted in the manifest.
+ *
+ * `assay check` reads each zone's purpose straight from the manifest, so a
+ * migrated workspace kept describing `sources/` in terms of the living/frozen
+ * split that 0.14 removed. Nothing behaves differently; the workspace stops
+ * teaching a distinction that no longer exists.
+ */
+const zonePurposeVocabularyStep: WorkspaceMigrationStep = {
+  id: "manifest-zone-purposes",
+  summary: "rewrite stock 0.13 zone purposes in the manifest to current wording",
+  run: async (context) => {
+    const manifest = await readRawManifest(context.root);
+    const layout = manifest ? rawLayout(manifest) : null;
+    if (!manifest || !layout || !Array.isArray(layout.entries)) return [];
+    const changes: string[] = [];
+    const entries = layout.entries.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+      const record = entry as Record<string, unknown>;
+      const known = STOCK_ZONE_PURPOSES.find(
+        (stock) => record.path === stock.path && record.purpose === stock.from,
+      );
+      if (!known) return entry;
+      changes.push(`${MANIFEST_FILE}: zone ${known.path} purpose -> ${known.to}`);
+      return { ...record, purpose: known.to };
+    });
+    if (changes.length === 0) return [];
+    await writeFile(
+      path.join(context.root, MANIFEST_FILE),
+      stringifySortedJson({ ...manifest, layout: { ...layout, entries } }),
+      "utf8",
+    );
+    return changes;
+  },
+};
+
+/**
  * Ordered migration steps. A later slice adds its record kind here; the update
  * command needs no change to run it.
  */
 export const MIGRATION_STEPS: readonly WorkspaceMigrationStep[] = [
   sourceContentModeStep,
   sourceAdoptionCollapseStep,
+  zonePurposeVocabularyStep,
 ];

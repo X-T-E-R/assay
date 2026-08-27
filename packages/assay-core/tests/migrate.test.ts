@@ -363,6 +363,46 @@ describe("workspace migration into 0.14", () => {
   );
 
   it(
+    "retires the stock 0.13 zone purpose and leaves a customized one alone",
+    async () => {
+      const legacy = await legacyWorkspace("MigrationZonePurposes");
+      const manifestFile = path.join(legacy.root, ".assay", "manifest.json");
+      const before = JSON.parse(await readFile(manifestFile, "utf8"));
+      before.layout.entries = before.layout.entries.map(
+        (entry: { readonly path: string; readonly purpose?: string }) => {
+          if (entry.path === "sources") {
+            return { ...entry, purpose: "Living and frozen external evidence" };
+          }
+          if (entry.path === "analyses/gaps") {
+            return { ...entry, purpose: "Our own gap vocabulary, deliberately different" };
+          }
+          return entry;
+        },
+      );
+      await writeFile(manifestFile, JSON.stringify(before, null, 2), "utf8");
+
+      const result = await applyWorkspaceMigration({ root: legacy.root });
+      expect(result.changes.join("\n")).toContain(
+        "zone sources purpose -> External material, tracked or copied",
+      );
+
+      const manifest = await loadManifest(legacy.root);
+      expect(manifest?.framework_version).toBe("0.14.0");
+      const purposes = new Map(
+        (manifest?.layout.entries ?? []).map((entry) => [entry.path, entry.purpose]),
+      );
+      expect(purposes.get("sources")).toBe("External material, tracked or copied");
+      expect(purposes.get("analyses/gaps")).toBe("Our own gap vocabulary, deliberately different");
+
+      const check = await checkFramework({ root: legacy.root });
+      expect(check.rows.some((row) => row.message === "Living and frozen external evidence")).toBe(
+        false,
+      );
+    },
+    GIT_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
     "collapses living and frozen sources into content modes without dropping a record",
     async () => {
       const legacy = await legacyWorkspace("MigrationApply");
