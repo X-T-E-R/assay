@@ -183,7 +183,7 @@ migrates a 0.13.0 workspace in place; there are no compatibility shims behind it
   it is now the only command that pays for it. A dangling relation target is
   reported by `validate` and nowhere else, so a clean `list` is not a claim about
   the graph. On a 300-Task workspace with a web of relations, `assay task list`
-  went from about 62s to about 1.0s.
+  went from over two minutes to about 1.5s.
 - `assay check` reads each Task's envelope and its own contract files without
   walking the relation graph, and no longer repairs a crash-left checkpoint
   transaction as a side effect of being asked for a health report. `assay task
