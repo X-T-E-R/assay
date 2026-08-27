@@ -23,7 +23,7 @@ not have to reconstruct the relationship from prose.
 
 Source Adoption v1 supports:
 
-- one living or frozen Source per adoption definition;
+- one Source per adoption definition, tracked checkout or copied content alike;
 - one or more independently accepted target systems;
 - source and target locators for code, prompts, schemas, workflows,
   documentation, UI assets, license files, and other artifacts;
@@ -305,16 +305,13 @@ duration, so a concurrent command is never interrupted.
 
 ## Source Checkout Safety
 
-Living-source refresh may reset or replace Assay's managed checkout. Before any
-refresh or branch switch, Assay refuses to continue when the managed checkout
-contains:
-
-- modified or untracked Git files;
-- an unrecorded local Git commit;
-- directory-checkout bytes that differ from the latest observation.
-
-This is a data-loss boundary, not an adoption policy. Preserve or remove the
-local changes explicitly, then run the source command again.
+Refreshing a checkout-backed source never rewrites local work. `sync` fetches and
+fast-forwards; `switch` moves the checkout. Neither resets or cleans, and neither
+refuses because the checkout is dirty. What Assay does instead is record it: the
+observation carries an `observed with local modifications` advisory when the
+working tree is dirty, and a note that the upstream could not be fast-forwarded
+when it could not. Git itself is what declines to overwrite uncommitted bytes,
+and that is the data-loss boundary — Assay does not add a second one on top.
 
 ## Command Reference
 

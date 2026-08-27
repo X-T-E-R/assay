@@ -40,7 +40,7 @@ Assay 把这条闭环放进你的版本控制里。纪律很小，但很严格�
 
 Assay 是一个通用工作台，但有三类场景最能发挥它的价值：
 
-- **评估和引进外部框架。** 把一个仓库加为 living 或 frozen Source，在 Analysis 中评审，记录 `adopt` / `reject` / `experiment` 出口。Source adoption 收据随后把"你搬进自己系统的材料"与证据、accept/reject/defer 决策绑定——一年后的你能精确知道每块东西来自哪里、为什么。
+- **评估和引进外部框架。** 把一个仓库加为 Source，在 Analysis 中评审，记录 `adopt` / `reject` / `experiment` 出口。Source adoption 收据随后把"你搬进自己系统的材料"与证据、accept/reject/defer 决策绑定——一年后的你能精确知道每块东西来自哪里、为什么。
 - **和 AI 助手一起跑的长期项目。** Task 有稳定 id、reader-owned PRD 和交接 checkpoint；Roadmap 与 Spec 承载方向与验收。它们都能跨会话、跨 agent、跨上下文压缩存活。
 - **任何证据驱动的探索。** 一次性 Template 为不同类型的工作搭建闭环：`study`（评估外部系统）、`solve`（目标、尝试、基准）、`explore`（并行方案与试验）。自定义 Template 就是普通 YAML。
 
@@ -74,7 +74,7 @@ node packages/assay-cli/dist/cli.js check  --root ../my-study
 一个典型会话：
 
 ```bash
-assay source add https://github.com/some/framework --mode frozen
+assay source add https://github.com/some/framework
 assay analysis new "Framework review" --for-source framework
 assay analysis close analyses/<file>.md --exit adopt --note "模式 X 值得复用"
 assay knowledge add pattern "模式 X" --from-analysis analyses/<file>.md
@@ -89,7 +89,7 @@ assay task create --title "移植模式 X" --description "带验收标准的有�
 | **Task** | 可持久寻址的有界成果（`task-0001-<slug>`），reader-owned `prd.md`、交接 checkpoint、类型化 lineage 关系与显式 host-context 绑定。 |
 | **Roadmap** | 项目成果，state（`candidate` → `committed` → `realized`）与 horizon（`now` / `next` / `later`）分离，可链接 Task 但不耦合生命周期。 |
 | **Spec** | 封闭式 machine envelope + reader-owned 正文；从 Analysis 或 Task 显式 promote 并记录来源。 |
-| **Source** | living/frozen 外部材料，不可变 observation 账本、漂移报告与 checkout 数据丢失防护。 |
+| **Source** | 外部材料——受跟踪的 Git checkout 或复制进来的内容——append-only observation 账本、漂移报告，以及决策需要时的字节 capture。 |
 | **Source adoption** | 上游材料进入自有系统的可追溯采用关系，含证据记录与 accept / reject / defer 决策。 |
 | **Analysis / Knowledge** | 带显式决策出口的解读，以及被提升后不再堆在 inbox 里的结论。 |
 | **System** | 独立版本化系统的注册表（可以是各自独立的 Git 仓库），含 primary/superseded 谱系。 |

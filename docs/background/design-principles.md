@@ -67,7 +67,9 @@ without assuming every project needs the same ceremony.
 The blocking boundary is narrow:
 
 - refuse operations that would corrupt or contradict persisted records;
-- refuse destructive refreshes when unrecorded checkout work could be lost;
+- delegate byte-loss protection to the tool that already owns it — Git declines
+  to overwrite uncommitted work, so Assay records what it found rather than
+  adding a gate of its own;
 - enforce policy only when the workspace explicitly declares it `required`;
 - otherwise record the fact, emit an advisory when requested, and let the
   caller decide.

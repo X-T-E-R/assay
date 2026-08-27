@@ -420,8 +420,8 @@ footer{border-top:1px solid var(--line);margin-top:40px}
           <div>
             <h3><span class="en">Evaluating external frameworks</span><span class="zh" lang="zh">评估外部框架</span></h3>
             <p>
-              <span class="en">Add a repo as a living or frozen <code>Source</code>, review it in an <code>Analysis</code>, and record an <code>adopt</code> / <code>reject</code> / <code>experiment</code> exit. Adoption receipts tie what you carried into your systems to evidence, so next year's you knows what came from where, and why.</span>
-              <span class="zh" lang="zh">把一个仓库加为 living 或 frozen <code>Source</code>，在 <code>Analysis</code> 中评审，记录 <code>adopt</code> / <code>reject</code> / <code>experiment</code> 出口。采纳收据把你搬进系统的材料与证据绑定，一年后的你能精确知道每块东西来自哪里、为什么。</span>
+              <span class="en">Add a repo as a <code>Source</code>, review it in an <code>Analysis</code>, and record an <code>adopt</code> / <code>reject</code> / <code>experiment</code> exit. Adoption receipts tie what you carried into your systems to evidence, so next year's you knows what came from where, and why.</span>
+              <span class="zh" lang="zh">把一个仓库加为 <code>Source</code>，在 <code>Analysis</code> 中评审，记录 <code>adopt</code> / <code>reject</code> / <code>experiment</code> 出口。采纳收据把你搬进系统的材料与证据绑定，一年后的你能精确知道每块东西来自哪里、为什么。</span>
             </p>
           </div>
         </li>
@@ -504,7 +504,7 @@ footer{border-top:1px solid var(--line);margin-top:40px}
         </figure>
         <figure class="term">
           <figcaption class="bar"><span class="en">A typical session</span><span class="zh" lang="zh">一个典型会话</span></figcaption>
-<pre><span class="k">assay</span> source add https://github.com/some/framework --mode frozen
+<pre><span class="k">assay</span> source add https://github.com/some/framework
 <span class="k">assay</span> analysis new "Framework review" --for-source framework
 <span class="k">assay</span> analysis close analyses/&lt;file&gt;.md --exit adopt --note "Pattern X is worth reusing"
 <span class="k">assay</span> knowledge add pattern "Pattern X" --from-analysis analyses/&lt;file&gt;.md

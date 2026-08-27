@@ -40,7 +40,7 @@ Assay keeps that loop under your version control. The discipline is small but st
 
 Assay is a general workbench, but three scenarios get the most out of it:
 
-- **Evaluating and adopting external frameworks.** Add a repo as a living or frozen Source, review it in an Analysis, and record an `adopt` / `reject` / `experiment` exit. Source-adoption receipts then tie the material you carried into your systems to evidence and accept/reject/defer decisions — so next year's you knows exactly what came from where, and why.
+- **Evaluating and adopting external frameworks.** Add a repo as a Source, review it in an Analysis, and record an `adopt` / `reject` / `experiment` exit. Source-adoption receipts then tie the material you carried into your systems to evidence and accept/reject/defer decisions — so next year's you knows exactly what came from where, and why.
 - **Long-running projects with AI assistants.** Tasks keep stable ids, reader-owned PRDs, and handoff checkpoints; Roadmaps and Specs hold direction and acceptance. All of it survives sessions, agent switches, and context compaction.
 - **Evidence-driven exploration of any kind.** One-shot Templates scaffold the loop for different work: `study` (evaluate external systems), `solve` (objectives, attempts, benchmarks), `explore` (parallel approaches and trials). Custom Templates are plain YAML.
 
@@ -74,7 +74,7 @@ Throughout the docs, `assay` refers to this built CLI (the package exposes the `
 A typical session:
 
 ```bash
-assay source add https://github.com/some/framework --mode frozen
+assay source add https://github.com/some/framework
 assay analysis new "Framework review" --for-source framework
 assay analysis close analyses/<file>.md --exit adopt --note "Pattern X is worth reusing"
 assay knowledge add pattern "Pattern X" --from-analysis analyses/<file>.md
@@ -89,7 +89,7 @@ assay task create --title "Port pattern X" --description "Bounded outcome with a
 | **Task** | Durable bounded outcomes (`task-0001-<slug>`) with reader-owned `prd.md`, handoff checkpoints, typed lineage, and explicit host-context bindings. |
 | **Roadmap** | Project outcomes with separate state (`candidate` → `committed` → `realized`) and horizon (`now` / `next` / `later`), linked to Tasks without lifecycle coupling. |
 | **Spec** | A closed machine envelope plus reader-owned prose; explicit promotion from an Analysis or Task with recorded provenance. |
-| **Source** | Living or frozen external material with an immutable observation ledger, drift reporting, and checkout data-loss protection. |
+| **Source** | External material — a tracked Git checkout or copied content — with an append-only observation ledger, drift reporting, and byte captures when a decision needs them. |
 | **Source adoption** | Traceable carry-over of upstream material into your systems, with evidence records and accept / reject / defer decisions. |
 | **Analysis / Knowledge** | Interpretation with explicit decision exits, and promoted conclusions kept out of the inbox. |
 | **System** | A registry of independently versioned systems (own Git repos welcome) with primary/superseded lineage. |

@@ -72,7 +72,9 @@ assay plugin disable|enable <external-id> [--json]
 assay plugin remove <external-id> [--json]
 
 # Sources / analysis / knowledge
-assay source add <repo-or-dir> [alias] [--mode living|frozen] [--branch <branch>] [--capture checkout|archive]
+assay source add <repo-or-dir> [alias] [--branch <branch>]
+assay source capture <alias> [--note <text>]
+assay source import <alias> <dir-or-archive> [--note <text>]
 assay source sync [alias] [--branch <branch>] [--ref <ref>] [--class same|patch|normal|major|replacement]
 assay source switch <alias> <branch-or-ref> [--sync]
 assay source status [alias]
@@ -232,17 +234,18 @@ If Assay reports a cutover error with an `assay-cutover:<observed>-><required>` 
 The study-style flow `sources → analyses → systems + knowledge` is not a directory-transfer graph where "file exists = step done". Each step must produce content before it counts as complete:
 
 ```
-source add <source> <alias> --mode frozen
+source add <source> <alias>
   → analysis new "Review" --for-source <alias>
   → fill ## Key observations / Adopt / Reject in the analysis   # content, not just a file
   → analysis close <path> --exit …   # records the decision exit, closes the loop
 ```
 
-3. **Add external evidence with `source add <repo-or-dir> [alias] --mode living|frozen`.** Living Sources default to checkout capture. Frozen Sources force archive capture, share the same `sources/<alias>/` namespace, and cannot sync or switch. The ledger uses `observations/`, `manifests/`, and `captures/`; diffs are derived rather than persisted, while `materials/` remains user-owned evidence.
-4. **Read upstream drift out of `status`, not out of a maintenance command.** The `Upstream` section compares each managed checkout against the commit its latest observation recorded, with no network, and names the Source adoption mappings a change reaches. `status --fetch` adds a remote comparison; a source it cannot reach is annotated and the command still exits 0. Run `source sync` when that section reports new upstream commits — and never as a routine habit.
-5. **Sync living Sources with `source sync [alias]`** when the external system changes. For Git-backed sources, sync refreshes the managed checkout before observing, and refuses to run when that checkout holds unrecorded work (modified or untracked files, an unrecorded local commit, or directory bytes differing from the latest observation) — preserve or discard the work in `sources/<alias>/checkout/` first. Change classes record workflow meaning rather than imposing a universal gate: `same` writes an event only, `patch`/`normal`/`major` describe the observed delta, and `replacement` should usually become a new lineage instead of pretending it is a refresh.
-6. **Register a Source adoption** when selected source material is carried into a registered system and should remain traceable across later updates. `source adoption take` covers one mapping; `source adoption register --file` covers several mappings, targets, or required evidence. Evidence is advisory unless the definition marks it `required`.
-7. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]`. Living and frozen Sources use the same resolver. Analysis close changes only the Analysis; Source observations remain immutable.
+3. **Add external evidence with `source add <repo-or-dir> [alias]`.** The shape follows the material: a Git repository or URL becomes a tracked checkout in `sources/<alias>/checkout/`, and anything else is copied once into `sources/<alias>/content/`. There is no mode flag. The ledger is `observations/` — one cheap append record per look, carrying the date, the commit when there is one, a note, and any advisories. `captures/` holds explicit byte preservation, `materials/` stays user-owned, and diffs are derived rather than persisted.
+4. **Pin evidence at the tier the decision needs.** Tier 0 is the default and costs nothing: the alias, the date, and the commit for a Git source. Tier 1 is identity — the commit and origin, or for copied content a tree hash computed on demand when an adoption or a decision cites it. Tier 2 is `source capture <alias>`, which copies the current bytes with an integrity hash and is the only routine command that hashes a tree. Reach for a capture when the bytes themselves have to survive, not on every look.
+5. **Read upstream drift out of `status`, not out of a maintenance command.** The `Upstream` section compares each managed checkout against the commit its latest observation recorded, with no network, and names the Source adoption mappings a change reaches. `status --fetch` adds a remote comparison; a source it cannot reach is annotated and the command still exits 0. Run `source sync` when that section reports new upstream commits — and never as a routine habit.
+6. **Sync checkout-backed Sources with `source sync [alias]`** when the external system changes. Sync never refuses because of local work: it fast-forwards what it can, records an `observed with local modifications` advisory when the checkout holds uncommitted changes, and records that the upstream could not fast-forward instead of rewriting anything. Git remains what protects the bytes. Copied content has no upstream to follow — replace it with `source import <alias> <dir>`, which captures the bytes it is about to replace first. Change classes record workflow meaning rather than imposing a universal gate: `same` writes an event only, `patch`/`normal`/`major` describe the observed delta, and `replacement` should usually become a new lineage instead of pretending it is a refresh.
+7. **Register a Source adoption** when selected source material is carried into a registered system and should remain traceable across later updates. `source adoption take` covers one mapping; `source adoption register --file` covers several mappings, targets, or required evidence. Evidence is advisory unless the definition marks it `required`.
+8. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]`. Both content modes use the same resolver. Analysis close changes only the Analysis; Source observations remain immutable. When an analysis closes on `adopt` or `reject`, consider recording a tier-1 pin for what it decided about — a suggestion, never a requirement.
 9. **Fill the analysis body when the decision needs durable rationale**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next step`) with real content drawn from the source. `check --advisories` can list empty drafts; `analysis close` trusts the caller's explicit exit and does not block on section-content heuristics.
 10. Convert promising findings into a candidate pattern under `analyses/patterns/`. Create a native Task only when future bounded work needs a complete Goal, Acceptance Criteria, and durable identity.
 11. Register active systems with `system register` (use `--primary` and `--vcs independent-git` when appropriate). If a registered System's metadata is wrong, use `system update` to correct `vcs`, `vcs_ref`, version, path, supersedes, or primary status. Path update is registry rebind only.
@@ -258,17 +261,17 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 - Do not hand-edit native `task.json` or `.assay/task-contexts.json`; edit `prd.md` directly and use `assay task` for machine metadata, lifecycle, relationships, and bindings.
 - Do not create a new Task for another attempt at the same bounded outcome, and do not write `handoff.md` after every update. Checkpoint only at a real continuation boundary.
 - Do not treat Task creation, binding, relationships, or `finish` as permission, assignment, project acceptance, Git closeout, roadmap state, or Relay promotion.
-- Do not put external evidence under `systems/`; add it as a living or frozen Source under `sources/<alias>/`.
+- Do not put external evidence under `systems/`; add it as a Source under `sources/<alias>/`.
 - Do not set two systems as `primary` simultaneously; use `system promote`.
 - Do not let `knowledge/` become an inbox; use `analyses/` for work-in-progress and `knowledge add` to promote.
 - Do not silently rename or delete legacy folders.
 - Do not copy AGPL or incompatible upstream source into our skill; extract patterns and document decisions instead.
-- Do not treat a frozen Source as adopted merely because it was copied; a freeze without an Analysis exit is unfinished work.
+- Do not treat a Source as adopted merely because its bytes were copied or captured; a copy without an Analysis exit is unfinished work.
 - Do not run `source sync` as a routine sweep. Read the `Upstream` section of `status` and sync the sources it reports as moved.
 
 ## Positive rules (what "absorbed" actually means)
 
-- When a frozen Source is meant to inform a decision, follow it with a source-bound Analysis containing the observations needed by that decision.
+- When copied content is meant to inform a decision, follow it with a source-bound Analysis containing the observations needed by that decision.
 - Record what this decision needs, not everything recordable. A Source's observation ledger exists so a later reader can tell what was looked at and when; read it with `source status`, `source log`, `source diff`, and `analysis new --for-source` rather than browsing `.assay/` by hand. Source observations never store Analysis status, so decide explicitly when a changed Source needs a new Analysis.
 - A file existing does not prove analysis quality. Use `## Key observations` and `## Adopt`/`## Reject` when durable rationale matters; Assay records explicit close decisions instead of pretending a mechanical text check can establish quality.
 - Closing an analysis (`analysis close --exit …`) records only the Analysis decision; it never rewrites Source observations.

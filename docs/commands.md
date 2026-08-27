@@ -61,9 +61,21 @@ Task, Roadmap, Spec, and System authority remain independent. Systems registry s
 ## Sources and adoptions
 
 ```text
-assay source add|sync|switch|status|log|diff ...
+assay source add|capture|import|sync|switch|status|log|diff ...
 assay source adoption register|take|list|show|status|inspect|evidence|verify|decide|history|rollback|update ...
 ```
+
+A source's shape follows what the material is, not a flag. A Git repository or
+URL is checkout-backed, and `sync`/`switch` move it; a plain directory or archive
+is copied in once, and `import` replaces that content. Either kind can be
+captured at any time: `capture` preserves the current bytes with an integrity
+hash, which is the only routine command that hashes a tree.
+
+`sync` and `switch` record what they find rather than refusing it. A checkout
+holding uncommitted work is observed with an `observed with local modifications`
+advisory on the observation; an upstream that cannot fast-forward is recorded the
+same way and left where it is. Git itself remains the thing that refuses to
+overwrite uncommitted bytes.
 
 Source adoption definitions and receipts use the `assay.source-adoption-*/v1`
 schema family and lazy `.assay/source-adoptions/` storage. The command namespace

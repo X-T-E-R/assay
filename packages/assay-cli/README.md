@@ -27,15 +27,23 @@ node ..\assay\packages\assay-cli\dist\cli.js check
 The default check covers workspace structure and persisted-record integrity.
 Add `--advisories` to request non-blocking workflow and content reminders.
 
-Add a living external source with a shallow checkout-backed entry:
+Add an external source. A Git repository or URL becomes a tracked checkout; a
+plain directory or archive is copied in once.
 
 ```powershell
 node ..\assay\packages\assay-cli\dist\cli.js source add <repo-or-dir> repo-name
 node ..\assay\packages\assay-cli\dist\cli.js source status repo-name
 node ..\assay\packages\assay-cli\dist\cli.js source sync repo-name
+node ..\assay\packages\assay-cli\dist\cli.js source capture repo-name
 ```
 
-`sources/<alias>/checkout/` is the current materialized living Source; for Git sources it is the repository root. Observation metadata uses source-local `observations/`, `manifests/`, and `captures/`. Frozen Sources force archive capture and cannot sync or switch; diffs are derived from manifests.
+A checkout-backed source keeps its bytes in `sources/<alias>/checkout/`; copied
+content lives in `sources/<alias>/content/`. The ledger is `observations/`, one
+cheap append record per look. `source capture` writes `captures/<id>/` with the
+bytes and their integrity manifest, and is the only routine command that hashes a
+tree. `sync` and `switch` apply to checkout-backed sources; they record an
+`observed with local modifications` advisory rather than refusing a checkout that
+holds uncommitted work.
 
 Track selected source material after it is adopted into a registered system:
 
