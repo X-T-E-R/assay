@@ -9,4 +9,5 @@
 - [spec.md](spec.md) — native Spec storage, promotion, lifecycle, and authority boundaries.
 - [source-reference.md](source-reference.md) — cross-workspace Source references, write-through, and the clone registry.
 - [source-adoption.md](source-adoption.md) — Source adoption mappings, identity pins, and record storage.
+- [architecture/README-assay-v2.zh-CN.md](architecture/README-assay-v2.zh-CN.md) — design proposal index: same-shape workspaces plus cross-workspace Source references (V2), with design history.
 - [agent-instructions.md](agent-instructions.md) — managed AGENTS block.
