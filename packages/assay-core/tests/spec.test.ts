@@ -621,8 +621,8 @@ describe("native Spec", { timeout: 60_000 }, () => {
     ]) {
       await expect(operation()).rejects.toMatchObject({
         code: "WORKSPACE_CUTOVER_REQUIRED",
-        observed: "0.13.0+s4+l8+r2",
-        required: "0.13.0+s4+l8+r3",
+        observed: "0.14.0+s4+l8+r2",
+        required: "0.14.0+s4+l8+r3",
       });
     }
     expect(await readFile(registryFile, "utf8")).toBe(before);

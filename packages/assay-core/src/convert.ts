@@ -183,20 +183,20 @@ async function rewriteCurrentSourceSemanticPaths(
         await writeFile(absolute, stringifyYaml(parsed), "utf8");
       }
     }
-    const manifests = path.join(targetEntry, "manifests");
-    if (await exists(manifests)) {
-      for (const file of await readdir(manifests, { withFileTypes: true })) {
-        if (!file.isFile() || !file.name.endsWith(".json")) continue;
-        const absolute = path.join(manifests, file.name);
-        const parsed = JSON.parse(await readFile(absolute, "utf8")) as Record<string, unknown>;
-        if (typeof parsed.root === "string") {
-          const relative = path.relative(sourceEntry, parsed.root);
-          if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-            parsed.root = path.resolve(targetEntry, relative);
-          }
+    const captures = path.join(targetEntry, "captures");
+    if (!(await exists(captures))) continue;
+    for (const capture of await readdir(captures, { withFileTypes: true })) {
+      if (!capture.isDirectory()) continue;
+      const absolute = path.join(captures, capture.name, "manifest.json");
+      if (!(await exists(absolute))) continue;
+      const parsed = JSON.parse(await readFile(absolute, "utf8")) as Record<string, unknown>;
+      if (typeof parsed.root === "string") {
+        const relative = path.relative(sourceEntry, parsed.root);
+        if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+          parsed.root = path.resolve(targetEntry, relative);
         }
-        await writeFile(absolute, stringifySortedJson(parsed), "utf8");
       }
+      await writeFile(absolute, stringifySortedJson(parsed), "utf8");
     }
   }
 }

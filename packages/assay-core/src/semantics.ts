@@ -168,8 +168,9 @@ const SEMANTICS: readonly ObjectSemantics[] = [
     antiRule: "record what this decision needs, not everything recordable",
     whyItExists: [
       "Understanding an external system means reading its material over time, so a Source keeps the bytes and an append-only observation ledger beside them.",
+      "A Git repository or URL is checkout-backed: `source sync` moves it and the commit is its identity, for free. A plain directory or archive is copied in once and stays put.",
       "`assay status` names the sources whose upstream moved and what that reaches. Sync those, rather than sweeping all of them on a schedule.",
-      "A Git-backed Source gets its identity from the commit at no cost; deeper pinning is for the decisions that actually need it.",
+      "Evidence is pinned in tiers: alias and date by default, identity (commit, or a computed content hash) when a decision needs to cite it, an explicit `source capture` when the bytes themselves have to survive.",
     ],
     whenNotToUse: [
       "Not for this project's own code, which belongs in a registered system directory.",
@@ -177,6 +178,7 @@ const SEMANTICS: readonly ObjectSemantics[] = [
     ],
     commonMisuses: [
       "Running `source sync` as a routine sweep instead of when `status` reports upstream movement.",
+      "Asking for a content hash on every look. The default record is alias and date; deeper pins are for decisions that cite them.",
       "Treating the copy as adopted. Adoption is a recorded mapping into a system, not the act of copying.",
       "Browsing `.assay/` by hand instead of `source status`, `source log`, and `source diff`.",
     ],
@@ -186,6 +188,7 @@ const SEMANTICS: readonly ObjectSemantics[] = [
       "assay source log <alias>",
       "assay source diff <alias>",
       "assay source sync [alias]",
+      "assay source capture <alias>",
     ],
   },
   {
@@ -197,6 +200,7 @@ const SEMANTICS: readonly ObjectSemantics[] = [
     whyItExists: [
       "Months later the question is which of our files came from upstream and whether upstream has moved since. A mapping answers that without reading prose.",
       "`assay status` reports how many mappings an upstream change reaches, which is the signal worth acting on.",
+      "Taking material pins the source identity it came from: the commit for a Git source, a computed content hash for anything else.",
     ],
     whenNotToUse: [
       "Not for material that was only read. Record what actually landed in a system.",
@@ -220,6 +224,7 @@ const SEMANTICS: readonly ObjectSemantics[] = [
     whyItExists: [
       "A decision needs somewhere to be worked out before it becomes a Spec or a Knowledge entry.",
       "`analysis close --exit adopt|reject|experiment` records the decision. Assay trusts the explicit exit instead of grading the prose.",
+      "An `adopt` or `reject` is what makes a pin worth having: close suggests pinning the source identity it rested on. Browsing needs no pin at all.",
     ],
     whenNotToUse: [
       "Not for something already decided and reusable. Promote that into `knowledge/`.",
@@ -228,6 +233,7 @@ const SEMANTICS: readonly ObjectSemantics[] = [
     commonMisuses: [
       "Leaving drafts open with an empty `## Key observations` and reporting the evidence loop as complete.",
       "Expecting `analysis close` to change the Source. It changes only the Analysis.",
+      "Reading the pin suggestion on close as a requirement. It is a suggestion; a light look stays unpinned.",
     ],
     commands: [
       'assay analysis new "<title>" --for-source <alias>',
@@ -364,7 +370,9 @@ export const SEMANTIC_HINTS = {
   "knowledge add":
     "Knowledge holds what survived a decision; work in progress stays in an Analysis.",
   "source add":
-    "A Source keeps external material readable; record what the decision needs, not everything recordable.",
+    "A Git source is checkout-backed and syncs; anything else is copied in once. Record what the decision needs, not everything recordable.",
+  "source capture":
+    "A capture is the explicit byte-level tier: reach for it when the bytes have to survive, not on every look.",
   "analysis new": "An Analysis is finished when it reaches an exit, not when the file exists.",
   "source adoption take":
     "A mapping records where material landed so a later upstream change can find it; it is not an approval.",
@@ -402,9 +410,35 @@ export const SEMANTIC_MODELS = {
     "One Task id lives in one place: keep either the live or the archived copy, not both.",
   systemAlreadyRegistered:
     "A registered system keeps its record: correct it with `assay system update <selector>`.",
+  sourceNotCheckoutBacked:
+    "Only a Git-backed Source has a checkout to move: copied content is replaced with `assay source import <alias> <dir>`, or preserved as it stands with `assay source capture <alias>`.",
+  sourceCopyContentOnly:
+    "Import replaces copied content: a checkout follows its upstream instead, through `assay source sync` or `assay source switch`.",
+  sourceCaptureMissing:
+    "A capture is a byte-level record: its manifest and its bytes stay together, so a missing half is repaired by taking a new capture.",
 } as const;
 
 export type SemanticModelKey = keyof typeof SEMANTIC_MODELS;
+
+/**
+ * What to say about pinning when a decision closes on `adopt` or `reject`.
+ *
+ * Those are the exits that leave a rationale someone will re-read, so tier 1 —
+ * the identity the decision rested on — is the tier worth having. For a Git
+ * source it is already recorded and free, so the line confirms it rather than
+ * asking for anything. For copied content it names the two ways to get one and
+ * says outright that neither is required: a light look stays unpinned by design,
+ * and nothing refuses to close because nothing was pinned.
+ */
+export function evidencePinSuggestion(input: {
+  readonly alias: string;
+  readonly commit: string | null;
+}): string {
+  if (input.commit) {
+    return `Pin: this rests on \`${input.alias}\` at ${input.commit.slice(0, 12)}, which is identity enough to re-read the decision later. A capture is for bytes that have to survive.`;
+  }
+  return `Pin: \`${input.alias}\` is copied content with no commit to cite. \`assay source adoption take\` records a content hash for what landed, and \`assay source capture ${input.alias}\` keeps the bytes. Neither is required.`;
+}
 
 /** State what failed, then what the model actually is, as two sentences. */
 export function withSemanticModel(message: string, key: SemanticModelKey): string {

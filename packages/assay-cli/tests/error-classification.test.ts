@@ -59,7 +59,7 @@ describe("assay error messages distinguish user input from internal faults", () 
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: Workspace cutover required");
-    expect(result.stderr).toContain("0.13.0+s4+l8");
+    expect(result.stderr).toContain("0.14.0+s4+l8");
     expect(result.stderr).toContain("assay-cutover:");
   });
 });

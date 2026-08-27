@@ -52,7 +52,7 @@ async function initWorkspace(name: string): Promise<string> {
 }
 
 describe("assay source CLI", () => {
-  it("adds, syncs, diffs, and logs a checkout-backed directory source", async () => {
+  it("copies in, captures, imports, diffs, and logs a plain directory source", async () => {
     const root = await initWorkspace("SourceCli");
     const source = path.join(await tempDir(), "demo-source");
     await mkdir(source, { recursive: true });
@@ -61,21 +61,43 @@ describe("assay source CLI", () => {
     const add = await runCli(["source", "add", source, "Demo Source", "--root", root]);
     expect(add.exitCode).toBe(0);
     expect(add.stdout).toContain("Added source: sources/demo-source");
-    expect(add.stdout).toContain("Checkout: sources/demo-source/checkout");
+    expect(add.stdout).toContain("Content: sources/demo-source/content");
+    expect(add.stdout).not.toContain("Checkout:");
     expect(
-      await pathExists(path.join(root, "sources", "demo-source", "checkout", "README.md")),
+      await pathExists(path.join(root, "sources", "demo-source", "content", "README.md")),
     ).toBe(true);
 
     const status = await runCli(["source", "status", "demo-source", "--root", root]);
     expect(status.exitCode).toBe(0);
     expect(status.stdout).toContain("demo-source");
-    expect(status.stdout).toContain("checkout");
+    expect(status.stdout).toContain("copy");
+
+    const capture = await runCli([
+      "source",
+      "capture",
+      "demo-source",
+      "--root",
+      root,
+      "--note",
+      "before the decision",
+    ]);
+    expect(capture.exitCode).toBe(0);
+    expect(capture.stdout).toContain("Captured source: sources/demo-source");
+    expect(capture.stdout).toContain("Capture: sources/demo-source/captures/");
+    expect(capture.stdout).toContain("Integrity: sha256-tree-v1:");
+
+    // Sync is the wrong tool for copied content, and says which one is right.
+    const refused = await runCli(["source", "sync", "demo-source", "--root", root]);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("keeps copied content");
+    expect(refused.stderr).toContain("assay source import");
 
     await writeFile(path.join(source, "README.md"), "# Demo\n\nv2\n", "utf8");
-    const sync = await runCli(["source", "sync", "demo-source", "--root", root]);
-    expect(sync.exitCode).toBe(0);
-    expect(sync.stdout).toContain("Source sync: demo-source");
-    expect(sync.stdout).toContain("Observation: sources/demo-source/observations/");
+    const imported = await runCli(["source", "import", "demo-source", source, "--root", root]);
+    expect(imported.exitCode).toBe(0);
+    expect(imported.stdout).toContain("Imported content: sources/demo-source/content");
+    expect(imported.stdout).toContain("Preserved: captures/");
+    expect(imported.stdout).toContain("Observation: sources/demo-source/observations/");
 
     const diff = await runCli(["source", "diff", "demo-source", "--root", root]);
     expect(diff.exitCode).toBe(0);
@@ -85,31 +107,37 @@ describe("assay source CLI", () => {
     const log = await runCli(["source", "log", "demo-source", "--root", root]);
     expect(log.exitCode).toBe(0);
     expect(log.stdout).toContain("Source log: demo-source");
+    expect(log.stdout).toContain("capture");
   });
 
-  it("rejects removed source capture modes", async () => {
-    const root = await initWorkspace("SourceCaptureCli");
+  it("no longer offers the retired mode and capture flags", async () => {
+    const root = await initWorkspace("SourceRetiredFlagsCli");
     const source = path.join(await tempDir(), "demo-source");
     await mkdir(source, { recursive: true });
     await writeFile(path.join(source, "README.md"), "# Demo\n\nv1\n", "utf8");
 
-    const result = await runCli([
-      "source",
-      "add",
-      source,
-      "Demo Source",
-      "--root",
-      root,
-      "--capture",
-      "metadata",
-    ]);
+    for (const [flag, value] of [
+      ["--mode", "frozen"],
+      ["--capture", "archive"],
+    ]) {
+      const result = await runCli([
+        "source",
+        "add",
+        source,
+        "Demo Source",
+        "--root",
+        root,
+        flag as string,
+        value as string,
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`unknown option '${flag}'`);
+    }
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Allowed choices are");
-    expect(result.stderr).toContain("checkout");
-    expect(result.stderr).toContain("archive");
-    expect(result.stderr).not.toContain("thin");
+    const help = await runCli(["source", "add", "--help"]);
+    expect(help.stdout).not.toContain("--mode");
+    expect(help.stdout).not.toContain("--capture");
   });
 
   it(

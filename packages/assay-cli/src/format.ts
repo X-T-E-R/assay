@@ -174,7 +174,7 @@ function zoneLines(zones: FrameworkStatusResult["zones"]): string[] {
 }
 
 /**
- * The Upstream block answers the question a living source exists to raise —
+ * The Upstream block answers the question a tracked source exists to raise —
  * did it move, and does that reach anything we adopted — in the command that
  * actually gets run. The `Next:` line names the command that resolves it, and
  * appears only when one exists.
@@ -236,8 +236,8 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
     ? [
         "Sources",
         `  - total: ${result.sources.total}`,
-        `  - living: ${result.sources.living}`,
-        `  - frozen: ${result.sources.frozen}`,
+        `  - checkouts: ${result.sources.checkouts}`,
+        `  - copies: ${result.sources.copies}`,
         `  - major changes: ${result.sources.majorChanges}`,
         "  - details: assay source status",
       ]
@@ -281,11 +281,15 @@ export function formatSourceStatusResult(result: SourceStatusResult): string {
   return [
     "Sources",
     `Root: ${result.root}`,
-    ...result.sources.map((source) => {
+    ...result.sources.flatMap((source) => {
       const commit = source.vcs?.commit ? ` ${source.vcs.commit.slice(0, 12)}` : "";
       const latest = source.latestObservation ?? "-";
       const change = source.latestChangeClass ?? "-";
-      return `${source.alias.padEnd(24)} ${source.mode.padEnd(7)} ${source.kind.padEnd(9)} ${source.captureMode.padEnd(8)} ${change.padEnd(11)} ${latest}${commit}`;
+      const captures = source.captures > 0 ? ` captures=${source.captures}` : "";
+      return [
+        `${source.alias.padEnd(24)} ${source.contentMode.padEnd(8)} ${source.kind.padEnd(9)} ${change.padEnd(11)} ${latest}${commit}${captures}`,
+        ...source.latestAdvisories.map((advisory) => `${" ".repeat(24)} ! ${advisory}`),
+      ];
     }),
   ].join("\n");
 }
@@ -296,9 +300,14 @@ export function formatSourceLogResult(result: SourceLogResult): string {
   }
   return [
     `Source log: ${result.alias}`,
-    ...result.entries.map(({ observation }) => {
+    ...result.entries.flatMap(({ observation }) => {
       const commit = observation.vcs?.commit ? ` ${observation.vcs.commit.slice(0, 12)}` : "";
-      return `${observation.observed_on} ${observation.change_class.padEnd(11)} ${observation.observation_id}${commit}`;
+      const capture = observation.capture ? " [capture]" : "";
+      return [
+        `${observation.observed_on} ${observation.kind.padEnd(7)} ${observation.change_class.padEnd(11)} ${observation.observation_id}${commit}${capture}`,
+        `${" ".repeat(20)} ${observation.note}`,
+        ...observation.advisories.map((advisory) => `${" ".repeat(20)} ! ${advisory}`),
+      ];
     }),
   ].join("\n");
 }
@@ -313,6 +322,7 @@ function revalidationSuggestionForChange(changeClass: SourceSyncResult["changeCl
 }
 
 export function formatSourceSyncResult(result: SourceSyncResult): string {
+  const advisories = result.advisories.map((advisory) => `Advisory: ${advisory}`);
   if (!result.observation) {
     return [
       `Source sync: ${result.alias}`,
@@ -320,6 +330,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
       `Change: ${result.changeClass}`,
       "Observation: unchanged",
       `Event: ${result.eventFile}`,
+      ...advisories,
       ...revalidationSuggestionForChange(result.changeClass),
     ].join("\n");
   }
@@ -328,8 +339,9 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
     `Path: ${result.path}`,
     `Change: ${result.changeClass}`,
     `Observation: ${result.observationFile ?? result.observation.observation_id}`,
-    `Manifest: ${result.manifestFile ?? result.observation.manifest}`,
+    `Note: ${result.observation.note}`,
     `Event: ${result.eventFile}`,
+    ...advisories,
     ...revalidationSuggestionForChange(result.changeClass),
   ].join("\n");
 }
@@ -509,6 +521,12 @@ export function formatUpdateResult(result: ApplyUpdateResult): string {
     `Framework update: ${result.dryRun ? "dry-run" : "applied"}`,
     `Root: ${result.root}`,
     `Conflict action: ${result.action}`,
+    ...(result.migration
+      ? [
+          `Records migrated: ${result.migration.from} -> ${result.migration.to}`,
+          ...result.migration.changes.map((line) => `  - ${line}`),
+        ]
+      : []),
     "Summary:",
     ...updateCounts(result.analysis).map((line) => `  - ${line}`),
     ...formatUpdatePlan(result.plan),

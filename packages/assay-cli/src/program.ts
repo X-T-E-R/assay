@@ -5,14 +5,10 @@ import {
   CURRENT_VERSION,
   type KnowledgeType,
   SOURCE_ADOPTION_TAKE_MODES,
-  SOURCE_CAPTURE_MODES,
   SOURCE_CHANGE_CLASSES,
-  SOURCE_MODES,
   type SourceAdoptionDecisionOutcome,
   type SourceAdoptionTakeMode,
-  type SourceCaptureMode,
   type SourceChangeClass,
-  type SourceMode,
   type SystemVcs,
   type WorkspacePrivacy,
   addKnowledge,
@@ -21,6 +17,7 @@ import {
   applyUpdate,
   archiveSystem,
   attachExistingRepo,
+  captureSource,
   checkExternalPlugins,
   checkFramework,
   closeAnalysis,
@@ -38,6 +35,7 @@ import {
   getSourceAdoptionStatus,
   getSourceLog,
   getSourceStatus,
+  importSourceContent,
   initFramework,
   inspectSourceAdoption,
   listAvailableTemplates,
@@ -620,16 +618,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .argument("[alias]", "short filesystem-safe source alias")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--branch <branch>", "branch to check out for Git-backed sources")
-    .addOption(
-      new Option("--mode <mode>", `Source mode (${SOURCE_MODES.join("|")})`)
-        .choices([...SOURCE_MODES])
-        .default("living"),
-    )
-    .addOption(
-      new Option("--capture <mode>", `capture mode (${SOURCE_CAPTURE_MODES.join("|")})`).choices([
-        ...SOURCE_CAPTURE_MODES,
-      ]),
-    )
     .option("--json", "emit JSON")
     .action(async (repoOrDir, alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
@@ -638,10 +626,6 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         source: repoOrDir,
         ...(alias === undefined ? {} : { alias }),
         ...(commandOptions.branch === undefined ? {} : { branch: commandOptions.branch }),
-        mode: commandOptions.mode as SourceMode,
-        ...(commandOptions.capture === undefined
-          ? {}
-          : { capture: commandOptions.capture as SourceCaptureMode }),
       });
       if (commandOptions.json) {
         writeJson(output, hintedResult(result, "source add"));
@@ -649,16 +633,21 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       }
       writeLine(output, "stdout", `Added source: ${result.path}`);
       writeLine(output, "stdout", `Observation: ${result.observationFile}`);
-      writeLine(output, "stdout", `Manifest: ${result.manifestFile}`);
-      if (result.checkoutPath) {
-        writeLine(output, "stdout", `Checkout: ${result.checkoutPath}`);
-      }
+      writeLine(
+        output,
+        "stdout",
+        result.contentMode === "checkout"
+          ? `Checkout: ${result.contentPath}`
+          : `Content: ${result.contentPath}`,
+      );
       writeLine(output, "stdout", `Materials: ${result.materialsPath}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
       writeLine(
         output,
         "stdout",
-        "Next: `assay status` reports when this source moves upstream and which adopted mappings it reaches.",
+        result.contentMode === "checkout"
+          ? "Next: `assay status` reports when this source moves upstream and which adopted mappings it reaches."
+          : "Next: `assay source capture` preserves these bytes when a decision needs to point at them later.",
       );
       for (const hint of hintLines("source add")) {
         writeLine(output, "stdout", hint);
@@ -666,8 +655,70 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     });
 
   source
+    .command("capture")
+    .description("Preserve a source's current bytes with an integrity hash")
+    .argument("<alias>", "source alias")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--note <text>", "why these bytes are worth preserving")
+    .option("--json", "emit JSON")
+    .action(async (alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await captureSource({
+        root,
+        alias,
+        ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
+      });
+      if (commandOptions.json) {
+        writeJson(output, hintedResult(result, "source capture"));
+        return;
+      }
+      writeLine(output, "stdout", `Captured source: ${result.path}`);
+      writeLine(output, "stdout", `Capture: ${result.capturePath}`);
+      writeLine(
+        output,
+        "stdout",
+        `Content: ${result.capture.file_count} files, ${result.capture.byte_count} bytes`,
+      );
+      writeLine(output, "stdout", `Integrity: ${result.capture.algorithm}:${result.capture.value}`);
+      writeLine(output, "stdout", `Observation: ${result.observationFile}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      for (const hint of hintLines("source capture")) {
+        writeLine(output, "stdout", hint);
+      }
+    });
+
+  source
+    .command("import")
+    .description("Replace a copied source's content, preserving the bytes it replaces")
+    .argument("<alias>", "source alias")
+    .argument("<dir-or-archive>", "local directory or archive to copy in")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--note <text>", "what this import brings in")
+    .option("--json", "emit JSON")
+    .action(async (alias, from, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await importSourceContent({
+        root,
+        alias,
+        from,
+        ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
+      });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", `Imported content: ${result.contentPath}`);
+      writeLine(output, "stdout", `Change class: ${result.changeClass}`);
+      if (result.preservedCapture) {
+        writeLine(output, "stdout", `Preserved: ${result.preservedCapture.path}`);
+      }
+      writeLine(output, "stdout", `Observation: ${result.observationFile}`);
+      writeLine(output, "stdout", `Event: ${result.eventFile}`);
+    });
+
+  source
     .command("sync")
-    .description("Observe an existing source again and update current materials")
+    .description("Observe a checkout-backed source again and update current materials")
     .argument("[alias]", "source alias; optional when exactly one source exists")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--branch <branch>", "Git branch to check out before observing")
@@ -1160,6 +1211,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       writeLine(output, "stdout", `Closed analysis: ${result.path}`);
       writeLine(output, "stdout", `Exit: ${commandOptions.exit}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
+      if (result.pinSuggestion) {
+        writeLine(output, "stdout", result.pinSuggestion);
+      }
       writeLine(
         output,
         "stdout",

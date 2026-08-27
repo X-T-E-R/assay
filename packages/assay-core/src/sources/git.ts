@@ -91,42 +91,75 @@ export async function isGitCheckout(checkout: string): Promise<boolean> {
   return exists(path.join(checkout, ".git"));
 }
 
-export async function assertGitCheckoutSafeForRefresh(
-  checkout: string,
-  expectedCommit?: string | null,
-): Promise<void> {
+/**
+ * Files Git currently tracks in a checkout, as the denominator for grading how
+ * much of a source moved. Null when the count cannot be read; callers grade
+ * conservatively rather than inventing a ratio.
+ */
+export async function countTrackedFiles(checkout: string): Promise<number | null> {
   if (!(await isGitCheckout(checkout))) {
-    return;
+    return null;
   }
+  const listed = await tryGit(checkout, ["ls-files"]);
+  if (listed.exitCode !== 0) {
+    return null;
+  }
+  return listed.stdout.split(/\r?\n/).filter((line) => line.trim() !== "").length;
+}
 
-  const status = await tryGit(checkout, ["status", "--porcelain"]);
-  if (status.exitCode !== 0) {
-    throw new FrameworkError(`managed source checkout status failed: ${gitCommandOutput(status)}`, {
-      code: "IO_ERROR",
-    });
-  }
-  if (status.stdout.trim() !== "") {
-    throw new FrameworkError(
-      `managed source checkout has unrecorded changes; preserve or remove them before refresh: ${checkout}`,
-      { code: "IO_ERROR" },
-    );
-  }
+export interface CheckoutPathChanges {
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+  readonly changed: readonly string[];
+}
 
-  if (expectedCommit) {
-    const head = await tryGit(checkout, ["rev-parse", "HEAD"]);
-    if (head.exitCode !== 0) {
-      throw new FrameworkError(
-        `managed source checkout revision failed: ${gitCommandOutput(head)}`,
-        { code: "IO_ERROR" },
-      );
-    }
-    if (head.stdout.trim() !== expectedCommit) {
-      throw new FrameworkError(
-        `managed source checkout has an unrecorded revision; preserve it before refresh: ${checkout}`,
-        { code: "IO_ERROR" },
-      );
-    }
+/**
+ * Added, removed, and modified paths between two commits, straight from Git.
+ *
+ * This is the diff a Source needs, and Git already has it: no tree hashing, no
+ * stored manifest, and it works for any two commits the checkout still holds.
+ * Null means the comparison could not be made (unknown commit, shallow clone),
+ * never "nothing changed".
+ */
+export async function changedPathsBetween(
+  checkout: string,
+  from: string,
+  to: string,
+): Promise<CheckoutPathChanges | null> {
+  try {
+    assertGitArgumentValue("diff base", from);
+    assertGitArgumentValue("diff target", to);
+  } catch {
+    return null;
   }
+  const result = await tryGit(checkout, [
+    "diff",
+    "--name-status",
+    "--end-of-options",
+    from,
+    to,
+    "--",
+  ]);
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  const added: string[] = [];
+  const removed: string[] = [];
+  const changed: string[] = [];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    if (line.trim() === "") continue;
+    const [status, ...rest] = line.split("\t");
+    const target = unquoteGitPath((rest.at(-1) ?? "").trim());
+    if (target === "" || status === undefined) continue;
+    if (status.startsWith("A")) added.push(target);
+    else if (status.startsWith("D")) removed.push(target);
+    else changed.push(target);
+  }
+  return {
+    added: added.sort(),
+    removed: removed.sort(),
+    changed: changed.sort(),
+  };
 }
 
 /**
@@ -377,15 +410,6 @@ async function gitRemoteOrigin(checkout: string): Promise<string | null> {
   return remote.exitCode === 0 && remote.stdout.trim() !== "" ? remote.stdout.trim() : null;
 }
 
-async function resetManagedGitCheckout(checkout: string, target?: string): Promise<void> {
-  await runGit(
-    checkout,
-    target ? ["reset", "--hard", "--end-of-options", target] : ["reset", "--hard"],
-    "git reset",
-  );
-  await runGit(checkout, ["clean", "-fd"], "git clean");
-}
-
 export async function checkoutGitRef(checkout: string, ref: string): Promise<void> {
   assertGitArgumentValue("checkout ref", ref);
   // `--end-of-options` keeps a ref that resembles an option
@@ -432,106 +456,181 @@ export async function cloneGitSource(
   if (target?.kind === "ref") {
     await checkoutGitRef(checkout, target.value);
   }
-  await resetManagedGitCheckout(checkout);
 }
 
-export async function refreshLocalGitCheckout(
+/**
+ * Advisory strings a checkout update can produce. They are recorded on the
+ * observation; none of them stops the command.
+ */
+export const CHECKOUT_ADVISORY_LOCAL_MODIFICATIONS = "observed with local modifications";
+export const CHECKOUT_ADVISORY_NOT_FAST_FORWARD =
+  "upstream moved but this checkout could not fast-forward; local state kept";
+
+export interface ManagedCheckoutUpdate {
+  /** What the update noticed, in the order a reader wants it. */
+  readonly advisories: readonly string[];
+  /** True when the working tree was actually moved. */
+  readonly moved: boolean;
+}
+
+export interface UpdateManagedCheckoutOptions {
+  readonly entryRoot: string;
+  readonly sourceUri: string;
+  /** Where the caller asked to be; null follows the checkout's own branch. */
+  readonly target: SourceSyncGitTarget | null;
+  /** True when the user named the branch or ref on this run. */
+  readonly requested: boolean;
+}
+
+/**
+ * Bring a managed Git checkout up to date without ever discarding bytes.
+ *
+ * Assay used to refuse a dirty checkout and then `reset --hard` a clean one.
+ * Both halves were wrong for a single-user evidence workbench: editing two
+ * lines of upstream to see what breaks is the normal way to read it, and a
+ * refusal only trains everyone to work around the tool. So this fetches (a
+ * read), and moves the working tree only through operations Git itself guards:
+ * `merge --ff-only` and `checkout`, both of which stop rather than overwrite.
+ * What could not be done becomes an advisory the observation records.
+ *
+ * Byte-loss protection therefore lives where it already worked — in Git — and
+ * Assay's job is to say what it saw.
+ */
+export async function updateManagedCheckout(
+  options: UpdateManagedCheckoutOptions,
+): Promise<ManagedCheckoutUpdate> {
+  const checkout = path.join(options.entryRoot, "checkout");
+  assertManagedCheckout(options.entryRoot, checkout);
+  if (!(await isGitCheckout(checkout))) {
+    return { advisories: [], moved: false };
+  }
+
+  const advisories: string[] = [];
+  await alignCheckoutOrigin(checkout, options.sourceUri);
+  const dirty = await checkoutIsDirty(checkout);
+  if (dirty) {
+    advisories.push(CHECKOUT_ADVISORY_LOCAL_MODIFICATIONS);
+  }
+
+  const fetchNote = await fetchForTarget(checkout, options.target);
+  if (fetchNote) {
+    advisories.push(fetchNote);
+  }
+
+  // An explicit `--branch`/`--ref` is a request to be somewhere else, so Git's
+  // own refusal is the answer the user needs to see. Following the checkout's
+  // current branch is routine, so a blocked update is recorded instead.
+  if (options.requested && options.target) {
+    if (options.target.kind === "ref") {
+      await checkoutGitRef(checkout, options.target.value);
+    } else {
+      await checkoutTrackingBranch(checkout, options.target.value);
+    }
+  }
+
+  const branch = await currentCheckoutBranch(checkout);
+  if (!branch) {
+    return { advisories, moved: false };
+  }
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  if ((await resolveCommit(checkout, remoteRef)) === null) {
+    return { advisories, moved: false };
+  }
+  const before = await resolveCommit(checkout, "HEAD");
+  const merged = await tryGit(checkout, ["merge", "--ff-only", "--end-of-options", remoteRef]);
+  if (merged.exitCode !== 0) {
+    if ((await resolveCommit(checkout, remoteRef)) !== before) {
+      advisories.push(CHECKOUT_ADVISORY_NOT_FAST_FORWARD);
+    }
+    return { advisories, moved: false };
+  }
+  return { advisories, moved: (await resolveCommit(checkout, "HEAD")) !== before };
+}
+
+async function alignCheckoutOrigin(checkout: string, sourceUri: string): Promise<void> {
+  if (sourceUri === "") return;
+  assertGitArgumentValue("source uri", sourceUri);
+  const remote = await gitRemoteOrigin(checkout);
+  if (remote === sourceUri) return;
+  await runGit(
+    checkout,
+    remote
+      ? ["remote", "set-url", "origin", "--end-of-options", sourceUri]
+      : ["remote", "add", "origin", "--end-of-options", sourceUri],
+    remote ? "git remote set-url" : "git remote add",
+  );
+}
+
+async function checkoutIsDirty(checkout: string): Promise<boolean> {
+  const status = await tryGit(checkout, ["status", "--porcelain"]);
+  return status.exitCode === 0 && status.stdout.trim() !== "";
+}
+
+/** Fetch for the requested target, returning an advisory when it could not run. */
+async function fetchForTarget(
+  checkout: string,
+  target: SourceSyncGitTarget | null,
+): Promise<string | null> {
+  if (!(await gitRemoteOrigin(checkout))) {
+    return "upstream not checked (no 'origin' remote configured)";
+  }
+  const args =
+    target?.kind === "branch"
+      ? [
+          "fetch",
+          "--prune",
+          "origin",
+          "--end-of-options",
+          `+refs/heads/${target.value}:refs/remotes/origin/${target.value}`,
+        ]
+      : ["fetch", "--prune", "origin"];
+  if (target?.kind === "branch") {
+    assertGitArgumentValue("source branch", target.value);
+  }
+  const fetched = await tryGit(checkout, args);
+  return fetched.exitCode === 0
+    ? null
+    : `upstream not checked (git fetch failed: ${firstLine(gitCommandOutput(fetched))})`;
+}
+
+/**
+ * Put the checkout on `branch`, creating it from `origin/<branch>` when it does
+ * not exist locally. `git checkout` refuses when the move would overwrite
+ * uncommitted work, and that refusal is the protection this path relies on.
+ */
+async function checkoutTrackingBranch(checkout: string, branch: string): Promise<void> {
+  assertGitArgumentValue("source branch", branch);
+  if ((await currentCheckoutBranch(checkout)) === branch) {
+    return;
+  }
+  const local = await tryGit(checkout, ["checkout", "--end-of-options", branch]);
+  if (local.exitCode === 0) {
+    return;
+  }
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  if ((await resolveCommit(checkout, remoteRef)) === null) {
+    throw new FrameworkError(`git checkout failed: ${gitCommandOutput(local)}`, {
+      code: "IO_ERROR",
+    });
+  }
+  await runGit(checkout, ["checkout", "-b", branch, "--end-of-options", remoteRef], "git checkout");
+}
+
+/** Clone a Git source into the managed checkout path when it is not there yet. */
+export async function ensureGitCheckout(
   entryRoot: string,
   sourceUri: string,
   target: SourceSyncGitTarget | null,
-): Promise<string> {
+  shallow: boolean,
+): Promise<boolean> {
   const checkout = path.join(entryRoot, "checkout");
   assertManagedCheckout(entryRoot, checkout);
-  assertGitArgumentValue("source uri", sourceUri);
   if (await isGitCheckout(checkout)) {
-    const remote = await gitRemoteOrigin(checkout);
-    if (remote) {
-      await runGit(
-        checkout,
-        ["remote", "set-url", "origin", "--end-of-options", sourceUri],
-        "git remote set-url",
-      );
-    } else {
-      await runGit(
-        checkout,
-        ["remote", "add", "origin", "--end-of-options", sourceUri],
-        "git remote add",
-      );
-    }
-    await refreshRemoteGitCheckout(entryRoot, checkout, target);
-    return checkout;
+    return false;
   }
   await rm(checkout, { recursive: true, force: true });
-  await cloneGitSource(sourceUri, checkout, target, false);
-  return checkout;
-}
-
-export async function refreshRemoteGitCheckout(
-  entryRoot: string,
-  checkout: string,
-  target: SourceSyncGitTarget | null,
-): Promise<void> {
-  assertManagedCheckout(entryRoot, checkout);
-  if (!(await isGitCheckout(checkout))) {
-    return;
-  }
-
-  const remote = await gitRemoteOrigin(checkout);
-  if (!remote) {
-    if (target) {
-      assertGitArgumentValue("checkout target", target.value);
-      await runGit(checkout, ["checkout", "--end-of-options", target.value], "git checkout");
-      await resetManagedGitCheckout(checkout);
-    }
-    return;
-  }
-
-  await resetManagedGitCheckout(checkout);
-
-  if (target?.kind === "branch") {
-    assertGitArgumentValue("source branch", target.value);
-    const remoteRef = `refs/remotes/origin/${target.value}`;
-    await runGit(
-      checkout,
-      [
-        "fetch",
-        "--prune",
-        "origin",
-        "--end-of-options",
-        `+refs/heads/${target.value}:${remoteRef}`,
-      ],
-      "git fetch",
-    );
-    await runGit(
-      checkout,
-      ["checkout", "-B", target.value, "--end-of-options", remoteRef],
-      "git checkout",
-    );
-    await resetManagedGitCheckout(checkout, remoteRef);
-    return;
-  }
-
-  if (target?.kind === "ref") {
-    await runGit(checkout, ["fetch", "--prune", "origin"], "git fetch");
-    await checkoutGitRef(checkout, target.value);
-    await resetManagedGitCheckout(checkout);
-    return;
-  }
-
-  await runGit(checkout, ["fetch", "--prune", "origin"], "git fetch");
-  const branch = await currentCheckoutBranch(checkout);
-  if (branch) {
-    assertGitArgumentValue("checkout branch", branch);
-    const remoteRef = `refs/remotes/origin/${branch}`;
-    await runGit(
-      checkout,
-      ["checkout", "-B", branch, "--end-of-options", remoteRef],
-      "git checkout",
-    );
-    await resetManagedGitCheckout(checkout, remoteRef);
-    return;
-  }
-  await resetManagedGitCheckout(checkout);
+  await cloneGitSource(sourceUri, checkout, target, shallow);
+  return true;
 }
 
 export async function collectGitMetadata(

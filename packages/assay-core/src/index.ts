@@ -11,6 +11,7 @@ export * from "./hashing.js";
 export * from "./layout.js";
 export * from "./manifest.js";
 export * from "./managed-files.js";
+export * from "./migrate.js";
 export * from "./paths.js";
 export * from "./prime.js";
 export * from "./semantics.js";

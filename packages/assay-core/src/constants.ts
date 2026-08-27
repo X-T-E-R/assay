@@ -1,5 +1,13 @@
-export const CURRENT_VERSION = "0.13.0";
+export const CURRENT_VERSION = "0.14.0";
 export const SYSTEMS_REGISTRY_SCHEMA = 3;
+
+/**
+ * The one older framework version `assay update` can migrate in place. Anything
+ * older still needs the external cutover tool: the migration only has to
+ * understand the shape immediately before this release, not every shape ever
+ * written.
+ */
+export const MIGRATABLE_VERSION = "0.13.0";
 
 /**
  * Layout version written by this build of Assay. New workspaces always carry

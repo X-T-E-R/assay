@@ -74,7 +74,7 @@ function sourceLine(workspace: PrimeWorkspaceState): string {
   }
   return field(
     "Sources",
-    `${sources.total} total, ${sources.living} living, ${sources.frozen} frozen, ${sources.majorChanges} graded major (assay source status)`,
+    `${sources.total} total, ${sources.checkouts} tracked checkouts, ${sources.copies} copied, ${sources.majorChanges} graded major (assay source status)`,
   );
 }
 

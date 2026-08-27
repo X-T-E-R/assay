@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tsCli = path.join(repoRoot, "packages", "assay-cli", "dist", "cli.js");
@@ -37,15 +37,30 @@ function run(label, args, options = {}) {
   }
 }
 
-function assertReleaseMetadata() {
+/**
+ * The version every package must declare, taken from the build rather than
+ * repeated here. A release bump changes `CURRENT_VERSION` once, and this check
+ * still catches a package.json that was left behind.
+ */
+async function releaseVersion() {
+  const constants = path.join(repoRoot, "packages", "assay-core", "dist", "constants.js");
+  if (!existsSync(constants)) {
+    fail(`Built assay-core constants not found: ${constants}. Run "pnpm build" first.`);
+  }
+  const { CURRENT_VERSION } = await import(pathToFileURL(constants).href);
+  return CURRENT_VERSION;
+}
+
+async function assertReleaseMetadata() {
+  const expectedVersion = await releaseVersion();
   const manifests = [
     path.join(repoRoot, "package.json"),
     path.join(repoRoot, "packages", "assay-core", "package.json"),
     path.join(repoRoot, "packages", "assay-cli", "package.json"),
   ].map((file) => ({ file, value: JSON.parse(readFileSync(file, "utf8")) }));
   for (const { file, value } of manifests) {
-    if (value.version !== "0.13.0") {
-      fail(`${path.relative(repoRoot, file)} must declare version 0.13.0.`);
+    if (value.version !== expectedVersion) {
+      fail(`${path.relative(repoRoot, file)} must declare version ${expectedVersion}.`);
     }
     if (value.engines?.node !== requiredNodeEngine) {
       fail(`${path.relative(repoRoot, file)} must require Node.js ${requiredNodeEngine}.`);
@@ -56,8 +71,8 @@ function assertReleaseMetadata() {
   }
 }
 
-function main() {
-  assertReleaseMetadata();
+async function main() {
+  await assertReleaseMetadata();
   if (!existsSync(tsCli)) {
     fail(`Built TypeScript CLI not found: ${tsCli}. Run "pnpm build" first.`);
   }
@@ -195,4 +210,4 @@ function main() {
   console.log("Assay TypeScript CLI smoke checks passed.");
 }
 
-main();
+await main();

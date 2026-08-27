@@ -74,8 +74,8 @@ describe("upstream drift in status", () => {
       expect(source?.changedFiles).toBe(1);
       expect(source?.summary).toContain("1 commit past the recorded observation");
       expect(upstream.changedSources).toBe(1);
-      // `source sync` refuses an unrecorded revision, so it must not be
-      // advertised as the fix for one.
+      // Local work is the reader's own; nothing upstream moved, so there is no
+      // command to offer.
       expect(upstream.nextCommand).toBeNull();
 
       const status = await getFrameworkStatus({ root });
@@ -94,7 +94,7 @@ describe("upstream drift in status", () => {
       expect(source?.signal).toBe("local-modified");
       expect(source?.dirtyFiles).toBe(1);
       expect(source?.summary).toContain("local checkout modified (1 uncommitted file)");
-      expect(source?.summary).toContain("preserve or discard");
+      expect(source?.summary).toContain("the next sync records it as a local modification");
     },
     GIT_INTEGRATION_TIMEOUT_MS,
   );
@@ -110,7 +110,7 @@ describe("upstream drift in status", () => {
     GIT_INTEGRATION_TIMEOUT_MS,
   );
 
-  it("does not fingerprint a non-Git checkout", async () => {
+  it("does not hash copied content, which has no upstream to be behind", async () => {
     const root = path.join(await tempDirs.createTempDir(), "UpstreamPlainDir");
     await initFramework({ target: root, name: "UpstreamPlainDir" });
     const source = path.join(await tempDirs.createTempDir(), "plain");
@@ -118,14 +118,14 @@ describe("upstream drift in status", () => {
     await writeFile(path.join(source, "README.md"), "# Plain\n", "utf8");
     await addSource({ root, source, alias: "plain" });
     await writeFile(
-      path.join(root, "sources", "plain", "checkout", "README.md"),
+      path.join(root, "sources", "plain", "content", "README.md"),
       "# Plain edited\n",
       "utf8",
     );
 
     const [entry] = (await collectUpstreamStatus({ root })).sources;
     expect(entry?.signal).toBe("not-checked");
-    expect(entry?.summary).toBe("not checked (no cheap signal)");
+    expect(entry?.summary).toBe("not checked (copied content has no upstream)");
   });
 
   it(
@@ -163,12 +163,13 @@ describe("upstream drift in status", () => {
       // "the tips differ" would report the same number while listing no paths.
       expect(source?.changedFiles).toBe(1);
 
-      // Once the checkout also holds unrecorded work, `sync` would refuse it,
-      // so it stops being offered even though the remote is still ahead.
+      // Local work in the checkout is reported first but does not withhold the
+      // command: `sync` fast-forwards and records the local edit as an advisory.
       await writeFile(path.join(checkout, "src", "beta.txt"), "beta-edited\n", "utf8");
-      const blocked = await collectUpstreamStatus({ root, fetch: true });
-      expect(blocked.sources[0]?.upstreamCommits).toBe(1);
-      expect(blocked.nextCommand).toBeNull();
+      const alsoLocal = await collectUpstreamStatus({ root, fetch: true });
+      expect(alsoLocal.sources[0]?.signal).toBe("local-modified");
+      expect(alsoLocal.sources[0]?.upstreamCommits).toBe(1);
+      expect(alsoLocal.nextCommand).toBe("assay source sync upstream");
     },
     GIT_INTEGRATION_TIMEOUT_MS,
   );

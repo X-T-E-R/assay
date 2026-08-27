@@ -51,6 +51,7 @@ import {
 import { type CheckRow, type OperationReport, createEmptyReport } from "./results.js";
 import { RoadmapError, validateRoadmaps } from "./roadmap.js";
 import type { FrameworkManifest, WorkspaceLayout } from "./schemas/index.js";
+import { evidencePinSuggestion } from "./semantics.js";
 import {
   collectSourceAdoptionIntegrityRows,
   getSourceAdoptionSummary,
@@ -132,8 +133,10 @@ export interface FrameworkStatusSystem {
 
 export interface FrameworkStatusSources {
   readonly total: number;
-  readonly living: number;
-  readonly frozen: number;
+  /** Git-backed sources, the ones `source sync` can move. */
+  readonly checkouts: number;
+  /** Copied content, with no upstream to follow. */
+  readonly copies: number;
   readonly majorChanges: number;
 }
 
@@ -171,7 +174,7 @@ export interface FrameworkStatusResult {
   readonly zones: FrameworkZoneCount[];
   readonly systems?: readonly FrameworkStatusSystem[];
   readonly sources?: FrameworkStatusSources;
-  /** Drift of each living source's checkout; omitted when there are none. */
+  /** Drift of each checkout-backed source; omitted when there are none. */
   readonly upstream?: UpstreamStatus;
   /** Sources whose latest change grade suggests recording a decision. */
   readonly sourceAdoptions?: FrameworkStatusSourceAdoptions;
@@ -185,7 +188,7 @@ export interface CreateAnalysisOptions {
   readonly title: string;
   /** Source alias this analysis is bound to. */
   readonly forSource?: string;
-  /** Observation id/path for a living source analysis. Defaults to latest. */
+  /** Observation id/path the analysis is written against. Defaults to latest. */
   readonly observation?: string;
   readonly now?: Date;
 }
@@ -213,6 +216,12 @@ export interface CloseAnalysisResult {
   readonly root: string;
   readonly path: string;
   readonly eventFile: string;
+  /**
+   * Suggested identity pin for an `adopt` or `reject`, when the card names the
+   * Source it rested on. Absent for `experiment`, and for a card bound to no
+   * Source. Never a precondition of closing.
+   */
+  readonly pinSuggestion?: string;
 }
 
 export type KnowledgeType = "pattern" | "guide" | "troubleshooting";
@@ -1402,8 +1411,8 @@ export async function getFrameworkStatus(
     const sources = status.sources;
     sourceSummary = {
       total: sources.length,
-      living: sources.filter((source) => source.mode === "living").length,
-      frozen: sources.filter((source) => source.mode === "frozen").length,
+      checkouts: sources.filter((source) => source.contentMode === "checkout").length,
+      copies: sources.filter((source) => source.contentMode === "copy").length,
       majorChanges: sources.filter((source) => source.latestChangeClass === "major").length,
     };
   } catch {
@@ -1517,9 +1526,10 @@ export async function createAnalysis(
       `- Source observation: ${source.observation.observation_id}`,
       `- Source observation path: ${source.observationFile}`,
       `- Source change class: ${source.observation.change_class}`,
-      `- Source manifest: ${source.manifestFile}`,
+      `- Source content: ${source.contentPath}`,
       `- Source materials: ${source.materialsPath}`,
-      ...(source.checkoutPath ? [`- Source checkout: ${source.checkoutPath}`] : []),
+      ...(source.observation.vcs ? [`- Source commit: ${source.observation.vcs.commit}`] : []),
+      ...(source.capturePath ? [`- Source capture: ${source.capturePath}`] : []),
       "",
     ].join("\n");
   }
@@ -1587,6 +1597,13 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
   if (options.note) {
     content += `\n> Closed on ${date}: ${options.note}\n`;
   }
+  // Read the pin from the card the caller is closing, not from the ledger: what
+  // this decision rested on is whichever observation the card was written
+  // against, which may be older than the newest one by now.
+  const pinAlias = options.exit === "experiment" ? null : readHeaderField(content, "Source alias");
+  const pinSuggestion = pinAlias
+    ? evidencePinSuggestion({ alias: pinAlias, commit: readHeaderField(content, "Source commit") })
+    : null;
 
   await writeFile(absolutePath, content, "utf8");
 
@@ -1601,7 +1618,12 @@ export async function closeAnalysis(options: CloseAnalysisOptions): Promise<Clos
     now,
   );
 
-  return { root, path: analysisPath, eventFile: relativeDisplayPath(eventFile, root) };
+  return {
+    root,
+    path: analysisPath,
+    eventFile: relativeDisplayPath(eventFile, root),
+    ...(pinSuggestion === null ? {} : { pinSuggestion }),
+  };
 }
 
 export async function addKnowledge(options: AddKnowledgeOptions): Promise<AddKnowledgeResult> {

@@ -14,6 +14,7 @@ import {
   getSourceAdoption,
   getSourceAdoptionHistory,
   getSourceAdoptionStatus,
+  importSourceContent,
   initFramework,
   inspectSourceAdoption,
   listSourceAdoptions,
@@ -23,7 +24,6 @@ import {
   registerSystem,
   setConvertRoadmapProbeForTests,
   sourceAdoptionDefinitionSchema,
-  syncSource,
   updateSourceAdoption,
   updateSystem,
   verifySourceAdoptionInspection,
@@ -575,9 +575,10 @@ describe("Source adoption lifecycle", () => {
     });
 
     await writeFile(path.join(fixture.sourceRoot, "src", "alpha.txt"), "alpha-v2\n", "utf8");
-    await syncSource({
+    await importSourceContent({
       root: fixture.root,
       alias: "upstream",
+      from: fixture.sourceRoot,
       now: new Date("2026-07-25T10:00:00"),
     });
     const afterSync = await getSourceAdoption({
@@ -680,9 +681,10 @@ describe("Source adoption lifecycle", () => {
 
     await writeFile(alphaPath, "target-alpha-v2\n", "utf8");
     await writeFile(path.join(fixture.sourceRoot, "src", "alpha.txt"), "alpha-v2\n", "utf8");
-    await syncSource({
+    await importSourceContent({
       root: fixture.root,
       alias: "upstream",
+      from: fixture.sourceRoot,
       now: new Date("2026-07-25T10:00:00"),
     });
     await decideSourceAdoption({

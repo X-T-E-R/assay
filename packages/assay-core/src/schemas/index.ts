@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CURRENT_VERSION } from "../constants.js";
 import { isReadableId } from "../readable-id.js";
 
 export const managedFileRecordSchema = z
@@ -241,7 +242,7 @@ export const workspaceLayoutSchema = z
 export const frameworkManifestSchema = z
   .object({
     __schema: z.literal(4),
-    framework_version: z.literal("0.13.0"),
+    framework_version: z.literal(CURRENT_VERSION),
     layout: workspaceLayoutSchema,
   })
   .strict();

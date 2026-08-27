@@ -80,23 +80,24 @@ export interface CollectUpstreamStatusOptions {
 
 /**
  * Answer "did anything upstream move, and does it reach anything we adopted?"
- * for every living source, cheaply enough to run on every `assay status`.
+ * for every checkout-backed source, cheaply enough to run on every
+ * `assay status`.
  *
  * Three layers, split by cost:
  *
  * - L1 compares the checkout's HEAD and working tree against the commit the
- *   latest observation recorded. Local reads only, always on. This is also the
- *   only place a managed checkout that was edited by hand becomes visible:
- *   `sync` guards against it, but sync is the command nobody runs.
+ *   latest observation recorded. Local reads only, always on. This is also
+ *   where hand edits in a managed checkout become visible before anyone runs
+ *   `sync`.
  * - L2 fetches and compares the remote tip. Only with `fetch`, never implicit,
  *   and a failure annotates the source instead of failing the command.
  * - L3 intersects the changed paths with the source locators of the
  *   workspace's Source adoptions, turning "the source moved" into "it reaches N
  *   places you adopted".
  *
- * Non-Git checkouts report "not checked (no cheap signal)" rather than hashing
- * their trees: full fingerprint comparison stays in `sync`, where the cost is
- * already being paid.
+ * Copied content reports "not checked (no cheap signal)" rather than hashing
+ * its tree: there is no upstream to be behind, and hashing is what an explicit
+ * `source capture` is for.
  */
 export async function collectUpstreamStatus(
   options: CollectUpstreamStatusOptions,
@@ -114,11 +115,12 @@ export async function collectUpstreamStatus(
   );
 
   const changedSources = states.filter((state) => isChanged(state)).length;
-  // Only an upstream move has a command that fixes it, and only while the
-  // checkout is otherwise clean: `source sync` refuses a checkout holding
-  // unrecorded work, so naming it there would send the reader into an error.
-  // `upstream-ahead` is exactly that state.
-  const ahead = states.find((state) => state.signal === "upstream-ahead");
+  // Only an upstream move has a command that answers it, and it is offered on
+  // the remote count rather than on the reported signal: a checkout that also
+  // holds local work reports that first, but `sync` still fast-forwards it and
+  // records the local modification as an advisory, so withholding the command
+  // would hide the one action worth taking.
+  const ahead = states.find((state) => (state.upstreamCommits ?? 0) > 0);
   return {
     fetched: fetch,
     total: states.length,
@@ -138,8 +140,15 @@ async function inspectSource(
   adoptionMappings: readonly SourceAdoptionSourceMapping[],
   fetch: boolean,
 ): Promise<UpstreamSourceState> {
-  const checkout = path.join(root, source.path, "checkout");
   const recordedCommit = source.checkout?.commit ?? source.vcs?.commit ?? null;
+  if (source.contentMode !== "checkout") {
+    return baseState(source, {
+      signal: "not-checked",
+      summary: "not checked (copied content has no upstream)",
+      recordedCommit,
+    });
+  }
+  const checkout = path.join(root, source.path, "checkout");
   const signals = await readCheckoutLocalSignals(checkout);
 
   if (!signals) {
@@ -306,7 +315,7 @@ function summarize(input: {
   }
   const parts = [...upstream, ...local];
   if (local.length > 0) {
-    parts.push("not recorded — preserve or discard it before the next sync");
+    parts.push("not recorded yet — the next sync records it as a local modification");
   }
   return parts.join("; ");
 }

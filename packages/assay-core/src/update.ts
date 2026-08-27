@@ -26,6 +26,11 @@ import { computeHash, fileHash } from "./hashing.js";
 import { resolveWorkspaceLayout } from "./layout.js";
 import { loadManagedFiles, managedFileRecord, saveManagedFiles } from "./managed-files.js";
 import { loadManifest } from "./manifest.js";
+import {
+  type WorkspaceMigrationResult,
+  analyzeWorkspaceMigration,
+  applyWorkspaceMigration,
+} from "./migrate.js";
 import { assertNoAncestorWorkspaceAuthority, relativeDisplayPath } from "./paths.js";
 import {
   loadNativeProject,
@@ -69,6 +74,8 @@ export interface ApplyUpdateResult {
   readonly plan: UpdatePlan;
   readonly report: OperationReport;
   readonly eventFile?: string;
+  /** Present when this run migrated (or, on a dry run, would migrate) records. */
+  readonly migration?: WorkspaceMigrationResult;
 }
 
 let updateWriteProbe: AuthorityWriteProbe | undefined;
@@ -404,16 +411,81 @@ async function writeNewSidecar(root: string, template: TemplateFile): Promise<vo
   });
 }
 
+/**
+ * `assay update` is the one command that may read a workspace older than this
+ * build, because it is the command that brings it forward. Everything else stays
+ * fail-closed. A dry run reports what the migration would rewrite and stops
+ * there: the template analysis behind it cannot even load the old envelope.
+ */
+async function migrateBeforeUpdate(
+  root: string,
+  dryRun: boolean,
+  now: Date,
+): Promise<WorkspaceMigrationResult | undefined> {
+  const analysis = await analyzeWorkspaceMigration(root);
+  if (!analysis.required) return undefined;
+  if (dryRun) {
+    return {
+      root: analysis.root,
+      from: analysis.from,
+      to: analysis.to,
+      changes: analysis.steps.map((step) => step.summary),
+    };
+  }
+  return applyWorkspaceMigration({ root, now });
+}
+
 export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpdateResult> {
   const root = path.resolve(options.root);
   const dryRun = options.dryRun ?? false;
   const action = options.action ?? "skip";
+  const migration = await migrateBeforeUpdate(root, dryRun, options.now ?? new Date());
+  if (migration && dryRun) {
+    const report = createEmptyReport();
+    report.notes.push(
+      `dry-run: workspace records would migrate from ${migration.from} to ${migration.to}`,
+      ...migration.changes,
+    );
+    const pending = updateAnalysisSchema.parse({
+      root,
+      dry_run: true,
+      changes: {
+        new: [],
+        auto_update: [],
+        modified_by_user: [],
+        user_deleted: [],
+        untracked_existing: [],
+        unchanged: [],
+      },
+    });
+    return {
+      root,
+      dryRun,
+      action,
+      analysis: pending,
+      plan: updatePlanSchema.parse({
+        root,
+        dry_run: true,
+        action,
+        changes: [],
+        notes: ["dry-run: no changes applied"],
+      }),
+      report,
+      migration,
+    };
+  }
   const analysis = await analyzeUpdate({ root });
   const plan = await planAnalyzedUpdate(analysis, {
     dryRun,
     action,
   });
   const report = createEmptyReport();
+  if (migration) {
+    report.notes.push(
+      `migrated workspace records from ${migration.from} to ${migration.to}`,
+      ...migration.changes,
+    );
+  }
   if (dryRun) {
     const agentsResult = await applyAssayAgentsBlock({
       root,
@@ -476,12 +548,18 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
     report.updated_files.push(MANAGED_FILES_FILE);
   }
   const mutated =
+    migration !== undefined ||
     report.created_files.length + report.updated_files.length + report.new_copies.length > 0;
   let eventFile: string | undefined;
   if (mutated) {
     const file = await appendEvent(
       root,
-      { event: "framework.updated", action, changed: mutating.length },
+      {
+        event: "framework.updated",
+        action,
+        changed: mutating.length,
+        ...(migration ? { migrated_from: migration.from, migrated_to: migration.to } : {}),
+      },
       options.now ?? new Date(),
     );
     eventFile = relativeDisplayPath(file, root);
@@ -494,5 +572,6 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<ApplyUpd
     plan,
     report,
     ...(eventFile ? { eventFile } : {}),
+    ...(migration ? { migration } : {}),
   };
 }

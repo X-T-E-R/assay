@@ -7,7 +7,7 @@ import { appendEvent } from "../events.js";
 import { relativeDisplayPath } from "../paths.js";
 import type { CheckRow } from "../results.js";
 import { stringifySortedJson } from "../serialization.js";
-import { resolveSourceObservation } from "../sources.js";
+import { readSourceContentListing, resolveSourceObservation } from "../sources.js";
 import { nowIso } from "../time.js";
 import {
   SOURCE_ADOPTION_DECISION_SCHEMA,
@@ -416,19 +416,21 @@ function normalizeTakePath(value: string, label: string): string {
  */
 async function inferSourceMatch(
   root: string,
-  manifestFile: string,
+  alias: string,
+  observation: string | undefined,
   sourcePath: string,
 ): Promise<"exact" | "prefix"> {
-  let files: readonly { readonly path?: unknown }[] = [];
+  let paths: readonly string[] = [];
   try {
-    const parsed = JSON.parse(await readFile(path.resolve(root, manifestFile), "utf8")) as {
-      readonly files?: readonly { readonly path?: unknown }[];
-    };
-    files = parsed.files ?? [];
+    const listing = await readSourceContentListing({
+      root,
+      alias,
+      ...(observation === undefined ? {} : { observation }),
+    });
+    paths = listing.files.map((file) => file.path);
   } catch {
     return "exact";
   }
-  const paths = files.map((file) => (typeof file.path === "string" ? file.path : ""));
   if (paths.includes(sourcePath)) {
     return "exact";
   }
@@ -458,7 +460,9 @@ export async function takeSourceAdoptionMaterial(
     alias: options.sourceAlias,
     ...(options.observation === undefined ? {} : { observation: options.observation }),
   });
-  const match = options.match ?? (await inferSourceMatch(root, resolved.manifestFile, sourcePath));
+  const match =
+    options.match ??
+    (await inferSourceMatch(root, options.sourceAlias, options.observation, sourcePath));
 
   const targetId = sourceAdoptionSlug(options.targetSystem);
   const mappingId = sourceAdoptionSlug(sourcePath);

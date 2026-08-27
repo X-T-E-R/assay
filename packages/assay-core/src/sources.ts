@@ -11,29 +11,54 @@ import { loadManifest } from "./manifest.js";
 import { relativeDisplayPath, slugify } from "./paths.js";
 import type { CheckRow } from "./results.js";
 import type { FrameworkManifest } from "./schemas/index.js";
+import { withSemanticModel } from "./semantics.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import {
-  assertGitCheckoutSafeForRefresh,
+  CHECKOUT_ADVISORY_LOCAL_MODIFICATIONS,
   assertManagedCheckout,
+  changedPathsBetween,
   checkoutGitRef,
   cloneGitSource,
   collectGitMetadata,
+  countTrackedFiles,
+  ensureGitCheckout,
   isGitCheckout,
-  refreshLocalGitCheckout,
-  refreshRemoteGitCheckout,
+  readCheckoutLocalSignals,
   syncTargetForCheckout,
+  updateManagedCheckout,
 } from "./sources/git.js";
 import { withWorkspaceMutationCoordination } from "./tasks/task-storage.js";
 import { nowIso } from "./time.js";
 
-export const SOURCE_MODES = ["living", "frozen"] as const;
-export type SourceMode = (typeof SOURCE_MODES)[number];
+/**
+ * Sources: external material kept where its origin and its changes stay
+ * readable.
+ *
+ * The shape follows what the material is, not a flag the caller picks:
+ *
+ * - `checkout` — a Git repository or URL, cloned into `checkout/`. Git already
+ *   records what it looked like when, so the commit is its identity and
+ *   `source sync` moves it.
+ * - `copy` — a plain directory or archive, copied once into `content/`. There
+ *   is no upstream to follow, so there is nothing to sync; new bytes arrive
+ *   through an explicit `source import`.
+ *
+ * Evidence is pinned in tiers. The ordinary observation is a cheap append
+ * record — date, commit when there is one, a note, and any advisories. An
+ * identity pin is the commit, or for a non-Git source a tree hash computed on
+ * demand. Byte-level preservation is always an explicit `source capture`. No
+ * default path hashes a tree.
+ */
 
-export const SOURCE_CAPTURE_MODES = ["checkout", "archive"] as const;
-export type SourceCaptureMode = (typeof SOURCE_CAPTURE_MODES)[number];
+export const SOURCE_CONTENT_MODES = ["checkout", "copy"] as const;
+export type SourceContentMode = (typeof SOURCE_CONTENT_MODES)[number];
 
 export const SOURCE_CHANGE_CLASSES = ["same", "patch", "normal", "major", "replacement"] as const;
 export type SourceChangeClass = (typeof SOURCE_CHANGE_CLASSES)[number];
+
+/** What produced an observation. Every entry says how it came to be recorded. */
+export const SOURCE_OBSERVATION_KINDS = ["add", "sync", "capture", "import"] as const;
+export type SourceObservationKind = (typeof SOURCE_OBSERVATION_KINDS)[number];
 
 export type SourceKind = "git" | "directory" | "archive" | "url" | "unknown";
 export interface SourceVcsMetadata {
@@ -61,8 +86,7 @@ export interface SourceLineage {
   readonly source_uri: string;
   readonly created_on: string;
   readonly latest_observation: string | null;
-  readonly mode: SourceMode;
-  readonly default_capture_mode: SourceCaptureMode;
+  readonly content_mode: SourceContentMode;
   readonly checkout?: {
     readonly path: "checkout";
     readonly ref: string | null;
@@ -71,20 +95,35 @@ export interface SourceLineage {
   };
 }
 
+/** A byte-level capture: the explicit tier, with its own integrity hash. */
+export interface SourceCapture {
+  readonly path: string;
+  readonly manifest: string;
+  readonly algorithm: "sha256-tree-v1";
+  readonly value: string;
+  readonly file_count: number;
+  readonly byte_count: number;
+}
+
+/**
+ * One entry in a Source's append-only ledger.
+ *
+ * Cheap by design: the date, what produced it, the commit when the source is
+ * Git-backed, a one-line note, and any advisories worth carrying forward. A
+ * `capture` block appears only on the observations that preserved bytes.
+ */
 export interface SourceObservation {
   readonly observation_id: string;
   readonly observed_on: string;
   readonly lineage_id: string;
   readonly source_path: string;
   readonly previous_observation: string | null;
+  readonly kind: SourceObservationKind;
   readonly change_class: SourceChangeClass;
-  readonly capture_mode: SourceCaptureMode;
+  readonly note: string;
+  readonly advisories: readonly string[];
   readonly vcs?: SourceVcsMetadata;
-  readonly fingerprint: SourceFingerprint;
-  readonly manifest: string;
-  readonly materials_path: string;
-  readonly checkout_path?: string;
-  readonly capture_path?: string;
+  readonly capture?: SourceCapture;
 }
 
 export interface SourceManifestFile {
@@ -106,8 +145,6 @@ export interface SourceAddOptions {
   readonly source: string;
   readonly alias?: string;
   readonly branch?: string;
-  readonly capture?: SourceCaptureMode;
-  readonly mode?: SourceMode;
   readonly now?: Date;
 }
 
@@ -117,8 +154,8 @@ export interface SourceAddResult {
   readonly path: string;
   readonly sourceFile: string;
   readonly observationFile: string;
-  readonly manifestFile: string;
-  readonly checkoutPath: string | null;
+  readonly contentMode: SourceContentMode;
+  readonly contentPath: string;
   readonly materialsPath: string;
   readonly observation: SourceObservation;
   readonly eventFile: string;
@@ -139,10 +176,51 @@ export interface SourceSyncResult {
   readonly path: string;
   readonly changeClass: SourceChangeClass;
   readonly observationFile: string | null;
-  readonly manifestFile: string | null;
   readonly observation: SourceObservation | null;
+  /** What the update noticed; recorded on the observation, never a refusal. */
+  readonly advisories: readonly string[];
   readonly eventFile: string;
   readonly comparison?: SourceDiffResult;
+}
+
+export interface SourceCaptureOptions {
+  readonly root: string;
+  readonly alias: string;
+  readonly note?: string;
+  readonly now?: Date;
+}
+
+export interface SourceCaptureResult {
+  readonly root: string;
+  readonly alias: string;
+  readonly path: string;
+  readonly observationFile: string;
+  readonly observation: SourceObservation;
+  readonly capture: SourceCapture;
+  readonly capturePath: string;
+  readonly manifestFile: string;
+  readonly eventFile: string;
+}
+
+export interface SourceImportOptions {
+  readonly root: string;
+  readonly alias: string;
+  readonly from: string;
+  readonly note?: string;
+  readonly now?: Date;
+}
+
+export interface SourceImportResult {
+  readonly root: string;
+  readonly alias: string;
+  readonly path: string;
+  readonly contentPath: string;
+  readonly observationFile: string;
+  readonly observation: SourceObservation;
+  /** Capture that preserved the bytes the import replaced, when there were any. */
+  readonly preservedCapture: SourceCapture | null;
+  readonly changeClass: SourceChangeClass;
+  readonly eventFile: string;
 }
 
 export interface SourceSwitchOptions {
@@ -169,10 +247,12 @@ export interface SourceStatusEntry {
   readonly name: string;
   readonly kind: SourceKind;
   readonly uri: string;
-  readonly mode: SourceMode;
-  readonly captureMode: SourceCaptureMode;
+  readonly contentMode: SourceContentMode;
   readonly latestObservation: string | null;
   readonly latestChangeClass: SourceChangeClass | null;
+  readonly latestAdvisories: readonly string[];
+  /** Byte captures recorded for this source; 0 means nothing was pinned that deep. */
+  readonly captures: number;
   readonly vcs?: SourceVcsMetadata;
   readonly checkout?: SourceLineage["checkout"];
 }
@@ -222,9 +302,28 @@ export interface SourceObservationResolution {
   readonly sourcePath: string;
   readonly observationFile: string;
   readonly observation: SourceObservation;
-  readonly manifestFile: string;
+  readonly contentMode: SourceContentMode;
+  /** Where the readable bytes for this observation are, workspace-relative. */
+  readonly contentPath: string;
   readonly materialsPath: string;
-  readonly checkoutPath: string | null;
+  readonly capturePath: string | null;
+}
+
+/**
+ * A file listing for a Source, computed when something actually needs it.
+ *
+ * This is the lazy half of the tier model: a capture already carries its
+ * manifest, and anything else is hashed here, at the moment a decision wants a
+ * content pin. Nothing on the ordinary observation path calls it.
+ */
+export interface SourceContentListing {
+  readonly alias: string;
+  readonly observationId: string;
+  /** Whether the listing came from a stored capture or from current content. */
+  readonly origin: "capture" | "content";
+  readonly relativeRoot: string;
+  readonly fingerprint: SourceFingerprint;
+  readonly files: readonly SourceManifestFile[];
 }
 
 interface SourceEntry {
@@ -232,13 +331,6 @@ interface SourceEntry {
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly lineage: SourceLineage;
-}
-
-interface MaterializedObservation {
-  readonly observation: SourceObservation;
-  readonly manifest: SourceManifest;
-  readonly observationFile: string;
-  readonly manifestFile: string;
 }
 
 const GENERATED_SOURCE_PARTS = new Set([
@@ -314,12 +406,6 @@ function sourcesRelativeForManifest(manifest: FrameworkManifest): string {
   return workspaceRelativePath(layoutForManifest(manifest), "sources");
 }
 
-function assertCaptureMode(value: SourceCaptureMode): void {
-  if (!SOURCE_CAPTURE_MODES.includes(value)) {
-    throw new FrameworkError(`capture mode must be one of: ${SOURCE_CAPTURE_MODES.join(", ")}`);
-  }
-}
-
 function assertChangeClass(value: SourceChangeClass): void {
   if (!SOURCE_CHANGE_CLASSES.includes(value)) {
     throw new FrameworkError(`change class must be one of: ${SOURCE_CHANGE_CLASSES.join(", ")}`);
@@ -339,11 +425,7 @@ function displaySourceName(source: string): string {
 }
 
 function aliasForSource(source: string, alias?: string): string {
-  const normalized = slugify(alias ?? displaySourceName(source));
-  if (normalized === "frozen") {
-    throw new FrameworkError("source alias 'frozen' is reserved by the Source namespace");
-  }
-  return normalized;
+  return slugify(alias ?? displaySourceName(source));
 }
 
 function looksLikeGitUri(value: string): boolean {
@@ -374,29 +456,33 @@ async function readYamlFile<T>(file: string): Promise<T> {
   return parsed as T;
 }
 
+/** Fields that named a retired concept; a workspace still carrying one needs `assay update`. */
+const RETIRED_LINEAGE_FIELDS = ["status", "relation", "mode", "default_capture_mode"] as const;
+const RETIRED_OBSERVATION_FIELDS = [
+  "analysis_status",
+  "analysis_path",
+  "analysis_exit",
+  "analysis_closed_on",
+  "capture_mode",
+  "fingerprint",
+  "manifest",
+] as const;
+
 async function readSourceLineageFile(file: string): Promise<SourceLineage> {
   const value = await readYamlFile<Record<string, unknown>>(file);
-  for (const field of ["status", "relation"] as const) {
+  for (const field of RETIRED_LINEAGE_FIELDS) {
     if (Object.hasOwn(value, field)) {
       throw new FrameworkError(`source lineage contains retired field '${field}': ${file}`, {
         code: "IO_ERROR",
       });
     }
   }
-  if (typeof value.mode !== "string" || !SOURCE_MODES.includes(value.mode as SourceMode)) {
-    throw new FrameworkError(
-      `source lineage mode must be one of: ${SOURCE_MODES.join(", ")}: ${file}`,
-      {
-        code: "IO_ERROR",
-      },
-    );
-  }
   if (
-    typeof value.default_capture_mode !== "string" ||
-    !SOURCE_CAPTURE_MODES.includes(value.default_capture_mode as SourceCaptureMode)
+    typeof value.content_mode !== "string" ||
+    !SOURCE_CONTENT_MODES.includes(value.content_mode as SourceContentMode)
   ) {
     throw new FrameworkError(
-      `source lineage capture mode must be one of: ${SOURCE_CAPTURE_MODES.join(", ")}: ${file}`,
+      `source content mode must be one of: ${SOURCE_CONTENT_MODES.join(", ")}: ${file}`,
       { code: "IO_ERROR" },
     );
   }
@@ -405,12 +491,7 @@ async function readSourceLineageFile(file: string): Promise<SourceLineage> {
 
 async function readSourceObservationFile(file: string): Promise<SourceObservation> {
   const value = await readYamlFile<Record<string, unknown>>(file);
-  for (const field of [
-    "analysis_status",
-    "analysis_path",
-    "analysis_exit",
-    "analysis_closed_on",
-  ] as const) {
+  for (const field of RETIRED_OBSERVATION_FIELDS) {
     if (Object.hasOwn(value, field)) {
       throw new FrameworkError(`source observation contains retired field '${field}': ${file}`, {
         code: "IO_ERROR",
@@ -418,15 +499,18 @@ async function readSourceObservationFile(file: string): Promise<SourceObservatio
     }
   }
   if (
-    typeof value.capture_mode !== "string" ||
-    !SOURCE_CAPTURE_MODES.includes(value.capture_mode as SourceCaptureMode)
+    typeof value.kind !== "string" ||
+    !SOURCE_OBSERVATION_KINDS.includes(value.kind as SourceObservationKind)
   ) {
     throw new FrameworkError(
-      `source observation capture mode must be one of: ${SOURCE_CAPTURE_MODES.join(", ")}: ${file}`,
+      `source observation kind must be one of: ${SOURCE_OBSERVATION_KINDS.join(", ")}: ${file}`,
       { code: "IO_ERROR" },
     );
   }
-  return value as unknown as SourceObservation;
+  return {
+    ...(value as unknown as SourceObservation),
+    advisories: Array.isArray(value.advisories) ? (value.advisories as string[]) : [],
+  };
 }
 
 async function writeYamlFile(file: string, value: unknown): Promise<void> {
@@ -436,22 +520,37 @@ async function writeYamlFile(file: string, value: unknown): Promise<void> {
 
 // Source-entry ledger directories live directly under sources/<alias>/.
 const OBSERVATIONS_DIR = "observations";
-const MANIFESTS_DIR = "manifests";
 const CAPTURES_DIR = "captures";
+const CHECKOUT_DIR = "checkout";
+const COPY_CONTENT_DIR = "content";
+const MATERIALS_DIR = "materials";
 
 function observationPath(observationId: string): string {
   return `${OBSERVATIONS_DIR}/${observationId}.yaml`;
 }
 
-function manifestPath(observationId: string): string {
-  return `${MANIFESTS_DIR}/${observationId}.json`;
+function capturePath(observationId: string): string {
+  return `${CAPTURES_DIR}/${observationId}/source`;
+}
+
+function captureManifestPath(observationId: string): string {
+  return `${CAPTURES_DIR}/${observationId}/manifest.json`;
+}
+
+/** Where a Source keeps its readable bytes, by content mode. */
+export function sourceContentDir(mode: SourceContentMode): string {
+  return mode === "checkout" ? CHECKOUT_DIR : COPY_CONTENT_DIR;
 }
 
 function isGitMetadata(value: SourceVcsMetadata | undefined): value is SourceVcsMetadata {
   return value !== undefined && value.type === "git" && value.commit.length > 0;
 }
 
-async function collectManifest(sourceRoot: string, generatedOn: string): Promise<SourceManifest> {
+async function collectManifest(
+  sourceRoot: string,
+  generatedOn: string,
+  recordedRoot?: string,
+): Promise<SourceManifest> {
   const files: SourceManifestFile[] = [];
   await collectFiles(sourceRoot, sourceRoot, files);
   files.sort((a, b) => a.path.localeCompare(b.path));
@@ -479,7 +578,7 @@ async function collectManifest(sourceRoot: string, generatedOn: string): Promise
   return {
     __schema: 1,
     generated_on: generatedOn,
-    root: sourceRoot,
+    root: recordedRoot ?? sourceRoot,
     fingerprint,
     files,
   };
@@ -561,139 +660,120 @@ async function materializeSelectedFiles(sourceRoot: string, materialsDir: string
   return copied;
 }
 
-async function materializeArchiveCapture(
-  entryRoot: string,
-  observationId: string,
-  captureRoot: string,
-): Promise<string> {
-  const relativePath = `${CAPTURES_DIR}/${observationId}/source`;
-  const destination = path.join(entryRoot, relativePath);
-  await cp(captureRoot, destination, {
-    recursive: true,
-    filter: (_source, dest) => shouldCopySource(destination, dest),
-  });
-  return relativePath;
+/**
+ * Copy a directory (or a single archive file) into the Source's own content
+ * root, so a copied source is readable without its origin still being there.
+ */
+async function copyContentInto(source: string, destination: string): Promise<void> {
+  const info = await stat(source);
+  if (info.isDirectory()) {
+    await cp(source, destination, {
+      recursive: true,
+      filter: (_source, dest) => shouldCopyCheckout(destination, dest),
+    });
+    return;
+  }
+  await mkdir(destination, { recursive: true });
+  await cp(source, path.join(destination, path.basename(source)));
 }
 
-async function prepareSourceRoots(
+/**
+ * Decide what a Source is and put its bytes in place.
+ *
+ * A Git repository or URL becomes a checkout, because Git is what makes
+ * "what did it look like then" free. Everything else is copied in once.
+ */
+async function prepareSourceContent(
   entryRoot: string,
   source: string,
-  captureMode: SourceCaptureMode,
   branch: string | undefined,
 ): Promise<{
-  readonly captureRoot: string;
-  readonly checkoutPath: string | null;
+  readonly contentMode: SourceContentMode;
+  readonly contentRoot: string;
   readonly sourceKind: SourceKind;
 }> {
-  const checkout = path.join(entryRoot, "checkout");
   const sourceExists = await exists(source);
-  const sourceKind: SourceKind = sourceExists
-    ? (await exists(path.join(source, ".git")))
-      ? "git"
-      : "directory"
-    : looksLikeGitUri(source)
-      ? "git"
-      : "unknown";
-
-  if (!sourceExists && sourceKind !== "git") {
+  const sourceIsGit = sourceExists && (await exists(path.join(source, ".git")));
+  if (!sourceExists && !looksLikeGitUri(source)) {
     throw new FrameworkNotFoundError(`source not found: ${source}`);
   }
 
-  if (captureMode === "checkout") {
-    if (sourceKind === "git") {
-      await cloneGitSource(
-        source,
-        checkout,
-        branch ? { kind: "branch", value: branch } : null,
-        !sourceExists,
-      );
-    } else {
-      await cp(source, checkout, {
-        recursive: true,
-        filter: (_source, dest) => shouldCopyCheckout(checkout, dest),
-      });
-    }
-    return { captureRoot: checkout, checkoutPath: "checkout", sourceKind };
+  if (sourceIsGit || !sourceExists) {
+    const checkout = path.join(entryRoot, CHECKOUT_DIR);
+    await cloneGitSource(
+      source,
+      checkout,
+      branch ? { kind: "branch", value: branch } : null,
+      !sourceExists,
+    );
+    return { contentMode: "checkout", contentRoot: checkout, sourceKind: "git" };
   }
 
-  if (sourceExists) {
-    return { captureRoot: source, checkoutPath: null, sourceKind };
-  }
-
-  throw new FrameworkError(`capture mode '${captureMode}' requires a local source in this version`);
+  const content = path.join(entryRoot, COPY_CONTENT_DIR);
+  const info = await stat(source);
+  await copyContentInto(source, content);
+  return {
+    contentMode: "copy",
+    contentRoot: content,
+    sourceKind: info.isDirectory() ? "directory" : "archive",
+  };
 }
 
-async function updateCheckoutFromSource(entryRoot: string, sourceUri: string): Promise<string> {
-  const checkout = path.join(entryRoot, "checkout");
-  assertManagedCheckout(entryRoot, checkout);
-  if (!(await exists(sourceUri))) {
-    return checkout;
-  }
-
-  await rm(checkout, { recursive: true, force: true });
-  await cp(sourceUri, checkout, {
-    recursive: true,
-    filter: (_source, dest) => shouldCopyCheckout(checkout, dest),
-  });
-  return checkout;
-}
-
-async function refreshCheckoutBeforeObservation(
+/**
+ * Update a checkout-backed Source in place, recording what it could not do.
+ *
+ * Nothing here refuses: a checkout carrying uncommitted work is observed as it
+ * stands with an advisory, and Git's own guards keep the bytes.
+ */
+async function refreshCheckoutForSync(
   entry: SourceEntry,
   options: Pick<SourceSyncOptions, "branch" | "ref">,
-  captureMode: SourceCaptureMode,
-  previousObservation: SourceObservation | null,
-): Promise<string> {
-  const checkout = path.join(entry.absolutePath, "checkout");
-  if (captureMode !== "checkout") {
-    return (await exists(entry.lineage.source_uri)) ? entry.lineage.source_uri : checkout;
+): Promise<{ readonly checkout: string; readonly advisories: readonly string[] }> {
+  const checkout = path.join(entry.absolutePath, CHECKOUT_DIR);
+  const cloned = (await isGitCheckout(checkout))
+    ? false
+    : await ensureCheckoutPresent(entry, checkout, options);
+  if (cloned || !(await isGitCheckout(checkout))) {
+    return { checkout, advisories: [] };
   }
 
-  if (await isGitCheckout(checkout)) {
-    await assertGitCheckoutSafeForRefresh(
-      checkout,
-      entry.lineage.checkout?.commit ?? previousObservation?.vcs?.commit ?? null,
-    );
-  } else if ((await exists(checkout)) && previousObservation) {
-    // The guard exists to stop a refresh from discarding local work Assay never
-    // recorded. It needs a recorded fingerprint to compare against: when the
-    // latest observation has none, drift cannot be proven either way, so the
-    // refresh proceeds and records a complete observation instead of failing.
-    const recordedFingerprint = previousObservation.fingerprint?.value;
-    if (recordedFingerprint) {
-      const checkoutManifest = await collectManifest(checkout, nowIso());
-      if (checkoutManifest.fingerprint.value !== recordedFingerprint) {
-        throw new FrameworkError(
-          `managed source checkout has unrecorded changes; preserve or remove them before refresh: ${checkout}`,
-          { code: "IO_ERROR" },
-        );
-      }
-    }
-  }
-
-  const sourceExists = await exists(entry.lineage.source_uri);
-  const sourceIsGit = sourceExists && (await exists(path.join(entry.lineage.source_uri, ".git")));
   const target = await syncTargetForCheckout(options, checkout, entry.lineage);
+  const update = await updateManagedCheckout({
+    entryRoot: entry.absolutePath,
+    sourceUri: entry.lineage.source_uri,
+    target,
+    requested: options.branch !== undefined || options.ref !== undefined,
+  });
+  return { checkout, advisories: update.advisories };
+}
 
-  if (sourceExists && (entry.lineage.source_kind === "git" || sourceIsGit)) {
-    return refreshLocalGitCheckout(entry.absolutePath, entry.lineage.source_uri, target);
+/** Re-clone a checkout whose bytes are gone; a present checkout is never replaced. */
+async function ensureCheckoutPresent(
+  entry: SourceEntry,
+  checkout: string,
+  options: Pick<SourceSyncOptions, "branch" | "ref">,
+): Promise<boolean> {
+  if (await exists(checkout)) {
+    return false;
   }
-
-  if (sourceExists) {
-    return updateCheckoutFromSource(entry.absolutePath, entry.lineage.source_uri);
-  }
-
-  if (await isGitCheckout(checkout)) {
-    await refreshRemoteGitCheckout(entry.absolutePath, checkout, target);
-  }
-  return checkout;
+  const target = options.ref
+    ? ({ kind: "ref", value: options.ref } as const)
+    : options.branch
+      ? ({ kind: "branch", value: options.branch } as const)
+      : entry.lineage.checkout?.ref && entry.lineage.checkout.ref !== "HEAD"
+        ? ({ kind: "branch", value: entry.lineage.checkout.ref } as const)
+        : null;
+  return ensureGitCheckout(
+    entry.absolutePath,
+    entry.lineage.source_uri,
+    target,
+    !(await exists(entry.lineage.source_uri)),
+  );
 }
 
 async function ensureSourceScaffold(entryRoot: string): Promise<void> {
-  await mkdir(path.join(entryRoot, "materials"), { recursive: true });
+  await mkdir(path.join(entryRoot, MATERIALS_DIR), { recursive: true });
   await mkdir(path.join(entryRoot, OBSERVATIONS_DIR), { recursive: true });
-  await mkdir(path.join(entryRoot, MANIFESTS_DIR), { recursive: true });
-  await mkdir(path.join(entryRoot, CAPTURES_DIR), { recursive: true });
 }
 
 async function nextObservationId(entryRoot: string, now: Date, suffix: string): Promise<string> {
@@ -711,11 +791,12 @@ async function nextObservationId(entryRoot: string, now: Date, suffix: string): 
   throw new FrameworkAlreadyExistsError(`too many observations for ${base}`);
 }
 
-function observationSuffix(
-  vcs: SourceVcsMetadata | undefined,
-  fingerprint: SourceFingerprint,
-): string {
-  return isGitMetadata(vcs) ? vcs.commit : fingerprint.value;
+/**
+ * Identity suffix for an observation id: the commit for a Git source, and the
+ * kind for anything else. Neither costs a tree hash.
+ */
+function observationSuffix(kind: SourceObservationKind, vcs?: SourceVcsMetadata): string {
+  return isGitMetadata(vcs) ? vcs.commit : kind;
 }
 
 function compareManifests(
@@ -755,87 +836,80 @@ function compareManifests(
   };
 }
 
-function classifyChange(
-  previousObservation: SourceObservation | null,
-  previousManifest: SourceManifest | null,
-  currentManifest: SourceManifest,
-  currentVcs: SourceVcsMetadata | undefined,
-  forced?: SourceChangeClass,
-): SourceChangeClass {
-  if (forced) {
-    assertChangeClass(forced);
-    return forced;
-  }
-
-  if (!previousObservation || !previousManifest) {
-    return "normal";
-  }
-
-  if (isGitMetadata(previousObservation.vcs) && isGitMetadata(currentVcs)) {
-    if (
-      previousObservation.vcs.commit === currentVcs.commit &&
-      previousObservation.vcs.dirty === currentVcs.dirty
-    ) {
-      return "same";
-    }
-    if (
-      previousObservation.vcs.remote &&
-      currentVcs.remote &&
-      previousObservation.vcs.remote !== currentVcs.remote
-    ) {
-      return "replacement";
-    }
-    if (currentVcs.common_ancestor_with_previous === false) {
-      return "replacement";
-    }
-  } else if (
-    previousObservation.fingerprint?.value !== undefined &&
-    previousObservation.fingerprint.value === currentManifest.fingerprint.value
-  ) {
-    return "same";
-  }
-  // A previous observation without a recorded fingerprint cannot prove "same".
-  // Classification falls through to the manifest diff below, which always
-  // yields a real class so the repairing observation is written.
-
-  const diff = compareManifests(previousManifest, currentManifest);
-  const changedCount = diff.added.length + diff.removed.length + diff.changed.length;
-  const denominator = Math.max(previousManifest.files.length, currentManifest.files.length, 1);
-  const ratio = changedCount / denominator;
+function classFromRatio(changedCount: number, total: number): SourceChangeClass {
+  const ratio = changedCount / Math.max(total, 1);
+  if (changedCount === 0) return "patch";
   if (ratio <= 0.05) return "patch";
   if (ratio <= 0.4) return "normal";
   return "major";
 }
 
-async function recordObservation(input: {
-  readonly root: string;
+/**
+ * Grade how much a checkout-backed Source moved, using only what Git already
+ * knows: which commit it was on, whether the remote is the same one, and which
+ * paths differ between the two commits. No tree is hashed to answer this.
+ */
+async function classifyCheckoutChange(input: {
+  readonly checkout: string;
+  readonly previous: SourceObservation | null;
+  readonly vcs: SourceVcsMetadata | undefined;
+  readonly dirtyPaths: readonly string[];
+  readonly forced?: SourceChangeClass;
+}): Promise<SourceChangeClass> {
+  if (input.forced) {
+    assertChangeClass(input.forced);
+    return input.forced;
+  }
+  const previousVcs = input.previous?.vcs;
+  if (!input.previous || !isGitMetadata(previousVcs) || !isGitMetadata(input.vcs)) {
+    return "normal";
+  }
+  if (previousVcs.commit === input.vcs.commit) {
+    if (previousVcs.dirty === input.vcs.dirty) {
+      return "same";
+    }
+    const tracked = await countTrackedFiles(input.checkout);
+    return classFromRatio(input.dirtyPaths.length, tracked ?? input.dirtyPaths.length);
+  }
+  if (previousVcs.remote && input.vcs.remote && previousVcs.remote !== input.vcs.remote) {
+    return "replacement";
+  }
+  if (input.vcs.common_ancestor_with_previous === false) {
+    return "replacement";
+  }
+  const changes = await changedPathsBetween(input.checkout, previousVcs.commit, input.vcs.commit);
+  if (!changes) {
+    return "normal";
+  }
+  const tracked = await countTrackedFiles(input.checkout);
+  const changedCount = changes.added.length + changes.removed.length + changes.changed.length;
+  return classFromRatio(changedCount, tracked ?? changedCount);
+}
+
+interface AppendObservationInput {
   readonly entryRoot: string;
   readonly relativePath: string;
   readonly lineage: SourceLineage;
   readonly now: Date;
-  readonly captureMode: SourceCaptureMode;
-  readonly captureRoot: string;
+  readonly kind: SourceObservationKind;
+  readonly changeClass: SourceChangeClass;
+  readonly note: string;
+  readonly advisories: readonly string[];
   readonly previousObservation: SourceObservation | null;
-  readonly previousManifest: SourceManifest | null;
-  readonly changeClass?: SourceChangeClass;
-}): Promise<MaterializedObservation & { readonly changeClass: SourceChangeClass }> {
-  const observedOn = nowIso(input.now);
-  const previousVcs = input.previousObservation?.vcs;
-  const vcs = await collectGitMetadata(input.captureRoot, previousVcs);
-  const manifest = await collectManifest(input.captureRoot, observedOn);
-  const changeClass = classifyChange(
-    input.previousObservation,
-    input.previousManifest,
-    manifest,
-    vcs,
-    input.changeClass,
-  );
-  const id = await nextObservationId(
-    input.entryRoot,
-    input.now,
-    observationSuffix(vcs, manifest.fingerprint),
-  );
+  readonly vcs?: SourceVcsMetadata | undefined;
+  readonly capture?: SourceCapture;
+  readonly id?: string;
+}
 
+/** Append one cheap entry to the ledger. Nothing here reads or hashes content. */
+async function appendObservation(input: AppendObservationInput): Promise<{
+  readonly observation: SourceObservation;
+  readonly observationFile: string;
+}> {
+  const observedOn = nowIso(input.now);
+  const id =
+    input.id ??
+    (await nextObservationId(input.entryRoot, input.now, observationSuffix(input.kind, input.vcs)));
   const observation: SourceObservation = {
     observation_id: id,
     observed_on: observedOn,
@@ -844,31 +918,15 @@ async function recordObservation(input: {
     previous_observation: input.previousObservation
       ? observationPath(input.previousObservation.observation_id)
       : null,
-    change_class: changeClass,
-    capture_mode: input.captureMode,
-    ...(vcs ? { vcs } : {}),
-    fingerprint: manifest.fingerprint,
-    manifest: manifestPath(id),
-    materials_path: "materials",
-    ...(input.captureMode === "checkout" ? { checkout_path: "checkout" } : {}),
-    ...(input.captureMode === "archive" ? { capture_path: `${CAPTURES_DIR}/${id}/source` } : {}),
+    kind: input.kind,
+    change_class: input.changeClass,
+    note: input.note,
+    advisories: [...input.advisories],
+    ...(input.vcs ? { vcs: input.vcs } : {}),
+    ...(input.capture ? { capture: input.capture } : {}),
   };
-
-  const obsFile = path.join(input.entryRoot, observationPath(id));
-  const manifestFile = path.join(input.entryRoot, manifestPath(id));
-  if (input.captureMode === "archive") {
-    await materializeArchiveCapture(input.entryRoot, id, input.captureRoot);
-  }
-  await writeYamlFile(obsFile, observation);
-  await writeManifest(manifestFile, manifest);
-
-  return {
-    observation,
-    manifest,
-    observationFile: observationPath(id),
-    manifestFile: manifestPath(id),
-    changeClass,
-  };
+  await writeYamlFile(path.join(input.entryRoot, observationPath(id)), observation);
+  return { observation, observationFile: observationPath(id) };
 }
 
 function updateLineageForObservation(
@@ -878,10 +936,10 @@ function updateLineageForObservation(
   return {
     ...lineage,
     latest_observation: observationPath(observation.observation_id),
-    ...(observation.capture_mode === "checkout" && observation.vcs
+    ...(lineage.content_mode === "checkout" && observation.vcs
       ? {
           checkout: {
-            path: "checkout",
+            path: CHECKOUT_DIR,
             ref: observation.vcs.ref,
             commit: observation.vcs.commit,
             dirty: observation.vcs.dirty,
@@ -896,22 +954,23 @@ async function writeSourceCard(
   lineage: SourceLineage,
   observation: SourceObservation,
 ): Promise<void> {
+  const contentDir = sourceContentDir(lineage.content_mode);
   const lines = [
     `# ${lineage.lineage_name}`,
     "",
     `- Source kind: ${lineage.source_kind}`,
     `- Source URI: ${lineage.source_uri}`,
     `- Latest observation: ${lineage.latest_observation ?? observationPath(observation.observation_id)}`,
-    `- Capture mode: ${lineage.default_capture_mode}`,
+    `- Content: ${contentDir}/ (${lineage.content_mode === "checkout" ? "checkout-backed, moved by `assay source sync`" : "copied content, replaced by `assay source import`"})`,
     `- Change class: ${observation.change_class}`,
     "",
     "## Entrypoints",
     "",
-    "- `source.yaml`: durable lineage identity",
-    "- `checkout/`: current materialized source when capture mode is `checkout`",
+    "- `source.yaml`: durable source identity",
+    `- \`${contentDir}/\`: the readable bytes of this source`,
     "- `materials/`: selected extracts and supporting files",
-    `- Source mode: ${lineage.mode}`,
-    "- `observations/`, `manifests/`, `captures/`: source observation ledger",
+    "- `observations/`: append-only ledger of what was seen and when",
+    "- `captures/`: byte captures, each with its own integrity manifest",
     "",
   ];
   await writeFile(path.join(entryRoot, "README.md"), lines.join("\n"), "utf8");
@@ -964,7 +1023,7 @@ async function listSourceEntries(root: string): Promise<SourceEntry[]> {
   const entries = await readdir(sourcesRoot, { withFileTypes: true });
   const sources: SourceEntry[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === "frozen") continue;
+    if (!entry.isDirectory()) continue;
     const entryRoot = path.join(sourcesRoot, entry.name);
     const sourceFile = path.join(entryRoot, "source.yaml");
     if (!(await exists(sourceFile))) continue;
@@ -991,12 +1050,12 @@ async function loadObservation(
   return readSourceObservationFile(file);
 }
 
-async function loadObservationManifest(
+async function loadCaptureManifest(
   entryRoot: string,
   observation: SourceObservation | null,
 ): Promise<SourceManifest | null> {
-  if (!observation) return null;
-  const file = path.join(entryRoot, observation.manifest);
+  if (!observation?.capture) return null;
+  const file = path.join(entryRoot, observation.capture.manifest);
   return (await exists(file)) ? readManifest(file) : null;
 }
 
@@ -1004,10 +1063,51 @@ async function writeLineage(entryRoot: string, lineage: SourceLineage): Promise<
   await writeYamlFile(path.join(entryRoot, "source.yaml"), lineage);
 }
 
-async function materializeMaterials(captureRoot: string, materialsDir: string): Promise<number> {
+async function materializeMaterials(contentRoot: string, materialsDir: string): Promise<number> {
   await mkdir(materialsDir, { recursive: true });
-  await writeStructure(captureRoot, path.join(materialsDir, "structure.md"));
-  return materializeSelectedFiles(captureRoot, materialsDir);
+  await writeStructure(contentRoot, path.join(materialsDir, "structure.md"));
+  return materializeSelectedFiles(contentRoot, materialsDir);
+}
+
+/** Absolute content root for a source entry, whatever its content mode. */
+function contentRootFor(entry: SourceEntry): string {
+  return path.join(entry.absolutePath, sourceContentDir(entry.lineage.content_mode));
+}
+
+function contentRelativeFor(entry: SourceEntry): string {
+  return `${entry.relativePath}/${sourceContentDir(entry.lineage.content_mode)}`;
+}
+
+/**
+ * Copy the source's current bytes into `captures/<id>/source` and write the
+ * integrity manifest beside them. This is the one place a tree hash is part of
+ * the primary purpose rather than a tax: a capture without a hash cannot prove
+ * it still holds what it captured.
+ */
+async function materializeCapture(
+  entryRoot: string,
+  observationId: string,
+  contentRoot: string,
+  generatedOn: string,
+): Promise<SourceCapture> {
+  const relativePath = capturePath(observationId);
+  const destination = path.join(entryRoot, relativePath);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await cp(contentRoot, destination, {
+    recursive: true,
+    filter: (_source, dest) => shouldCopySource(destination, dest),
+  });
+  const manifest = await collectManifest(destination, generatedOn, relativePath);
+  const manifestRelative = captureManifestPath(observationId);
+  await writeManifest(path.join(entryRoot, manifestRelative), manifest);
+  return {
+    path: relativePath,
+    manifest: manifestRelative,
+    algorithm: manifest.fingerprint.algorithm,
+    value: manifest.fingerprint.value,
+    file_count: manifest.fingerprint.file_count,
+    byte_count: manifest.fingerprint.byte_count,
+  };
 }
 
 export async function addSource(options: SourceAddOptions): Promise<SourceAddResult> {
@@ -1020,16 +1120,6 @@ async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddRe
   const root = path.resolve(options.root);
   const manifest = requireManifestPresent(await loadManifest(root), root);
   const now = options.now ?? new Date();
-  const mode = options.mode ?? "living";
-  if (!SOURCE_MODES.includes(mode)) {
-    throw new FrameworkError(`source mode must be one of: ${SOURCE_MODES.join(", ")}`);
-  }
-  if (mode === "frozen" && options.capture !== undefined && options.capture !== "archive") {
-    throw new FrameworkError("frozen sources require archive capture");
-  }
-  const captureMode = mode === "frozen" ? "archive" : (options.capture ?? "checkout");
-  assertCaptureMode(captureMode);
-
   const source =
     looksLikeGitUri(options.source) && !(await exists(options.source))
       ? options.source
@@ -1042,35 +1132,40 @@ async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddRe
   }
 
   await ensureSourceScaffold(entryRoot);
-  const { captureRoot, checkoutPath, sourceKind } = await prepareSourceRoots(
+  const { contentMode, contentRoot, sourceKind } = await prepareSourceContent(
     entryRoot,
     source,
-    captureMode,
     options.branch,
   );
-  const selectedFiles = await materializeMaterials(captureRoot, path.join(entryRoot, "materials"));
-  const createdOn = nowIso(now);
+  const selectedFiles = await materializeMaterials(
+    contentRoot,
+    path.join(entryRoot, MATERIALS_DIR),
+  );
   const lineage: SourceLineage = {
     lineage_id: alias,
     lineage_name: options.alias ?? displaySourceName(options.source),
     source_kind: sourceKind,
     source_uri: source,
-    created_on: createdOn,
+    created_on: nowIso(now),
     latest_observation: null,
-    mode,
-    default_capture_mode: captureMode,
+    content_mode: contentMode,
   };
 
-  const recorded = await recordObservation({
-    root,
+  const vcs = await collectGitMetadata(contentRoot);
+  const recorded = await appendObservation({
     entryRoot,
     relativePath,
     lineage,
     now,
-    captureMode,
-    captureRoot,
+    kind: "add",
+    changeClass: "normal",
+    note:
+      contentMode === "checkout"
+        ? `checkout-backed source added from ${source}`
+        : `content copied once from ${source}`,
+    advisories: [],
     previousObservation: null,
-    previousManifest: null,
+    vcs,
   });
   const updatedLineage = updateLineageForObservation(lineage, recorded.observation);
   await writeLineage(entryRoot, updatedLineage);
@@ -1082,10 +1177,8 @@ async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddRe
       source: alias,
       path: relativePath,
       source_uri: source,
-      mode,
-      capture_mode: captureMode,
+      content_mode: contentMode,
       observation: recorded.observationFile,
-      manifest: recorded.manifestFile,
       materials_selected_files: selectedFiles,
     },
     now,
@@ -1097,12 +1190,22 @@ async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddRe
     path: relativePath,
     sourceFile: `${relativePath}/source.yaml`,
     observationFile: `${relativePath}/${recorded.observationFile}`,
-    manifestFile: `${relativePath}/${recorded.manifestFile}`,
-    checkoutPath: checkoutPath ? `${relativePath}/${checkoutPath}` : null,
-    materialsPath: `${relativePath}/materials`,
+    contentMode,
+    contentPath: `${relativePath}/${sourceContentDir(contentMode)}`,
+    materialsPath: `${relativePath}/${MATERIALS_DIR}`,
     observation: recorded.observation,
     eventFile: relativeDisplayPath(eventFile, root),
   };
+}
+
+function assertCheckoutBacked(entry: SourceEntry, action: string): void {
+  if (entry.lineage.content_mode === "checkout") return;
+  throw new FrameworkError(
+    withSemanticModel(
+      `source '${entry.alias}' keeps copied content, so there is no checkout to ${action}`,
+      "sourceNotCheckoutBacked",
+    ),
+  );
 }
 
 export async function syncSource(options: SourceSyncOptions): Promise<SourceSyncResult> {
@@ -1111,46 +1214,47 @@ export async function syncSource(options: SourceSyncOptions): Promise<SourceSync
   return withWorkspaceMutationCoordination(root, () => syncSourceUnlocked({ ...options, root }));
 }
 
+function sameAdvisories(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/**
+ * Observe a checkout-backed Source again.
+ *
+ * Sync never refuses. A dirty checkout, a local commit upstream does not have,
+ * an unreachable remote — each becomes an advisory on the observation and the
+ * command still succeeds, because the ledger's job is to say what was there,
+ * not to hold the bytes hostage until they look tidy.
+ */
 async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyncResult> {
   const root = path.resolve(options.root);
   requireManifestPresent(await loadManifest(root), root);
   const now = options.now ?? new Date();
   if (options.changeClass) assertChangeClass(options.changeClass);
   const entry = await sourceEntryForAlias(root, options.alias);
-  if (entry.lineage.mode === "frozen") {
-    throw new FrameworkError(`source '${entry.alias}' is frozen and cannot be synced`);
-  }
+  assertCheckoutBacked(entry, "sync");
   const previousObservation = await loadObservation(
     entry.absolutePath,
     entry.lineage.latest_observation,
   );
-  const previousManifest = await loadObservationManifest(entry.absolutePath, previousObservation);
-  const captureMode = entry.lineage.default_capture_mode;
 
-  const captureRoot = await refreshCheckoutBeforeObservation(
-    entry,
-    options,
-    captureMode,
-    previousObservation,
-  );
-
-  await materializeMaterials(captureRoot, path.join(entry.absolutePath, "materials"));
-  const recorded = await recordObservation({
-    root,
-    entryRoot: entry.absolutePath,
-    relativePath: entry.relativePath,
-    lineage: entry.lineage,
-    now,
-    captureMode,
-    captureRoot,
-    previousObservation,
-    previousManifest,
-    ...(options.changeClass ? { changeClass: options.changeClass } : {}),
+  const { checkout, advisories } = await refreshCheckoutForSync(entry, options);
+  await materializeMaterials(checkout, path.join(entry.absolutePath, MATERIALS_DIR));
+  const vcs = await collectGitMetadata(checkout, previousObservation?.vcs);
+  const signals = await readCheckoutLocalSignals(checkout);
+  const changeClass = await classifyCheckoutChange({
+    checkout,
+    previous: previousObservation,
+    vcs,
+    dirtyPaths: signals?.dirtyPaths ?? [],
+    ...(options.changeClass ? { forced: options.changeClass } : {}),
   });
 
-  if (recorded.changeClass === "same") {
-    await rm(path.join(entry.absolutePath, recorded.observationFile), { force: true });
-    await rm(path.join(entry.absolutePath, recorded.manifestFile), { force: true });
+  if (
+    changeClass === "same" &&
+    previousObservation &&
+    sameAdvisories(previousObservation.advisories, advisories)
+  ) {
     const eventFile = await appendEvent(
       root,
       {
@@ -1168,33 +1272,44 @@ async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyn
       path: entry.relativePath,
       changeClass: "same",
       observationFile: null,
-      manifestFile: null,
       observation: null,
+      advisories,
       eventFile: relativeDisplayPath(eventFile, root),
     };
   }
 
+  const recorded = await appendObservation({
+    entryRoot: entry.absolutePath,
+    relativePath: entry.relativePath,
+    lineage: entry.lineage,
+    now,
+    kind: "sync",
+    changeClass,
+    note: syncNote(previousObservation, vcs, advisories),
+    advisories,
+    previousObservation,
+    vcs,
+  });
   const updatedLineage = updateLineageForObservation(entry.lineage, recorded.observation);
   await writeLineage(entry.absolutePath, updatedLineage);
   await writeSourceCard(entry.absolutePath, updatedLineage, recorded.observation);
-  const comparison = compareManifests(previousManifest, recorded.manifest);
-  const comparisonResult: SourceDiffResult = {
-    ...comparison,
+  const comparison = await compareCheckoutObservations(
     root,
-    alias: entry.alias,
-    from: previousObservation?.observation_id ?? null,
-    to: recorded.observation.observation_id,
-  };
+    entry,
+    checkout,
+    previousObservation,
+    recorded.observation,
+  );
   const eventFile = await appendEvent(
     root,
     {
       event: "source.synced",
       source: entry.alias,
       path: entry.relativePath,
-      change_class: recorded.changeClass,
+      change_class: changeClass,
       previous_observation: previousObservation?.observation_id ?? null,
       observation: recorded.observationFile,
-      manifest: recorded.manifestFile,
+      advisories,
     },
     now,
   );
@@ -1203,12 +1318,285 @@ async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyn
     root,
     alias: entry.alias,
     path: entry.relativePath,
-    changeClass: recorded.changeClass,
+    changeClass,
     observationFile: `${entry.relativePath}/${recorded.observationFile}`,
-    manifestFile: `${entry.relativePath}/${recorded.manifestFile}`,
     observation: recorded.observation,
+    advisories,
     eventFile: relativeDisplayPath(eventFile, root),
-    comparison: comparisonResult,
+    ...(comparison ? { comparison } : {}),
+  };
+}
+
+function syncNote(
+  previous: SourceObservation | null,
+  vcs: SourceVcsMetadata | undefined,
+  advisories: readonly string[],
+): string {
+  const position = vcs ? `${vcs.ref} ${vcs.commit.slice(0, 12)}` : null;
+  const moved = previous?.vcs?.commit && vcs && previous.vcs.commit !== vcs.commit;
+  const base = position ? `${moved ? "moved to" : "observed at"} ${position}` : "observed content";
+  return advisories.length > 0 ? `${base}; ${advisories.join("; ")}` : base;
+}
+
+/** File-level comparison between two Git observations, straight from Git. */
+async function compareCheckoutObservations(
+  root: string,
+  entry: SourceEntry,
+  checkout: string,
+  previous: SourceObservation | null,
+  current: SourceObservation,
+): Promise<SourceDiffResult | undefined> {
+  const from = previous?.vcs?.commit;
+  const to = current.vcs?.commit;
+  if (!from || !to) return undefined;
+  const changes = await changedPathsBetween(checkout, from, to);
+  if (!changes) return undefined;
+  return {
+    root,
+    alias: entry.alias,
+    from: previous?.observation_id ?? null,
+    to: current.observation_id,
+    added: changes.added,
+    removed: changes.removed,
+    changed: changes.changed,
+  };
+}
+
+export async function captureSource(options: SourceCaptureOptions): Promise<SourceCaptureResult> {
+  const root = path.resolve(options.root);
+  await preflightSourceWorkspace(root);
+  return withWorkspaceMutationCoordination(root, () => captureSourceUnlocked({ ...options, root }));
+}
+
+/**
+ * Preserve a Source's current bytes: the explicit tier, available at any time
+ * and for any content mode. This is the only routine path that hashes a tree,
+ * because a capture that cannot prove what it holds is not a capture.
+ */
+async function captureSourceUnlocked(options: SourceCaptureOptions): Promise<SourceCaptureResult> {
+  const root = path.resolve(options.root);
+  requireManifestPresent(await loadManifest(root), root);
+  const now = options.now ?? new Date();
+  const entry = await sourceEntryForAlias(root, options.alias);
+  const contentRoot = contentRootFor(entry);
+  if (!(await exists(contentRoot))) {
+    throw new FrameworkNotFoundError(
+      `source '${entry.alias}' has no content to capture at ${contentRelativeFor(entry)}`,
+    );
+  }
+  const previousObservation = await loadObservation(
+    entry.absolutePath,
+    entry.lineage.latest_observation,
+  );
+  const previousCapture = await latestCaptureManifest(entry);
+  const vcs = await collectGitMetadata(contentRoot, previousObservation?.vcs);
+  const id = await nextObservationId(entry.absolutePath, now, "capture");
+  const capture = await materializeCapture(entry.absolutePath, id, contentRoot, nowIso(now));
+  const changeClass = await classifyCaptureChange(entry, previousCapture, capture);
+
+  const recorded = await appendObservation({
+    entryRoot: entry.absolutePath,
+    relativePath: entry.relativePath,
+    lineage: entry.lineage,
+    now,
+    kind: "capture",
+    changeClass,
+    note:
+      options.note ??
+      `captured ${capture.file_count} files from ${sourceContentDir(entry.lineage.content_mode)}/`,
+    advisories: vcs?.dirty ? [CHECKOUT_ADVISORY_LOCAL_MODIFICATIONS] : [],
+    previousObservation,
+    vcs,
+    capture,
+    id,
+  });
+  const updatedLineage = updateLineageForObservation(entry.lineage, recorded.observation);
+  await writeLineage(entry.absolutePath, updatedLineage);
+  await writeSourceCard(entry.absolutePath, updatedLineage, recorded.observation);
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "source.captured",
+      source: entry.alias,
+      path: entry.relativePath,
+      observation: recorded.observationFile,
+      capture: capture.path,
+      file_count: capture.file_count,
+      byte_count: capture.byte_count,
+    },
+    now,
+  );
+
+  return {
+    root,
+    alias: entry.alias,
+    path: entry.relativePath,
+    observationFile: `${entry.relativePath}/${recorded.observationFile}`,
+    observation: recorded.observation,
+    capture,
+    capturePath: `${entry.relativePath}/${capture.path}`,
+    manifestFile: `${entry.relativePath}/${capture.manifest}`,
+    eventFile: relativeDisplayPath(eventFile, root),
+  };
+}
+
+function countManifestDifferences(previous: SourceManifest, current: SourceManifest): number {
+  const diff = compareManifests(previous, current);
+  return diff.added.length + diff.removed.length + diff.changed.length;
+}
+
+/**
+ * Grade a capture against the previous one. Both manifests already exist, so
+ * this is a comparison of records rather than another pass over the bytes.
+ */
+async function classifyCaptureChange(
+  entry: SourceEntry,
+  previous: SourceManifest | null,
+  capture: SourceCapture,
+): Promise<SourceChangeClass> {
+  if (!previous) return "normal";
+  if (previous.fingerprint.value === capture.value) return "same";
+  const current = await readManifest(path.join(entry.absolutePath, capture.manifest));
+  return classFromRatio(
+    countManifestDifferences(previous, current),
+    Math.max(previous.files.length, current.files.length),
+  );
+}
+
+/** Most recent capture manifest for a source, or null when nothing was captured. */
+async function latestCaptureManifest(entry: SourceEntry): Promise<SourceManifest | null> {
+  const captures = await listCaptureIds(entry.absolutePath);
+  const latest = captures.at(-1);
+  if (!latest) return null;
+  const file = path.join(entry.absolutePath, captureManifestPath(latest));
+  return (await exists(file)) ? readManifest(file) : null;
+}
+
+async function listCaptureIds(entryRoot: string): Promise<string[]> {
+  const dir = path.join(entryRoot, CAPTURES_DIR);
+  if (!(await exists(dir))) return [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export async function importSourceContent(
+  options: SourceImportOptions,
+): Promise<SourceImportResult> {
+  const root = path.resolve(options.root);
+  await preflightSourceWorkspace(root);
+  return withWorkspaceMutationCoordination(root, () =>
+    importSourceContentUnlocked({ ...options, root }),
+  );
+}
+
+/**
+ * Replace a copied Source's content from a local directory or archive.
+ *
+ * The bytes that are about to go are captured first, so an import adds a record
+ * instead of destroying one — the append-only half of the old frozen rules,
+ * kept, without the "never update this" half.
+ */
+async function importSourceContentUnlocked(
+  options: SourceImportOptions,
+): Promise<SourceImportResult> {
+  const root = path.resolve(options.root);
+  requireManifestPresent(await loadManifest(root), root);
+  const now = options.now ?? new Date();
+  const entry = await sourceEntryForAlias(root, options.alias);
+  if (entry.lineage.content_mode !== "copy") {
+    throw new FrameworkError(
+      withSemanticModel(
+        `source '${entry.alias}' is checkout-backed, so its content is not replaced by import`,
+        "sourceCopyContentOnly",
+      ),
+    );
+  }
+  const from = path.resolve(options.from);
+  if (!(await exists(from))) {
+    throw new FrameworkNotFoundError(`import source not found: ${from}`);
+  }
+
+  const contentRoot = contentRootFor(entry);
+  const preserved = (await exists(contentRoot))
+    ? await captureSourceUnlocked({
+        root,
+        alias: entry.alias,
+        note: "content preserved before import",
+        now,
+      })
+    : null;
+  const previousManifest = preserved
+    ? await readManifest(path.join(entry.absolutePath, preserved.capture.manifest))
+    : null;
+
+  await rm(contentRoot, { recursive: true, force: true });
+  await copyContentInto(from, contentRoot);
+  await materializeMaterials(contentRoot, path.join(entry.absolutePath, MATERIALS_DIR));
+
+  const currentManifest = await collectManifest(
+    contentRoot,
+    nowIso(now),
+    sourceContentDir(entry.lineage.content_mode),
+  );
+  const changeClass = previousManifest
+    ? previousManifest.fingerprint.value === currentManifest.fingerprint.value
+      ? "same"
+      : classFromRatio(
+          countManifestDifferences(previousManifest, currentManifest),
+          Math.max(previousManifest.files.length, currentManifest.files.length),
+        )
+    : "normal";
+
+  const latestObservation = await loadObservation(
+    entry.absolutePath,
+    preserved
+      ? observationPath(preserved.observation.observation_id)
+      : entry.lineage.latest_observation,
+  );
+  const recorded = await appendObservation({
+    entryRoot: entry.absolutePath,
+    relativePath: entry.relativePath,
+    lineage: entry.lineage,
+    now,
+    kind: "import",
+    changeClass,
+    note: options.note ?? `content replaced from ${from}`,
+    advisories: [],
+    previousObservation: latestObservation,
+  });
+  const updatedLineage = updateLineageForObservation(
+    { ...entry.lineage, source_uri: from },
+    recorded.observation,
+  );
+  await writeLineage(entry.absolutePath, updatedLineage);
+  await writeSourceCard(entry.absolutePath, updatedLineage, recorded.observation);
+  const eventFile = await appendEvent(
+    root,
+    {
+      event: "source.imported",
+      source: entry.alias,
+      path: entry.relativePath,
+      from,
+      change_class: changeClass,
+      observation: recorded.observationFile,
+      preserved_capture: preserved?.capture.path ?? null,
+    },
+    now,
+  );
+
+  return {
+    root,
+    alias: entry.alias,
+    path: entry.relativePath,
+    contentPath: contentRelativeFor(entry),
+    observationFile: `${entry.relativePath}/${recorded.observationFile}`,
+    observation: recorded.observation,
+    preservedCapture: preserved?.capture ?? null,
+    changeClass,
+    eventFile: relativeDisplayPath(eventFile, root),
   };
 }
 
@@ -1223,21 +1611,18 @@ async function switchSourceUnlocked(options: SourceSwitchOptions): Promise<Sourc
   await preflightSourceWorkspace(root);
   const now = options.now ?? new Date();
   const entry = await sourceEntryForAlias(root, options.alias);
-  if (entry.lineage.mode === "frozen") {
-    throw new FrameworkError(`source '${entry.alias}' is frozen and cannot be switched`);
-  }
-  const checkout = path.join(entry.absolutePath, "checkout");
+  assertCheckoutBacked(entry, "switch");
+  const checkout = path.join(entry.absolutePath, CHECKOUT_DIR);
   if (!(await exists(path.join(checkout, ".git")))) {
-    throw new FrameworkError(`source '${entry.alias}' does not have a Git checkout`);
+    throw new FrameworkError(
+      withSemanticModel(
+        `source '${entry.alias}' has no Git checkout to switch`,
+        "sourceNotCheckoutBacked",
+      ),
+    );
   }
-  const latestObservation = await loadObservation(
-    entry.absolutePath,
-    entry.lineage.latest_observation,
-  );
-  await assertGitCheckoutSafeForRefresh(
-    checkout,
-    entry.lineage.checkout?.commit ?? latestObservation?.vcs?.commit ?? null,
-  );
+  // No gate here on purpose: `git checkout` refuses a move that would overwrite
+  // uncommitted work, and that refusal is the byte protection this needs.
   await checkoutGitRef(checkout, options.target);
   const vcs = await collectGitMetadata(checkout);
   if (!vcs) {
@@ -1246,7 +1631,7 @@ async function switchSourceUnlocked(options: SourceSwitchOptions): Promise<Sourc
   const updatedLineage: SourceLineage = {
     ...entry.lineage,
     checkout: {
-      path: "checkout",
+      path: CHECKOUT_DIR,
       ref: vcs.ref,
       commit: vcs.commit,
       dirty: vcs.dirty,
@@ -1298,12 +1683,13 @@ export async function getSourceStatus(options: {
       name: entry.lineage.lineage_name,
       kind: entry.lineage.source_kind,
       uri: entry.lineage.source_uri,
-      mode: entry.lineage.mode,
-      captureMode: entry.lineage.default_capture_mode,
+      contentMode: entry.lineage.content_mode,
       latestObservation: latest?.observation_id ?? null,
       latestChangeClass: latest?.change_class ?? null,
+      latestAdvisories: latest?.advisories ?? [],
+      captures: (await listCaptureIds(entry.absolutePath)).length,
       ...(latest?.vcs ? { vcs: latest.vcs } : {}),
-      ...(entry.lineage.default_capture_mode === "checkout" && entry.lineage.checkout
+      ...(entry.lineage.content_mode === "checkout" && entry.lineage.checkout
         ? { checkout: entry.lineage.checkout }
         : {}),
     });
@@ -1366,42 +1752,187 @@ export async function resolveSourceObservation(
   await preflightSourceWorkspace(root);
   const entry = await resolveSourceObservationEntry(root, options.alias, options.observation);
   const observationFile = observationPath(entry.observation.observation_id);
+  const capture = entry.observation.capture;
   return {
     root,
     alias: entry.alias,
     sourcePath: entry.relativePath,
     observationFile: `${entry.relativePath}/${observationFile}`,
     observation: entry.observation,
-    manifestFile: `${entry.relativePath}/${entry.observation.manifest}`,
-    materialsPath: `${entry.relativePath}/${entry.observation.materials_path}`,
-    checkoutPath: entry.observation.checkout_path
-      ? `${entry.relativePath}/${entry.observation.checkout_path}`
-      : null,
+    contentMode: entry.lineage.content_mode,
+    contentPath: capture ? `${entry.relativePath}/${capture.path}` : contentRelativeFor(entry),
+    materialsPath: `${entry.relativePath}/${MATERIALS_DIR}`,
+    capturePath: capture ? `${entry.relativePath}/${capture.path}` : null,
   };
 }
 
+/**
+ * List the files an observation stands for, computing the hash only now.
+ *
+ * A capture answers from its stored manifest. Anything else is read from the
+ * source's current content, which is what a tier-1 pin means for a non-Git
+ * source: hashed once, when a decision asks for it.
+ */
+export async function readSourceContentListing(
+  options: SourceObservationResolveOptions,
+): Promise<SourceContentListing> {
+  const root = path.resolve(options.root);
+  await preflightSourceWorkspace(root);
+  const entry = await resolveSourceObservationEntry(root, options.alias, options.observation);
+  const capture = entry.observation.capture;
+  if (capture) {
+    const manifestFile = path.join(entry.absolutePath, capture.manifest);
+    if (!(await exists(manifestFile))) {
+      throw new FrameworkNotFoundError(
+        withSemanticModel(
+          `source capture manifest is missing: ${entry.relativePath}/${capture.manifest}`,
+          "sourceCaptureMissing",
+        ),
+      );
+    }
+    const manifest = await readManifest(manifestFile);
+    return {
+      alias: entry.alias,
+      observationId: entry.observation.observation_id,
+      origin: "capture",
+      relativeRoot: `${entry.relativePath}/${capture.path}`,
+      fingerprint: manifest.fingerprint,
+      files: manifest.files,
+    };
+  }
+
+  const contentRoot = contentRootFor(entry);
+  if (!(await exists(contentRoot))) {
+    throw new FrameworkNotFoundError(
+      `source '${entry.alias}' has no content at ${contentRelativeFor(entry)}`,
+    );
+  }
+  const manifest = await collectManifest(
+    contentRoot,
+    nowIso(),
+    sourceContentDir(entry.lineage.content_mode),
+  );
+  return {
+    alias: entry.alias,
+    observationId: entry.observation.observation_id,
+    origin: "content",
+    relativeRoot: contentRelativeFor(entry),
+    fingerprint: manifest.fingerprint,
+    files: manifest.files,
+  };
+}
+
+/**
+ * The two most recent points at which a copied source's bytes were described.
+ *
+ * A capture describes them exactly. The current content describes them now, at
+ * the cost of hashing, which is why it is only reached for when the newest
+ * record is not itself a capture. Everything in between is a cheap append entry
+ * that never claimed to know the bytes, so there is nothing there to compare.
+ */
+async function describeCopiedBytes(
+  root: string,
+  entry: SourceEntry,
+  latest: SourceObservation,
+  since: string | null,
+): Promise<{
+  readonly from: { id: string; manifest: SourceManifest } | null;
+  readonly to: { id: string; manifest: SourceManifest } | null;
+}> {
+  const ordered = (await getSourceLog({ root, alias: entry.alias })).entries.map(
+    (logEntry) => logEntry.observation,
+  );
+  const captures: { id: string; manifest: SourceManifest }[] = [];
+  for (const observation of ordered) {
+    const manifest = await loadCaptureManifest(entry.absolutePath, observation);
+    if (manifest) captures.push({ id: observation.observation_id, manifest });
+  }
+
+  if (since) {
+    const pinned = captures.find((capture) => `${OBSERVATIONS_DIR}/${capture.id}.yaml` === since);
+    const to =
+      (await loadCaptureManifest(entry.absolutePath, latest)) ??
+      (await currentContentDescription(entry));
+    return {
+      from: pinned ?? null,
+      to: to ? { id: latest.observation_id, manifest: to } : null,
+    };
+  }
+
+  const latestCapture = captures.at(-1);
+  if (latestCapture?.id === latest.observation_id) {
+    return { from: captures.at(-2) ?? null, to: latestCapture };
+  }
+  const current = await currentContentDescription(entry);
+  return {
+    from: latestCapture ?? null,
+    to: current ? { id: latest.observation_id, manifest: current } : null,
+  };
+}
+
+async function currentContentDescription(entry: SourceEntry): Promise<SourceManifest | null> {
+  const contentRoot = contentRootFor(entry);
+  if (!(await exists(contentRoot))) return null;
+  return collectManifest(contentRoot, nowIso(), sourceContentDir(entry.lineage.content_mode));
+}
+
+/**
+ * What changed between two observations.
+ *
+ * For a checkout-backed source that is a Git diff between the recorded commits.
+ * For copied content it compares byte descriptions: the captures that preserved
+ * them, and the content as it stands when the newest record is not a capture.
+ */
 export async function diffSource(options: SourceDiffOptions): Promise<SourceDiffResult> {
   const root = path.resolve(options.root);
   await preflightSourceWorkspace(root);
   const entry = await sourceEntryForAlias(root, options.alias);
+  const empty: SourceDiffResult = {
+    root,
+    alias: entry.alias,
+    from: null,
+    to: null,
+    added: [],
+    removed: [],
+    changed: [],
+  };
   const latest = await loadObservation(entry.absolutePath, entry.lineage.latest_observation);
-  const latestManifest = await loadObservationManifest(entry.absolutePath, latest);
-  if (!latest || !latestManifest) {
-    return { root, alias: entry.alias, from: null, to: null, added: [], removed: [], changed: [] };
-  }
+  if (!latest) return empty;
 
   const previousRef = options.since
     ? normalizeObservationSelector(options.since)
     : latest.previous_observation;
   const previous = await loadObservation(entry.absolutePath, previousRef);
-  const previousManifest = await loadObservationManifest(entry.absolutePath, previous);
-  const diff = compareManifests(previousManifest, latestManifest);
+
+  if (entry.lineage.content_mode === "checkout") {
+    const comparison = await compareCheckoutObservations(
+      root,
+      entry,
+      path.join(entry.absolutePath, CHECKOUT_DIR),
+      previous,
+      latest,
+    );
+    return (
+      comparison ?? { ...empty, from: previous?.observation_id ?? null, to: latest.observation_id }
+    );
+  }
+
+  const described = await describeCopiedBytes(
+    root,
+    entry,
+    latest,
+    options.since ? previousRef : null,
+  );
+  if (!described.to) {
+    return { ...empty, from: described.from?.id ?? null, to: latest.observation_id };
+  }
+  const diff = compareManifests(described.from?.manifest ?? null, described.to.manifest);
   return {
     ...diff,
     root,
     alias: entry.alias,
-    from: previous?.observation_id ?? null,
-    to: latest.observation_id,
+    from: described.from?.id ?? null,
+    to: described.to.id,
   };
 }
 
@@ -1430,20 +1961,37 @@ export async function collectSourceHealthRows(
       });
       continue;
     }
-    if (!latest.fingerprint?.value) {
+    const contentDir = sourceContentDir(source.lineage.content_mode);
+    if (!(await exists(path.join(source.absolutePath, contentDir)))) {
       rows.push({
-        path: `${source.relativePath}/${source.lineage.latest_observation}`,
+        path: `${source.relativePath}/${contentDir}`,
         status: "error",
-        message: `source observation '${latest.observation_id}' recorded no content identity, so nothing can be compared against it`,
+        message: `source '${source.alias}' has no readable content at ${contentDir}/`,
       });
     }
-    const manifestFile = path.join(source.absolutePath, latest.manifest);
-    if (!(await exists(manifestFile))) {
-      rows.push({
-        path: `${source.relativePath}/${latest.manifest}`,
-        status: "error",
-        message: `source observation '${latest.observation_id}' names a capture manifest that is missing from disk`,
-      });
+    // A capture is the one record that promises specific bytes, so both halves
+    // of it have to still be there.
+    for (const id of await listCaptureIds(source.absolutePath)) {
+      for (const relative of [captureManifestPath(id), capturePath(id)]) {
+        if (await exists(path.join(source.absolutePath, relative))) continue;
+        rows.push({
+          path: `${source.relativePath}/${relative}`,
+          status: "error",
+          message: withSemanticModel(
+            `source capture '${id}' is missing ${relative.endsWith(".json") ? "its integrity manifest" : "its captured bytes"}`,
+            "sourceCaptureMissing",
+          ),
+        });
+      }
+    }
+    if (options.includeAdvisories) {
+      for (const advisory of latest.advisories) {
+        rows.push({
+          path: `${source.relativePath}/${source.lineage.latest_observation}`,
+          status: "warning",
+          message: `source '${source.alias}' latest observation: ${advisory}`,
+        });
+      }
     }
   }
   return rows;

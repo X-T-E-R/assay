@@ -147,7 +147,7 @@ describe("0.13 control-plane cleanup", () => {
 
     const manifest = await loadManifest(root);
     expect(manifest).toMatchObject({
-      framework_version: "0.13.0",
+      framework_version: "0.14.0",
       layout: { version: 8 },
     });
     if (!manifest) throw new Error("short-path workspace manifest was not created");
@@ -247,7 +247,7 @@ describe("0.13 control-plane cleanup", () => {
     const manifest = await loadManifest(root);
     expect(manifest).toMatchObject({
       __schema: 4,
-      framework_version: "0.13.0",
+      framework_version: "0.14.0",
       layout: { version: 8, entries: expect.any(Array) },
     });
     expect(manifest?.layout.paths).toEqual({
@@ -305,7 +305,7 @@ describe("0.13 control-plane cleanup", () => {
     const before = await readdir(path.join(root, ".assay"));
     await expect(initFramework({ target: root })).rejects.toMatchObject({
       code: "WORKSPACE_CUTOVER_REQUIRED",
-      required: "0.13.0+s4+l8",
+      required: "0.14.0+s4+l8",
     });
     expect(await readdir(path.join(root, ".assay"))).toEqual(before);
     expect(await readFile(path.join(root, ".assay", "manifest.json"), "utf8")).toBe(

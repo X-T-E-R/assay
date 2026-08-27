@@ -1,3 +1,10 @@
+import {
+  CURRENT_VERSION,
+  LAYOUT_VERSION,
+  MIGRATABLE_VERSION,
+  SYSTEMS_REGISTRY_SCHEMA,
+} from "./constants.js";
+
 export type FrameworkErrorCode =
   | "FRAMEWORK_ERROR"
   | "INVALID_MANIFEST"
@@ -43,18 +50,31 @@ export class InvalidManifestError extends FrameworkError {
   }
 }
 
+/** Envelope tuple this build writes and is willing to load. */
+export const REQUIRED_WORKSPACE_TUPLE = `${CURRENT_VERSION}+s4+l${LAYOUT_VERSION}`;
+/** The one older tuple `assay update` migrates in place. */
+export const MIGRATABLE_WORKSPACE_TUPLE = `${MIGRATABLE_VERSION}+s4+l${LAYOUT_VERSION}`;
+
 export class WorkspaceCutoverRequiredError extends FrameworkError {
   readonly observed: string;
-  readonly required = "0.13.0+s4+l8";
+  readonly required = REQUIRED_WORKSPACE_TUPLE;
   readonly locator: string;
 
   constructor(observed: string) {
-    const locator = `assay-cutover:${observed}->0.13.0+s4+l8`;
+    // One release back has a migration in `assay update`; everything older is
+    // still the external tool's job. Naming the right one is the difference
+    // between a command that works and an hour lost.
+    const migratable = observed.endsWith(MIGRATABLE_WORKSPACE_TUPLE);
+    const locator = migratable
+      ? `assay-update:${observed}->${REQUIRED_WORKSPACE_TUPLE}`
+      : `assay-cutover:${observed}->${REQUIRED_WORKSPACE_TUPLE}`;
     super(
-      `Workspace cutover required: observed ${observed}; required 0.13.0+s4+l8; locator ${locator}`,
+      migratable
+        ? `Workspace migration required: observed ${observed}; required ${REQUIRED_WORKSPACE_TUPLE}; run \`assay update\`; locator ${locator}`
+        : `Workspace cutover required: observed ${observed}; required ${REQUIRED_WORKSPACE_TUPLE}; locator ${locator}`,
       {
         code: "WORKSPACE_CUTOVER_REQUIRED",
-        details: { observed, required: "0.13.0+s4+l8", locator },
+        details: { observed, required: REQUIRED_WORKSPACE_TUPLE, locator },
       },
     );
     this.name = "WorkspaceCutoverRequiredError";
@@ -65,17 +85,18 @@ export class WorkspaceCutoverRequiredError extends FrameworkError {
 
 export class SystemsRegistryCutoverRequiredError extends FrameworkError {
   readonly observed: string;
-  readonly required = "0.13.0+s4+l8+r3";
+  readonly required = `${REQUIRED_WORKSPACE_TUPLE}+r${SYSTEMS_REGISTRY_SCHEMA}`;
   readonly locator: string;
 
   constructor(observedRegistrySchema: number | "unknown") {
-    const observed = `0.13.0+s4+l8+r${observedRegistrySchema}`;
-    const locator = `assay-cutover:${observed}->0.13.0+s4+l8+r3`;
+    const required = `${REQUIRED_WORKSPACE_TUPLE}+r${SYSTEMS_REGISTRY_SCHEMA}`;
+    const observed = `${REQUIRED_WORKSPACE_TUPLE}+r${observedRegistrySchema}`;
+    const locator = `assay-cutover:${observed}->${required}`;
     super(
-      `Systems registry cutover required: observed ${observed}; required 0.13.0+s4+l8+r3; locator ${locator}`,
+      `Systems registry cutover required: observed ${observed}; required ${required}; locator ${locator}`,
       {
         code: "WORKSPACE_CUTOVER_REQUIRED",
-        details: { observed, required: "0.13.0+s4+l8+r3", locator },
+        details: { observed, required, locator },
       },
     );
     this.name = "SystemsRegistryCutoverRequiredError";

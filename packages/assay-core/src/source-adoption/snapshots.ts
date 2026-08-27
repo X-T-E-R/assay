@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { FrameworkError, FrameworkNotFoundError } from "../errors.js";
 import { stringifySortedJson, toPosixPath } from "../serialization.js";
-import { resolveSourceObservation } from "../sources.js";
+import { readSourceContentListing, resolveSourceObservation } from "../sources.js";
 import { collectGitMetadata } from "../sources/git.js";
 import {
   requireSystemsRegistry,
@@ -57,7 +57,9 @@ function hashJson(value: unknown): string {
   return createHash("sha256").update(stringifySortedJson(value), "utf8").digest("hex");
 }
 
-function recomputeSourceManifestFingerprint(manifest: z.infer<typeof sourceManifestSchema>): {
+function recomputeSourceManifestFingerprint(manifest: {
+  readonly files: readonly z.infer<typeof sourceManifestFileSchema>[];
+}): {
   readonly value: string;
   readonly byteCount: number;
 } {
@@ -113,68 +115,69 @@ export function sourceAdoptionLocatorMatchesPath(
 }
 
 export function snapshotManifestLocator(
-  manifest: z.infer<typeof sourceManifestSchema>,
+  listing: { readonly files: readonly z.infer<typeof sourceManifestFileSchema>[] },
   locator: SourceAdoptionPathLocator,
 ): SourceAdoptionLocatorSnapshot {
-  const files = manifest.files.filter((file) =>
+  const files = listing.files.filter((file) =>
     sourceAdoptionLocatorMatchesPath(locator, file.path),
   );
   return snapshotFromFiles(locator, files);
 }
 
+/**
+ * Pin what was adopted, at the moment of adoption.
+ *
+ * This is the tier-1 act: the file listing and its tree hash are computed here
+ * rather than carried by every observation, so recording that material moved is
+ * where the cost lands and nowhere else.
+ */
 export async function snapshotSourceAdoptionSource(
   root: string,
   definition: SourceAdoptionDefinition,
   targetId: string,
   observation?: string,
 ): Promise<SourceAdoptionSourceSnapshot> {
-  const resolved = await resolveSourceObservation({
+  const listing = await readSourceContentListing({
     root,
     alias: definition.source.alias,
     ...(observation === undefined ? {} : { observation }),
   });
-  const manifestPath = path.resolve(root, resolved.manifestFile);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFile(manifestPath, "utf8"));
-  } catch (error) {
-    throw new FrameworkError(`source manifest is not valid JSON: ${resolved.manifestFile}`, {
+  const parsedFiles = z.array(sourceManifestFileSchema).safeParse(listing.files);
+  if (!parsedFiles.success) {
+    throw new FrameworkError(`source content listing failed validation: ${listing.relativeRoot}`, {
       code: "INVALID_SOURCE_ADOPTION",
-      cause: error,
+      details: parsedFiles.error.flatten(),
+      cause: parsedFiles.error,
     });
   }
-  const result = sourceManifestSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new FrameworkError(`source manifest failed validation: ${resolved.manifestFile}`, {
-      code: "INVALID_SOURCE_ADOPTION",
-      details: result.error.flatten(),
-      cause: result.error,
-    });
-  }
-  const manifest = result.data;
-  const recomputed = recomputeSourceManifestFingerprint(manifest);
+  const files = parsedFiles.data;
+  const recomputed = recomputeSourceManifestFingerprint({ files });
   if (
-    manifest.fingerprint.value !== resolved.observation.fingerprint.value ||
-    manifest.fingerprint.value !== recomputed.value ||
-    manifest.files.length !== manifest.fingerprint.file_count ||
-    manifest.fingerprint.byte_count !== recomputed.byteCount
+    listing.fingerprint.value !== recomputed.value ||
+    files.length !== listing.fingerprint.file_count ||
+    listing.fingerprint.byte_count !== recomputed.byteCount
   ) {
     throw new FrameworkError(
-      `source observation and its capture manifest describe different content: ${resolved.observation.observation_id}`,
+      `source content and its recorded identity disagree: ${listing.observationId}`,
       { code: "INVALID_SOURCE_ADOPTION" },
     );
   }
 
   const locators: Record<string, SourceAdoptionLocatorSnapshot> = {};
   for (const mapping of mappingsForTarget(definition, targetId)) {
-    locators[mapping.id] = snapshotManifestLocator(manifest, mapping.source);
+    locators[mapping.id] = snapshotManifestLocator({ files }, mapping.source);
   }
 
+  const resolved = await resolveSourceObservation({
+    root,
+    alias: definition.source.alias,
+    ...(observation === undefined ? {} : { observation }),
+  });
   return sourceAdoptionSourceSnapshotSchema.parse({
     alias: definition.source.alias,
     lineage_id: resolved.observation.lineage_id,
     observation_id: resolved.observation.observation_id,
-    manifest_fingerprint: manifest.fingerprint.value,
+    manifest_fingerprint: listing.fingerprint.value,
     vcs_commit: resolved.observation.vcs?.commit ?? null,
     locators,
   });

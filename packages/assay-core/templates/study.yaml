@@ -2,7 +2,7 @@ __schema: 1
 description: Study external systems as the main product, converting what survives analysis into reusable knowledge.
 directories:
   - path: sources
-    purpose: Living and frozen external evidence
+    purpose: External material, tracked or copied
   - path: analyses/references
     purpose: Analysis cards for external systems
   - path: analyses/gaps

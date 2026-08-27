@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
   type BuiltCliRunner,
   createBuiltCliRunner,
@@ -198,6 +200,68 @@ describe("point-of-use hints", { timeout: 60_000 }, () => {
     expect(added.stdout.trimEnd().split("\n").at(-1)).toContain(
       "work in progress stays in an Analysis",
     );
+  });
+});
+
+describe("evidence tiers at the point of decision", { timeout: 60_000 }, () => {
+  it("suggests a pin when an analysis closes on a decision, and stays quiet otherwise", async () => {
+    const root = await workspace("pin-suggestion");
+    const material = await tempDirs.createTempDir();
+    await writeFile(path.join(material, "README.md"), "# Upstream\n", "utf8");
+
+    const added = await cliRunner.runCli(["source", "add", material, "up", "--root", root]);
+    expect(added.exitCode, added.stderr).toBe(0);
+
+    const decided = await cliRunner.runCli([
+      "analysis",
+      "new",
+      "Worth adopting",
+      "--for-source",
+      "up",
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(decided.exitCode, decided.stderr).toBe(0);
+    const decidedPath = (JSON.parse(decided.stdout) as { path: string }).path;
+
+    const closed = await cliRunner.runCli([
+      "analysis",
+      "close",
+      decidedPath,
+      "--exit",
+      "adopt",
+      "--root",
+      root,
+    ]);
+    expect(closed.exitCode, closed.stderr).toBe(0);
+    expect(closed.stdout).toContain("Pin: `up` is copied content");
+    expect(closed.stdout).toContain("Neither is required.");
+
+    const browsed = await cliRunner.runCli([
+      "analysis",
+      "new",
+      "Only looking",
+      "--for-source",
+      "up",
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(browsed.exitCode, browsed.stderr).toBe(0);
+    const browsedPath = (JSON.parse(browsed.stdout) as { path: string }).path;
+
+    const parked = await cliRunner.runCli([
+      "analysis",
+      "close",
+      browsedPath,
+      "--exit",
+      "experiment",
+      "--root",
+      root,
+    ]);
+    expect(parked.exitCode, parked.stderr).toBe(0);
+    expect(parked.stdout).not.toContain("Pin:");
   });
 });
 

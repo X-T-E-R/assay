@@ -4,7 +4,7 @@
   "adapter_version": "1.0.0",
   "assay": {
     "spi_version": 1,
-    "version": "0.13.0"
+    "version": "0.14.0"
   },
   "provenance": {
     "source": "https://github.com/X-T-E-R/assay/tree/v0.13.0/packages/assay-plugin-fixture",

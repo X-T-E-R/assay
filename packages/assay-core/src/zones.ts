@@ -51,7 +51,7 @@ export function manifestZones(
 export const NATIVE_LAZY_DIRECTORIES: readonly WorkspaceZone[] = [
   {
     path: "sources",
-    purpose: "Living sources and frozen external evidence (created on first use)",
+    purpose: "External material, tracked or copied (created on first use)",
   },
   { path: "analyses", purpose: "Analysis records (created on first use)" },
 ];

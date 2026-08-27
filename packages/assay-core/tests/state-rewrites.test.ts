@@ -12,7 +12,6 @@ import {
   getFrameworkStatus,
   initFramework,
   registerSystem,
-  syncSource,
 } from "../src/index.js";
 
 const tempDirs = createTempDirectoryFixture("assay-core-state-rewrites");
@@ -32,25 +31,6 @@ async function directorySource(name: string, body = "# Source\n\nv1\n"): Promise
   await mkdir(source, { recursive: true });
   await writeFile(path.join(source, "README.md"), body, "utf8");
   return source;
-}
-
-/** Remove the `fingerprint:` block from an observation, as an older or damaged record would lack it. */
-async function stripObservationFingerprint(observationFile: string): Promise<void> {
-  const lines = (await readFile(observationFile, "utf8")).split("\n");
-  const kept: string[] = [];
-  let inBlock = false;
-  for (const line of lines) {
-    if (/^fingerprint:/.test(line)) {
-      inBlock = true;
-      continue;
-    }
-    if (inBlock) {
-      if (line.trim() !== "" && /^\s/.test(line)) continue;
-      inBlock = false;
-    }
-    kept.push(line);
-  }
-  await writeFile(observationFile, kept.join("\n"), "utf8");
 }
 
 async function onlyObservation(root: string, alias: string): Promise<string> {
@@ -194,6 +174,56 @@ describe("analysis close writes the header status and the real decision checkbox
   });
 });
 
+describe("closing on a decision suggests an identity pin without requiring one", () => {
+  it("names the commit an adopt rested on when the card carries one", async () => {
+    const root = await workspace("PinFromCommit");
+    const source = await directorySource("pin-commit-source");
+    await addSource({ root, source, alias: "up" });
+    const created = await createAnalysis({ root, title: "Pin From Commit", forSource: "up" });
+    // A checkout-backed card carries the commit; the header is what close reads,
+    // so injecting it exercises the same path a Git source produces.
+    const original = await readFile(created.absolutePath, "utf8");
+    await writeFile(
+      created.absolutePath,
+      original.replace("- Source path:", `- Source commit: ${"c".repeat(40)}\n- Source path:`),
+      "utf8",
+    );
+
+    const closed = await closeAnalysis({ root, path: created.path, exit: "adopt" });
+
+    expect(closed.pinSuggestion).toContain("`up` at cccccccccccc");
+    expect(closed.pinSuggestion).not.toContain("assay source capture");
+  });
+
+  it("names both routes for copied content and requires neither", async () => {
+    const root = await workspace("PinFromCopy");
+    const source = await directorySource("pin-copy-source");
+    await addSource({ root, source, alias: "up" });
+    const created = await createAnalysis({ root, title: "Pin From Copy", forSource: "up" });
+
+    const closed = await closeAnalysis({ root, path: created.path, exit: "reject" });
+
+    expect(closed.pinSuggestion).toContain("assay source adoption take");
+    expect(closed.pinSuggestion).toContain("assay source capture up");
+    expect(closed.pinSuggestion).toContain("Neither is required.");
+  });
+
+  it("suggests nothing for an experiment or an analysis bound to no source", async () => {
+    const root = await workspace("PinAbsent");
+    const source = await directorySource("pin-absent-source");
+    await addSource({ root, source, alias: "up" });
+    const bound = await createAnalysis({ root, title: "Still Looking", forSource: "up" });
+    const unbound = await createAnalysis({ root, title: "No Source" });
+
+    expect(
+      (await closeAnalysis({ root, path: bound.path, exit: "experiment" })).pinSuggestion,
+    ).toBeUndefined();
+    expect(
+      (await closeAnalysis({ root, path: unbound.path, exit: "adopt" })).pinSuggestion,
+    ).toBeUndefined();
+  });
+});
+
 describe("analysis.closed events describe only what happened", () => {
   it("never records allow_empty, whether or not the deprecated flag was passed", async () => {
     const root = await workspace("AllowEmptyEvent");
@@ -254,54 +284,32 @@ describe("check reports any source-ledger failure instead of skipping it", () =>
   });
 });
 
-describe("source sync repairs an observation that records no fingerprint", () => {
-  it("records a fresh observation for a non-Git directory source in checkout mode", async () => {
-    const root = await workspace("FingerprintCheckout");
-    const source = await directorySource("fingerprint-checkout-source");
-    await addSource({ root, source, alias: "up", capture: "checkout" });
-    await stripObservationFingerprint(await onlyObservation(root, "up"));
+describe("check reads a source by what it holds, not by a stored fingerprint", () => {
+  it("passes a source whose observation records no content hash at all", async () => {
+    const root = await workspace("CheapObservation");
+    const source = await directorySource("cheap-observation-source");
+    await addSource({ root, source, alias: "up" });
 
-    const before = await checkFramework({ root });
-    expect(before.ok).toBe(false);
-    expect(
-      before.rows.some(
-        (row) => row.status === "error" && row.message?.includes("recorded no content identity"),
-      ),
-    ).toBe(true);
-
-    const synced = await syncSource({ root, alias: "up" });
-    expect(synced.observation?.fingerprint.value).toBeTruthy();
-
-    const after = await checkFramework({ root });
-    expect(after.rows.filter((row) => row.status === "error")).toEqual([]);
-    expect(after.ok).toBe(true);
-  });
-
-  it("records a fresh observation for an archive-mode source", async () => {
-    const root = await workspace("FingerprintArchive");
-    const source = await directorySource("fingerprint-archive-source");
-    await addSource({ root, source, alias: "up", capture: "archive" });
-    await stripObservationFingerprint(await onlyObservation(root, "up"));
-
-    expect((await checkFramework({ root })).ok).toBe(false);
-
-    const synced = await syncSource({ root, alias: "up" });
-    expect(synced.observation?.fingerprint.value).toBeTruthy();
+    const observation = await readFile(await onlyObservation(root, "up"), "utf8");
+    expect(observation).not.toContain("fingerprint:");
     expect((await checkFramework({ root })).ok).toBe(true);
   });
 
-  it("still refuses to refresh a checkout whose recorded fingerprint proves local drift", async () => {
-    const root = await workspace("FingerprintGuardIntact");
-    const source = await directorySource("fingerprint-guard-source");
-    await addSource({ root, source, alias: "up", capture: "checkout" });
+  it("fails when a source has no readable content left", async () => {
+    const root = await workspace("MissingContent");
+    const source = await directorySource("missing-content-source");
+    await addSource({ root, source, alias: "up" });
+    await rm(path.join(root, "sources", "up", "content"), { recursive: true, force: true });
 
-    const checkoutFile = path.join(root, "sources", "up", "checkout", "README.md");
-    await writeFile(checkoutFile, "# Source\n\nlocal work\n", "utf8");
-    await writeFile(path.join(source, "README.md"), "# Source\n\nv2\n", "utf8");
-
-    await expect(syncSource({ root, alias: "up" })).rejects.toThrow(
-      "managed source checkout has unrecorded changes",
-    );
-    expect(await readFile(checkoutFile, "utf8")).toContain("local work");
+    const check = await checkFramework({ root });
+    expect(check.ok).toBe(false);
+    expect(
+      check.rows.some(
+        (row) =>
+          row.status === "error" &&
+          row.path === "sources/up/content" &&
+          row.message?.includes("no readable content"),
+      ),
+    ).toBe(true);
   });
 });
