@@ -171,19 +171,24 @@ const SEMANTICS: readonly ObjectSemantics[] = [
       "A Git repository or URL is checkout-backed: `source sync` moves it and the commit is its identity, for free. A plain directory or archive is copied in once and stays put.",
       "`assay status` names the sources whose upstream moved and what that reaches. Sync those, rather than sweeping all of them on a schedule.",
       "Evidence is pinned in tiers: alias and date by default, identity (commit, or a computed content hash) when a decision needs to cite it, an explicit `source capture` when the bytes themselves have to survive.",
+      "A Source that already has a home in another workspace is reached with `assay source link`, not cloned again: one home, one checkout, one ledger, and every other workspace holds a `source.ref.yaml` pointer.",
     ],
     whenNotToUse: [
       "Not for this project's own code, which belongs in a registered system directory.",
       "Not as a dependency manager or a vendoring mechanism.",
+      "Not a second time for material another workspace already owns. Link it instead; two clones become two histories of the same thing.",
     ],
     commonMisuses: [
       "Running `source sync` as a routine sweep instead of when `status` reports upstream movement.",
       "Asking for a content hash on every look. The default record is alias and date; deeper pins are for decisions that cite them.",
       "Treating the copy as adopted. Adoption is a recorded mapping into a system, not the act of copying.",
       "Browsing `.assay/` by hand instead of `source status`, `source log`, and `source diff`.",
+      "Reading a linked Source as a local copy. Writes go through to its home, and `unlink` forgets the local name without touching the material.",
     ],
     commands: [
       "assay source add <repo-or-dir> [alias]",
+      "assay source link <target-workspace> <target-source>",
+      "assay source home <alias>",
       "assay source status",
       "assay source log <alias>",
       "assay source diff <alias>",
@@ -376,6 +381,10 @@ export const SEMANTIC_HINTS = {
     "A Git source is checkout-backed and syncs; anything else is copied in once. Record what the decision needs, not everything recordable.",
   "source capture":
     "A capture is the explicit byte-level tier: reach for it when the bytes have to survive, not on every look.",
+  "source link":
+    "A reference is a live alias to one Source home: reads and writes go through to it, and this workspace's own Analyses, Tasks, and adoptions still belong here.",
+  "source unlink":
+    "unlink forgets a local name; the Source and its ledger stay in the workspace that owns them.",
   "analysis new": "An Analysis is finished when it reaches an exit, not when the file exists.",
   "source adoption take":
     "A mapping records where material landed so a later upstream change can find it; it is not an approval.",
@@ -419,6 +428,10 @@ export const SEMANTIC_MODELS = {
     "Import replaces copied content: a checkout follows its upstream instead, through `assay source sync` or `assay source switch`.",
   sourceCaptureMissing:
     "A capture is a byte-level record: its manifest and its bytes stay together, so a missing half is repaired by taking a new capture.",
+  sourceReferenceBroken:
+    "A reference is a path to one Source home: point it at the home again with `assay source link <target-workspace> <target-source> --alias <local-alias>`, or drop the local name with `assay source unlink`. Everything else in this workspace keeps working.",
+  sourceOwnedHere:
+    "This workspace owns the Source: `unlink` forgets a reference, and an owned Source is removed in the workspace that holds it.",
 } as const;
 
 export type SemanticModelKey = keyof typeof SEMANTIC_MODELS;

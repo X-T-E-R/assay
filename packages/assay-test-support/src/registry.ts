@@ -8,6 +8,20 @@ import { pathExists } from "./filesystem.js";
 /** Environment variable that redirects Assay's explicit workspace index. */
 export const REGISTRY_ROOT_ENV = "ASSAY_WORKSPACES_ROOT";
 
+/**
+ * Environment variable that redirects the clone registry file.
+ *
+ * The registry defaults into the real home directory, and a test run that
+ * recorded a temp workspace there would leave the developer's hints pointing at
+ * directories that no longer exist.
+ */
+export const CLONE_REGISTRY_ENV = "ASSAY_CLONE_REGISTRY";
+
+/** Disposable clone-registry file beside this process's isolated index. */
+export function isolatedCloneRegistryForProcess(): string {
+  return path.join(os.tmpdir(), `assay-test-workspaces-${process.pid}`, "clone-registry.json");
+}
+
 export async function createIsolatedRegistryRoot(
   tempDirs: TempDirectoryFixture,
   directoryName = "registry",

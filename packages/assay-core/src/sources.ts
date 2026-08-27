@@ -3,6 +3,11 @@ import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promi
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import {
+  type CloneRegistryEntry,
+  findClonesByOrigin,
+  recordSourceClone,
+} from "./clone-registry.js";
 import { MANAGED_DIR } from "./constants.js";
 import { FrameworkAlreadyExistsError, FrameworkError, FrameworkNotFoundError } from "./errors.js";
 import { appendEvent } from "./events.js";
@@ -13,6 +18,16 @@ import type { CheckRow } from "./results.js";
 import type { FrameworkManifest } from "./schemas/index.js";
 import { withSemanticModel } from "./semantics.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
+import {
+  type BrokenSourceReference,
+  SOURCE_REFERENCE_FILE,
+  type SourceEntryReference,
+  brokenReferenceMessage,
+  describeBrokenReference,
+  readSourceReferenceShell,
+  referenceForHome,
+  resolveSourceReference,
+} from "./source-reference.js";
 import {
   CHECKOUT_ADVISORY_LOCAL_MODIFICATIONS,
   assertManagedCheckout,
@@ -48,6 +63,13 @@ import { nowIso } from "./time.js";
  * identity pin is the commit, or for a non-Git source a tree hash computed on
  * demand. Byte-level preservation is always an explicit `source capture`. No
  * default path hashes a tree.
+ *
+ * A Source entry has two physical shapes. An owned entry holds `source.yaml`
+ * and is the Source's home. A reference holds only `source.ref.yaml`, naming
+ * the workspace that owns it; every operation below resolves the alias first
+ * and then runs against the home, which is also the workspace whose lock and
+ * event ledger a write uses. See `source-reference.ts` for the relationship
+ * itself.
  */
 
 export const SOURCE_CONTENT_MODES = ["checkout", "copy"] as const;
@@ -146,6 +168,13 @@ export interface SourceAddOptions {
   readonly alias?: string;
   readonly branch?: string;
   readonly now?: Date;
+  /**
+   * Advisories as they happen, so the "this is already cloned somewhere" line
+   * reaches the caller before the clone runs rather than after it.
+   */
+  readonly onNotice?: (notice: string) => void;
+  /** Clone-registry file; the environment or the user default when omitted. */
+  readonly registryFile?: string;
 }
 
 export interface SourceAddResult {
@@ -159,18 +188,28 @@ export interface SourceAddResult {
   readonly materialsPath: string;
   readonly observation: SourceObservation;
   readonly eventFile: string;
+  /** Advisory lines this add produced; never a refusal. */
+  readonly notices: readonly string[];
 }
 
-export interface SourceSyncOptions {
+/** Write-through announcement: a Source command that lands in another workspace says so first. */
+export interface SourceWriteThroughNotice {
+  readonly onNotice?: (notice: string) => void;
+}
+
+export interface SourceSyncOptions extends SourceWriteThroughNotice {
   readonly root: string;
   readonly alias?: string;
   readonly branch?: string;
   readonly ref?: string;
   readonly changeClass?: SourceChangeClass;
   readonly now?: Date;
+  /** Test seam: full path to the clone registry file. */
+  readonly registryFile?: string;
 }
 
 export interface SourceSyncResult {
+  /** Workspace this write landed in: the Source's home, not always the caller's. */
   readonly root: string;
   readonly alias: string;
   readonly path: string;
@@ -181,9 +220,11 @@ export interface SourceSyncResult {
   readonly advisories: readonly string[];
   readonly eventFile: string;
   readonly comparison?: SourceDiffResult;
+  /** Set when the alias was a reference, so output can name the real home. */
+  readonly reference: SourceEntryReference | null;
 }
 
-export interface SourceCaptureOptions {
+export interface SourceCaptureOptions extends SourceWriteThroughNotice {
   readonly root: string;
   readonly alias: string;
   readonly note?: string;
@@ -200,9 +241,10 @@ export interface SourceCaptureResult {
   readonly capturePath: string;
   readonly manifestFile: string;
   readonly eventFile: string;
+  readonly reference: SourceEntryReference | null;
 }
 
-export interface SourceImportOptions {
+export interface SourceImportOptions extends SourceWriteThroughNotice {
   readonly root: string;
   readonly alias: string;
   readonly from: string;
@@ -221,9 +263,10 @@ export interface SourceImportResult {
   readonly preservedCapture: SourceCapture | null;
   readonly changeClass: SourceChangeClass;
   readonly eventFile: string;
+  readonly reference: SourceEntryReference | null;
 }
 
-export interface SourceSwitchOptions {
+export interface SourceSwitchOptions extends SourceWriteThroughNotice {
   readonly root: string;
   readonly alias: string;
   readonly target: string;
@@ -239,11 +282,15 @@ export interface SourceSwitchResult {
   readonly vcs: SourceVcsMetadata;
   readonly eventFile: string;
   readonly sync?: SourceSyncResult;
+  readonly reference: SourceEntryReference | null;
 }
 
 export interface SourceStatusEntry {
   readonly alias: string;
+  /** Path to the material, relative to the workspace that owns it. */
   readonly path: string;
+  /** Absolute path of the Source directory, wherever its home is. */
+  readonly absolutePath: string;
   readonly name: string;
   readonly kind: SourceKind;
   readonly uri: string;
@@ -253,6 +300,9 @@ export interface SourceStatusEntry {
   readonly latestAdvisories: readonly string[];
   /** Byte captures recorded for this source; 0 means nothing was pinned that deep. */
   readonly captures: number;
+  readonly relation: "owned" | "ref";
+  /** Set for a referenced Source; read output must show it rather than hide it. */
+  readonly reference: SourceEntryReference | null;
   readonly vcs?: SourceVcsMetadata;
   readonly checkout?: SourceLineage["checkout"];
 }
@@ -260,6 +310,12 @@ export interface SourceStatusEntry {
 export interface SourceStatusResult {
   readonly root: string;
   readonly sources: readonly SourceStatusEntry[];
+  /**
+   * References whose home could not be reached. Listed separately because they
+   * have no lineage to report, and reported at all because a reference that
+   * silently disappeared from `source list` is worse than one marked broken.
+   */
+  readonly broken: readonly BrokenSourceReference[];
 }
 
 export interface SourceLogEntry {
@@ -272,6 +328,7 @@ export interface SourceLogResult {
   readonly alias: string;
   readonly path: string;
   readonly entries: readonly SourceLogEntry[];
+  readonly reference: SourceEntryReference | null;
 }
 
 export interface SourceDiffOptions {
@@ -288,6 +345,7 @@ export interface SourceDiffResult {
   readonly added: readonly string[];
   readonly removed: readonly string[];
   readonly changed: readonly string[];
+  readonly reference?: SourceEntryReference | null;
 }
 
 export interface SourceObservationResolveOptions {
@@ -297,16 +355,22 @@ export interface SourceObservationResolveOptions {
 }
 
 export interface SourceObservationResolution {
+  /** Workspace the resolved paths are relative to: the Source's home. */
   readonly root: string;
   readonly alias: string;
   readonly sourcePath: string;
   readonly observationFile: string;
   readonly observation: SourceObservation;
   readonly contentMode: SourceContentMode;
-  /** Where the readable bytes for this observation are, workspace-relative. */
+  /** Where the readable bytes for this observation are, home-relative. */
   readonly contentPath: string;
   readonly materialsPath: string;
   readonly capturePath: string | null;
+  /**
+   * Set when the local alias is a reference. Evidence records the observation
+   * and the home it resolved to, because the alias is only a navigation name.
+   */
+  readonly reference: SourceEntryReference | null;
 }
 
 /**
@@ -326,12 +390,26 @@ export interface SourceContentListing {
   readonly files: readonly SourceManifestFile[];
 }
 
+/**
+ * One resolved Source, whether this workspace owns it or references it.
+ *
+ * `relativePath` and `absolutePath` address the material in its home, because
+ * that is where the ledger and the bytes are; `homeRoot` is the workspace root
+ * they are relative to, and it is the consumer root only for an owned entry.
+ * `reference` is set exactly when the local alias came from a shell.
+ */
 interface SourceEntry {
   readonly alias: string;
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly lineage: SourceLineage;
+  readonly homeRoot: string;
+  readonly reference: SourceEntryReference | null;
 }
+
+type SourceEntryListing =
+  | { readonly kind: "entry"; readonly entry: SourceEntry }
+  | { readonly kind: "broken"; readonly broken: BrokenSourceReference };
 
 const GENERATED_SOURCE_PARTS = new Set([
   ".assay",
@@ -976,6 +1054,80 @@ async function writeSourceCard(
   await writeFile(path.join(entryRoot, "README.md"), lines.join("\n"), "utf8");
 }
 
+/** Owned entry: the workspace it was found in is also its home. */
+async function ownedSourceEntry(
+  root: string,
+  sourcesRelative: string,
+  alias: string,
+): Promise<SourceEntry> {
+  const entryRoot = path.join(root, sourcesRelative, alias);
+  return {
+    alias,
+    relativePath: `${sourcesRelative}/${alias}`,
+    absolutePath: entryRoot,
+    lineage: await readSourceLineageFile(path.join(entryRoot, "source.yaml")),
+    homeRoot: root,
+    reference: null,
+  };
+}
+
+/**
+ * Resolve a reference shell into an entry addressed in its home.
+ *
+ * The alias stays the local one — that is the name the caller typed and the name
+ * every record in this workspace uses — while the paths, the ledger, and the
+ * lock all move to the home.
+ */
+async function referencedSourceEntry(
+  localAlias: string,
+  reference: SourceEntryReference,
+  homeSourcesRelative: string,
+  homeEntryRoot: string,
+): Promise<SourceEntry> {
+  return {
+    alias: localAlias,
+    relativePath: `${homeSourcesRelative}/${reference.homeAlias}`,
+    absolutePath: homeEntryRoot,
+    lineage: await readSourceLineageFile(path.join(homeEntryRoot, "source.yaml")),
+    homeRoot: reference.homeRoot,
+    reference,
+  };
+}
+
+async function sourceEntryListingForAlias(
+  root: string,
+  sourcesRelative: string,
+  alias: string,
+  registryFile?: string,
+): Promise<SourceEntryListing | null> {
+  const entryRoot = path.join(root, sourcesRelative, alias);
+  if (await exists(path.join(entryRoot, "source.yaml"))) {
+    return { kind: "entry", entry: await ownedSourceEntry(root, sourcesRelative, alias) };
+  }
+  const shell = await readSourceReferenceShell({ consumerRoot: root, sourcesRelative, alias });
+  if (!shell) return null;
+  const resolution = await resolveSourceReference(shell);
+  if (!resolution.ok) {
+    return {
+      kind: "broken",
+      broken: await describeBrokenReference({
+        shell,
+        reason: resolution.reason,
+        ...(registryFile === undefined ? {} : { registryFile }),
+      }),
+    };
+  }
+  return {
+    kind: "entry",
+    entry: await referencedSourceEntry(
+      alias,
+      referenceForHome(shell, resolution.home),
+      resolution.home.sourcesRelative,
+      resolution.home.entryRoot,
+    ),
+  };
+}
+
 async function sourceEntryForAlias(root: string, alias?: string): Promise<SourceEntry> {
   const manifest = requireManifestPresent(await loadManifest(root), root);
   const sourcesRoot = sourcesRootForManifest(root, manifest);
@@ -986,20 +1138,24 @@ async function sourceEntryForAlias(root: string, alias?: string): Promise<Source
 
   if (alias) {
     const normalized = slugify(alias);
-    const entryRoot = path.join(sourcesRoot, normalized);
-    const sourceFile = path.join(entryRoot, "source.yaml");
-    if (!(await exists(sourceFile))) {
+    const listing = await sourceEntryListingForAlias(root, sourcesRelative, normalized);
+    if (!listing) {
       throw new FrameworkNotFoundError(`source not found: ${normalized}`);
     }
-    return {
-      alias: normalized,
-      relativePath: `${sourcesRelative}/${normalized}`,
-      absolutePath: entryRoot,
-      lineage: await readSourceLineageFile(sourceFile),
-    };
+    // A broken reference fails here and nowhere else: the alias is unusable,
+    // and every other object in this workspace is unaffected.
+    if (listing.kind === "broken") {
+      throw new FrameworkNotFoundError(brokenReferenceMessage(listing.broken));
+    }
+    return listing.entry;
   }
 
-  const entries = await listSourceEntries(root);
+  const entries = (await listSourceEntryListings(root))
+    .filter(
+      (listing): listing is Extract<SourceEntryListing, { kind: "entry" }> =>
+        listing.kind === "entry",
+    )
+    .map((listing) => listing.entry);
   if (entries.length === 0) {
     throw new FrameworkNotFoundError("no sources found");
   }
@@ -1015,26 +1171,31 @@ async function sourceEntryForAlias(root: string, alias?: string): Promise<Source
   return entry;
 }
 
-async function listSourceEntries(root: string): Promise<SourceEntry[]> {
+/** Every alias this workspace offers, resolved, with broken references named. */
+async function listSourceEntryListings(
+  root: string,
+  registryFile?: string,
+): Promise<SourceEntryListing[]> {
   const manifest = requireManifestPresent(await loadManifest(root), root);
   const sourcesRoot = sourcesRootForManifest(root, manifest);
   const sourcesRelative = sourcesRelativeForManifest(manifest);
   if (!(await exists(sourcesRoot))) return [];
-  const entries = await readdir(sourcesRoot, { withFileTypes: true });
-  const sources: SourceEntry[] = [];
-  for (const entry of entries) {
+  const listings: SourceEntryListing[] = [];
+  for (const entry of await readdir(sourcesRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const entryRoot = path.join(sourcesRoot, entry.name);
-    const sourceFile = path.join(entryRoot, "source.yaml");
-    if (!(await exists(sourceFile))) continue;
-    sources.push({
-      alias: entry.name,
-      relativePath: `${sourcesRelative}/${entry.name}`,
-      absolutePath: entryRoot,
-      lineage: await readSourceLineageFile(sourceFile),
-    });
+    const listing = await sourceEntryListingForAlias(
+      root,
+      sourcesRelative,
+      entry.name,
+      registryFile,
+    );
+    if (listing) listings.push(listing);
   }
-  return sources.sort((a, b) => a.alias.localeCompare(b.alias));
+  return listings.sort((a, b) =>
+    (a.kind === "entry" ? a.entry.alias : a.broken.alias).localeCompare(
+      b.kind === "entry" ? b.entry.alias : b.broken.alias,
+    ),
+  );
 }
 
 async function loadObservation(
@@ -1131,6 +1292,18 @@ async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddRe
     throw new FrameworkAlreadyExistsError(`source already exists: ${relativePath}`);
   }
 
+  const notices: string[] = [];
+  const notice = (line: string): void => {
+    notices.push(line);
+    options.onNotice?.(line);
+  };
+  // Duplicated study starts at the second clone, and this is the cheapest place
+  // to say so. It stays an advisory: the caller may have good reason to want a
+  // separate checkout, and a cache does not get to refuse a command.
+  for (const line of await existingHomeAdvisories(root, source, options)) {
+    notice(line);
+  }
+
   await ensureSourceScaffold(entryRoot);
   const { contentMode, contentRoot, sourceKind } = await prepareSourceContent(
     entryRoot,
@@ -1183,6 +1356,15 @@ async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddRe
     },
     now,
   );
+  // This workspace now holds the material, so it is a home the next `source add`
+  // of the same origin can be pointed at.
+  await recordSourceClone({
+    workspace: root,
+    alias,
+    origin: source,
+    now,
+    ...(options.registryFile === undefined ? {} : { registryFile: options.registryFile }),
+  });
 
   return {
     root,
@@ -1195,7 +1377,43 @@ async function addSourceUnlocked(options: SourceAddOptions): Promise<SourceAddRe
     materialsPath: `${relativePath}/${MATERIALS_DIR}`,
     observation: recorded.observation,
     eventFile: relativeDisplayPath(eventFile, root),
+    notices,
   };
+}
+
+/**
+ * Homes the registry already knows for this origin, as lines to print.
+ *
+ * The current workspace is left out: adding a second alias for material this
+ * workspace already owns is a local decision, not a duplicate clone across
+ * workspaces, and the existing `source already exists` check covers the rest.
+ */
+async function existingHomeAdvisories(
+  root: string,
+  origin: string,
+  options: Pick<SourceAddOptions, "registryFile">,
+): Promise<string[]> {
+  let candidates: CloneRegistryEntry[];
+  try {
+    candidates = await findClonesByOrigin(
+      origin,
+      options.registryFile === undefined ? {} : { registryFile: options.registryFile },
+    );
+  } catch {
+    return [];
+  }
+  return candidates
+    .filter((candidate) => !samePath(candidate.workspace, root))
+    .map(
+      (candidate) =>
+        `Advisory: '${candidate.alias}' in ${candidate.workspace} is already a home for this origin. \`assay source link ${candidate.workspace} ${candidate.alias}\` shares that one checkout, ledger, and brief instead of starting a second.`,
+    );
+}
+
+function samePath(left: string, right: string): boolean {
+  const a = path.normalize(path.resolve(left));
+  const b = path.normalize(path.resolve(right));
+  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 function assertCheckoutBacked(entry: SourceEntry, action: string): void {
@@ -1208,10 +1426,46 @@ function assertCheckoutBacked(entry: SourceEntry, action: string): void {
   );
 }
 
+/**
+ * Resolve the alias, then run under the lock of the workspace that owns it.
+ *
+ * Shared safety comes from one mutation authority, not from refusing to write:
+ * a Source with two consumers still has exactly one home, one lock, and one
+ * ledger, so a sync started from either side serializes against the other.
+ */
+async function withResolvedSourceHome<T>(
+  root: string,
+  options: { readonly alias?: string; readonly onNotice?: (notice: string) => void },
+  run: (entry: SourceEntry) => Promise<T>,
+): Promise<T> {
+  const entry = await sourceEntryForAlias(root, options.alias);
+  // Said before the work starts, not only in the summary: a write that lands in
+  // another workspace is fine, and being surprised by it is not.
+  if (entry.reference) {
+    options.onNotice?.(
+      `${entry.alias} is referenced from ${entry.reference.display}; writing through to the Source home: ${entry.absolutePath}`,
+    );
+  }
+  return withWorkspaceMutationCoordination(entry.homeRoot, () => run(entry));
+}
+
 export async function syncSource(options: SourceSyncOptions): Promise<SourceSyncResult> {
   const root = path.resolve(options.root);
   await preflightSourceWorkspace(root);
-  return withWorkspaceMutationCoordination(root, () => syncSourceUnlocked({ ...options, root }));
+  return withResolvedSourceHome(root, options, async (entry) => {
+    const result = await syncSourceUnlocked({ ...options, root }, entry);
+    // Syncing is the one thing that happens to a Source after it moves house,
+    // so it is where the cache learns the home's new location. Best-effort: the
+    // sync already succeeded and this cannot change that.
+    await recordSourceClone({
+      workspace: entry.homeRoot,
+      alias: entry.reference?.homeAlias ?? entry.alias,
+      origin: entry.lineage.source_uri,
+      now: options.now ?? new Date(),
+      ...(options.registryFile === undefined ? {} : { registryFile: options.registryFile }),
+    });
+    return result;
+  });
 }
 
 function sameAdvisories(left: readonly string[], right: readonly string[]): boolean {
@@ -1226,12 +1480,13 @@ function sameAdvisories(left: readonly string[], right: readonly string[]): bool
  * command still succeeds, because the ledger's job is to say what was there,
  * not to hold the bytes hostage until they look tidy.
  */
-async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyncResult> {
-  const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+async function syncSourceUnlocked(
+  options: SourceSyncOptions,
+  entry: SourceEntry,
+): Promise<SourceSyncResult> {
+  const home = entry.homeRoot;
   const now = options.now ?? new Date();
   if (options.changeClass) assertChangeClass(options.changeClass);
-  const entry = await sourceEntryForAlias(root, options.alias);
   assertCheckoutBacked(entry, "sync");
   const previousObservation = await loadObservation(
     entry.absolutePath,
@@ -1256,7 +1511,7 @@ async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyn
     sameAdvisories(previousObservation.advisories, advisories)
   ) {
     const eventFile = await appendEvent(
-      root,
+      home,
       {
         event: "source.sync.noop",
         source: entry.alias,
@@ -1267,14 +1522,15 @@ async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyn
       now,
     );
     return {
-      root,
+      root: home,
       alias: entry.alias,
       path: entry.relativePath,
       changeClass: "same",
       observationFile: null,
       observation: null,
       advisories,
-      eventFile: relativeDisplayPath(eventFile, root),
+      eventFile: relativeDisplayPath(eventFile, home),
+      reference: entry.reference,
     };
   }
 
@@ -1294,14 +1550,14 @@ async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyn
   await writeLineage(entry.absolutePath, updatedLineage);
   await writeSourceCard(entry.absolutePath, updatedLineage, recorded.observation);
   const comparison = await compareCheckoutObservations(
-    root,
+    home,
     entry,
     checkout,
     previousObservation,
     recorded.observation,
   );
   const eventFile = await appendEvent(
-    root,
+    home,
     {
       event: "source.synced",
       source: entry.alias,
@@ -1315,15 +1571,16 @@ async function syncSourceUnlocked(options: SourceSyncOptions): Promise<SourceSyn
   );
 
   return {
-    root,
+    root: home,
     alias: entry.alias,
     path: entry.relativePath,
     changeClass,
     observationFile: `${entry.relativePath}/${recorded.observationFile}`,
     observation: recorded.observation,
     advisories,
-    eventFile: relativeDisplayPath(eventFile, root),
+    eventFile: relativeDisplayPath(eventFile, home),
     ...(comparison ? { comparison } : {}),
+    reference: entry.reference,
   };
 }
 
@@ -1365,7 +1622,7 @@ async function compareCheckoutObservations(
 export async function captureSource(options: SourceCaptureOptions): Promise<SourceCaptureResult> {
   const root = path.resolve(options.root);
   await preflightSourceWorkspace(root);
-  return withWorkspaceMutationCoordination(root, () => captureSourceUnlocked({ ...options, root }));
+  return withResolvedSourceHome(root, options, (entry) => captureSourceUnlocked(options, entry));
 }
 
 /**
@@ -1373,11 +1630,12 @@ export async function captureSource(options: SourceCaptureOptions): Promise<Sour
  * and for any content mode. This is the only routine path that hashes a tree,
  * because a capture that cannot prove what it holds is not a capture.
  */
-async function captureSourceUnlocked(options: SourceCaptureOptions): Promise<SourceCaptureResult> {
-  const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+async function captureSourceUnlocked(
+  options: SourceCaptureOptions,
+  entry: SourceEntry,
+): Promise<SourceCaptureResult> {
+  const home = entry.homeRoot;
   const now = options.now ?? new Date();
-  const entry = await sourceEntryForAlias(root, options.alias);
   const contentRoot = contentRootFor(entry);
   if (!(await exists(contentRoot))) {
     throw new FrameworkNotFoundError(
@@ -1414,7 +1672,7 @@ async function captureSourceUnlocked(options: SourceCaptureOptions): Promise<Sou
   await writeLineage(entry.absolutePath, updatedLineage);
   await writeSourceCard(entry.absolutePath, updatedLineage, recorded.observation);
   const eventFile = await appendEvent(
-    root,
+    home,
     {
       event: "source.captured",
       source: entry.alias,
@@ -1428,7 +1686,7 @@ async function captureSourceUnlocked(options: SourceCaptureOptions): Promise<Sou
   );
 
   return {
-    root,
+    root: home,
     alias: entry.alias,
     path: entry.relativePath,
     observationFile: `${entry.relativePath}/${recorded.observationFile}`,
@@ -1436,7 +1694,8 @@ async function captureSourceUnlocked(options: SourceCaptureOptions): Promise<Sou
     capture,
     capturePath: `${entry.relativePath}/${capture.path}`,
     manifestFile: `${entry.relativePath}/${capture.manifest}`,
-    eventFile: relativeDisplayPath(eventFile, root),
+    eventFile: relativeDisplayPath(eventFile, home),
+    reference: entry.reference,
   };
 }
 
@@ -1487,8 +1746,8 @@ export async function importSourceContent(
 ): Promise<SourceImportResult> {
   const root = path.resolve(options.root);
   await preflightSourceWorkspace(root);
-  return withWorkspaceMutationCoordination(root, () =>
-    importSourceContentUnlocked({ ...options, root }),
+  return withResolvedSourceHome(root, options, (entry) =>
+    importSourceContentUnlocked(options, entry),
   );
 }
 
@@ -1501,11 +1760,10 @@ export async function importSourceContent(
  */
 async function importSourceContentUnlocked(
   options: SourceImportOptions,
+  entry: SourceEntry,
 ): Promise<SourceImportResult> {
-  const root = path.resolve(options.root);
-  requireManifestPresent(await loadManifest(root), root);
+  const home = entry.homeRoot;
   const now = options.now ?? new Date();
-  const entry = await sourceEntryForAlias(root, options.alias);
   if (entry.lineage.content_mode !== "copy") {
     throw new FrameworkError(
       withSemanticModel(
@@ -1521,12 +1779,15 @@ async function importSourceContentUnlocked(
 
   const contentRoot = contentRootFor(entry);
   const preserved = (await exists(contentRoot))
-    ? await captureSourceUnlocked({
-        root,
-        alias: entry.alias,
-        note: "content preserved before import",
-        now,
-      })
+    ? await captureSourceUnlocked(
+        {
+          root: home,
+          alias: entry.alias,
+          note: "content preserved before import",
+          now,
+        },
+        entry,
+      )
     : null;
   const previousManifest = preserved
     ? await readManifest(path.join(entry.absolutePath, preserved.capture.manifest))
@@ -1574,7 +1835,7 @@ async function importSourceContentUnlocked(
   await writeLineage(entry.absolutePath, updatedLineage);
   await writeSourceCard(entry.absolutePath, updatedLineage, recorded.observation);
   const eventFile = await appendEvent(
-    root,
+    home,
     {
       event: "source.imported",
       source: entry.alias,
@@ -1588,7 +1849,7 @@ async function importSourceContentUnlocked(
   );
 
   return {
-    root,
+    root: home,
     alias: entry.alias,
     path: entry.relativePath,
     contentPath: contentRelativeFor(entry),
@@ -1596,21 +1857,23 @@ async function importSourceContentUnlocked(
     observation: recorded.observation,
     preservedCapture: preserved?.capture ?? null,
     changeClass,
-    eventFile: relativeDisplayPath(eventFile, root),
+    eventFile: relativeDisplayPath(eventFile, home),
+    reference: entry.reference,
   };
 }
 
 export async function switchSource(options: SourceSwitchOptions): Promise<SourceSwitchResult> {
   const root = path.resolve(options.root);
   await preflightSourceWorkspace(root);
-  return withWorkspaceMutationCoordination(root, () => switchSourceUnlocked({ ...options, root }));
+  return withResolvedSourceHome(root, options, (entry) => switchSourceUnlocked(options, entry));
 }
 
-async function switchSourceUnlocked(options: SourceSwitchOptions): Promise<SourceSwitchResult> {
-  const root = path.resolve(options.root);
-  await preflightSourceWorkspace(root);
+async function switchSourceUnlocked(
+  options: SourceSwitchOptions,
+  entry: SourceEntry,
+): Promise<SourceSwitchResult> {
+  const home = entry.homeRoot;
   const now = options.now ?? new Date();
-  const entry = await sourceEntryForAlias(root, options.alias);
   assertCheckoutBacked(entry, "switch");
   const checkout = path.join(entry.absolutePath, CHECKOUT_DIR);
   if (!(await exists(path.join(checkout, ".git")))) {
@@ -1639,7 +1902,7 @@ async function switchSourceUnlocked(options: SourceSwitchOptions): Promise<Sourc
   };
   await writeLineage(entry.absolutePath, updatedLineage);
   const eventFile = await appendEvent(
-    root,
+    home,
     {
       event: "source.switched",
       source: entry.alias,
@@ -1652,34 +1915,50 @@ async function switchSourceUnlocked(options: SourceSwitchOptions): Promise<Sourc
     now,
   );
   const sync = options.sync
-    ? await syncSourceUnlocked({ root, alias: entry.alias, now })
+    ? await syncSourceUnlocked(
+        { root: home, alias: entry.alias, now },
+        {
+          ...entry,
+          lineage: updatedLineage,
+        },
+      )
     : undefined;
   return {
-    root,
+    root: home,
     alias: entry.alias,
     path: entry.relativePath,
     target: options.target,
     vcs,
-    eventFile: relativeDisplayPath(eventFile, root),
+    eventFile: relativeDisplayPath(eventFile, home),
     ...(sync ? { sync } : {}),
+    reference: entry.reference,
   };
 }
 
 export async function getSourceStatus(options: {
   readonly root: string;
   readonly alias?: string;
+  /** Clone-registry file to consult for a broken reference's current location. */
+  readonly registryFile?: string;
 }): Promise<SourceStatusResult> {
   const root = path.resolve(options.root);
   await preflightSourceWorkspace(root);
-  const entries = options.alias
-    ? [await sourceEntryForAlias(root, options.alias)]
-    : await listSourceEntries(root);
+  const listings = options.alias
+    ? [{ kind: "entry", entry: await sourceEntryForAlias(root, options.alias) } as const]
+    : await listSourceEntryListings(root, options.registryFile);
   const sources: SourceStatusEntry[] = [];
-  for (const entry of entries) {
+  const broken: BrokenSourceReference[] = [];
+  for (const listing of listings) {
+    if (listing.kind === "broken") {
+      broken.push(listing.broken);
+      continue;
+    }
+    const entry = listing.entry;
     const latest = await loadObservation(entry.absolutePath, entry.lineage.latest_observation);
     sources.push({
       alias: entry.alias,
       path: entry.relativePath,
+      absolutePath: entry.absolutePath,
       name: entry.lineage.lineage_name,
       kind: entry.lineage.source_kind,
       uri: entry.lineage.source_uri,
@@ -1688,13 +1967,15 @@ export async function getSourceStatus(options: {
       latestChangeClass: latest?.change_class ?? null,
       latestAdvisories: latest?.advisories ?? [],
       captures: (await listCaptureIds(entry.absolutePath)).length,
+      relation: entry.reference ? "ref" : "owned",
+      reference: entry.reference,
       ...(latest?.vcs ? { vcs: latest.vcs } : {}),
       ...(entry.lineage.content_mode === "checkout" && entry.lineage.checkout
         ? { checkout: entry.lineage.checkout }
         : {}),
     });
   }
-  return { root, sources };
+  return { root, sources, broken };
 }
 
 export async function getSourceLog(options: {
@@ -1716,7 +1997,13 @@ export async function getSourceLog(options: {
     });
   }
   observations.sort((a, b) => a.observation.observed_on.localeCompare(b.observation.observed_on));
-  return { root, alias: entry.alias, path: entry.relativePath, entries: observations };
+  return {
+    root: entry.homeRoot,
+    alias: entry.alias,
+    path: entry.relativePath,
+    entries: observations,
+    reference: entry.reference,
+  };
 }
 
 function normalizeObservationSelector(selector: string): string {
@@ -1754,7 +2041,7 @@ export async function resolveSourceObservation(
   const observationFile = observationPath(entry.observation.observation_id);
   const capture = entry.observation.capture;
   return {
-    root,
+    root: entry.homeRoot,
     alias: entry.alias,
     sourcePath: entry.relativePath,
     observationFile: `${entry.relativePath}/${observationFile}`,
@@ -1763,6 +2050,7 @@ export async function resolveSourceObservation(
     contentPath: capture ? `${entry.relativePath}/${capture.path}` : contentRelativeFor(entry),
     materialsPath: `${entry.relativePath}/${MATERIALS_DIR}`,
     capturePath: capture ? `${entry.relativePath}/${capture.path}` : null,
+    reference: entry.reference,
   };
 }
 
@@ -1888,13 +2176,14 @@ export async function diffSource(options: SourceDiffOptions): Promise<SourceDiff
   await preflightSourceWorkspace(root);
   const entry = await sourceEntryForAlias(root, options.alias);
   const empty: SourceDiffResult = {
-    root,
+    root: entry.homeRoot,
     alias: entry.alias,
     from: null,
     to: null,
     added: [],
     removed: [],
     changed: [],
+    reference: entry.reference,
   };
   const latest = await loadObservation(entry.absolutePath, entry.lineage.latest_observation);
   if (!latest) return empty;
@@ -1906,15 +2195,15 @@ export async function diffSource(options: SourceDiffOptions): Promise<SourceDiff
 
   if (entry.lineage.content_mode === "checkout") {
     const comparison = await compareCheckoutObservations(
-      root,
+      entry.homeRoot,
       entry,
       path.join(entry.absolutePath, CHECKOUT_DIR),
       previous,
       latest,
     );
-    return (
-      comparison ?? { ...empty, from: previous?.observation_id ?? null, to: latest.observation_id }
-    );
+    return comparison
+      ? { ...comparison, reference: entry.reference }
+      : { ...empty, from: previous?.observation_id ?? null, to: latest.observation_id };
   }
 
   const described = await describeCopiedBytes(
@@ -1929,10 +2218,11 @@ export async function diffSource(options: SourceDiffOptions): Promise<SourceDiff
   const diff = compareManifests(described.from?.manifest ?? null, described.to.manifest);
   return {
     ...diff,
-    root,
+    root: entry.homeRoot,
     alias: entry.alias,
     from: described.from?.id ?? null,
     to: described.to.id,
+    reference: entry.reference,
   };
 }
 
@@ -1942,31 +2232,52 @@ export async function collectSourceHealthRows(
 ): Promise<CheckRow[]> {
   await preflightSourceWorkspace(path.resolve(root));
   const rows: CheckRow[] = [];
-  const sources = await listSourceEntries(root);
-  for (const source of sources) {
+  const listings = await listSourceEntryListings(root);
+  for (const listing of listings) {
+    // A broken reference is a structure finding and nothing more: `check` names
+    // it and stops there. It does not scan neighbouring directories, guess at a
+    // new location, or rewrite the shell.
+    if (listing.kind === "broken") {
+      rows.push({
+        path: `${listing.broken.shellPath}/${SOURCE_REFERENCE_FILE}`,
+        status: "error",
+        message: brokenReferenceMessage(listing.broken),
+      });
+      continue;
+    }
+    const source = listing.entry;
+    // For a reference the finding is in another workspace, so the row addresses
+    // the shell this workspace owns and the message names where the material is.
+    const rowPath = (relative: string): string =>
+      source.reference
+        ? `${source.reference.shellPath}/${SOURCE_REFERENCE_FILE}`
+        : `${source.relativePath}/${relative}`;
+    const inHome = source.reference
+      ? ` (in its home ${source.reference.homeRoot}, at ${source.relativePath})`
+      : "";
     const latest = await loadObservation(source.absolutePath, source.lineage.latest_observation);
     if (!source.lineage.latest_observation) {
       rows.push({
-        path: `${source.relativePath}/source.yaml`,
+        path: rowPath("source.yaml"),
         status: "error",
-        message: `source '${source.alias}' has no latest observation`,
+        message: `source '${source.alias}' has no latest observation${inHome}`,
       });
       continue;
     }
     if (!latest) {
       rows.push({
-        path: `${source.relativePath}/source.yaml`,
+        path: rowPath("source.yaml"),
         status: "error",
-        message: `source '${source.alias}' points to missing latest observation`,
+        message: `source '${source.alias}' points to missing latest observation${inHome}`,
       });
       continue;
     }
     const contentDir = sourceContentDir(source.lineage.content_mode);
     if (!(await exists(path.join(source.absolutePath, contentDir)))) {
       rows.push({
-        path: `${source.relativePath}/${contentDir}`,
+        path: rowPath(contentDir),
         status: "error",
-        message: `source '${source.alias}' has no readable content at ${contentDir}/`,
+        message: `source '${source.alias}' has no readable content at ${contentDir}/${inHome}`,
       });
     }
     // A capture is the one record that promises specific bytes, so both halves
@@ -1975,10 +2286,10 @@ export async function collectSourceHealthRows(
       for (const relative of [captureManifestPath(id), capturePath(id)]) {
         if (await exists(path.join(source.absolutePath, relative))) continue;
         rows.push({
-          path: `${source.relativePath}/${relative}`,
+          path: rowPath(relative),
           status: "error",
           message: withSemanticModel(
-            `source capture '${id}' is missing ${relative.endsWith(".json") ? "its integrity manifest" : "its captured bytes"}`,
+            `source capture '${id}' is missing ${relative.endsWith(".json") ? "its integrity manifest" : "its captured bytes"}${inHome}`,
             "sourceCaptureMissing",
           ),
         });
@@ -1987,7 +2298,7 @@ export async function collectSourceHealthRows(
     if (options.includeAdvisories) {
       for (const advisory of latest.advisories) {
         rows.push({
-          path: `${source.relativePath}/${source.lineage.latest_observation}`,
+          path: rowPath(source.lineage.latest_observation),
           status: "warning",
           message: `source '${source.alias}' latest observation: ${advisory}`,
         });

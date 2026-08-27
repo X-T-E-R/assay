@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type {
   AdoptExistingProjectResult,
   ApplyUpdateResult,
@@ -14,9 +16,13 @@ import type {
   SourceAdoptionResult,
   SourceAdoptionTakeResult,
   SourceDiffResult,
+  SourceEntryReference,
+  SourceHomeResult,
+  SourceLinkResult,
   SourceLogResult,
   SourceStatusResult,
   SourceSyncResult,
+  SourceUnlinkResult,
   SystemEntry,
   UpdateAnalysis,
   UpdatePlan,
@@ -235,6 +241,12 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
         `  - total: ${result.sources.total}`,
         `  - checkouts: ${result.sources.checkouts}`,
         `  - copies: ${result.sources.copies}`,
+        // Only when there are any: a workspace that owns everything it uses
+        // should not be told about a relation it is not in.
+        ...(result.sources.references > 0 ? [`  - references: ${result.sources.references}`] : []),
+        ...(result.sources.brokenReferences > 0
+          ? [`  - broken references: ${result.sources.brokenReferences}`]
+          : []),
         `  - major changes: ${result.sources.majorChanges}`,
         "  - details: assay source status",
       ]
@@ -270,8 +282,19 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
   ].join("\n");
 }
 
+/**
+ * One line saying where a Source actually lives.
+ *
+ * Printed for every referenced Source in every read command. A reference that
+ * reads exactly like an owned Source is the failure this line exists to prevent.
+ */
+function referenceRelationLine(reference: SourceEntryReference | null | undefined): string[] {
+  if (!reference) return [];
+  return [`Relation: ref -> ${reference.display}`, `Home: ${reference.homeRoot}`];
+}
+
 export function formatSourceStatusResult(result: SourceStatusResult): string {
-  if (result.sources.length === 0) {
+  if (result.sources.length === 0 && result.broken.length === 0) {
     return ["Sources", `Root: ${result.root}`, "(none)"].join("\n");
   }
   return [
@@ -282,20 +305,31 @@ export function formatSourceStatusResult(result: SourceStatusResult): string {
       const latest = source.latestObservation ?? "-";
       const change = source.latestChangeClass ?? "-";
       const captures = source.captures > 0 ? ` captures=${source.captures}` : "";
+      const relation = source.reference === null ? "" : `  ref -> ${source.reference.display}`;
       return [
-        `${source.alias.padEnd(24)} ${source.contentMode.padEnd(8)} ${source.kind.padEnd(9)} ${change.padEnd(11)} ${latest}${commit}${captures}`,
+        `${source.alias.padEnd(24)} ${source.contentMode.padEnd(8)} ${source.kind.padEnd(9)} ${change.padEnd(11)} ${latest}${commit}${captures}${relation}`,
         ...source.latestAdvisories.map((advisory) => `${" ".repeat(24)} ! ${advisory}`),
       ];
     }),
+    ...result.broken.flatMap((broken) => [
+      `${broken.alias.padEnd(24)} broken   ref -> ${broken.display}`,
+      `${" ".repeat(24)} ! ${broken.reason}`,
+      ...broken.suggestions.map((suggestion) => `${" ".repeat(24)} > ${suggestion}`),
+    ]),
   ].join("\n");
 }
 
 export function formatSourceLogResult(result: SourceLogResult): string {
   if (result.entries.length === 0) {
-    return [`Source log: ${result.alias}`, "(none)"].join("\n");
+    return [
+      `Source log: ${result.alias}`,
+      ...referenceRelationLine(result.reference),
+      "(none)",
+    ].join("\n");
   }
   return [
     `Source log: ${result.alias}`,
+    ...referenceRelationLine(result.reference),
     ...result.entries.flatMap(({ observation }) => {
       const commit = observation.vcs?.commit ? ` ${observation.vcs.commit.slice(0, 12)}` : "";
       const capture = observation.capture ? " [capture]" : "";
@@ -322,6 +356,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
   if (!result.observation) {
     return [
       `Source sync: ${result.alias}`,
+      ...referenceRelationLine(result.reference),
       `Path: ${result.path}`,
       `Change: ${result.changeClass}`,
       "Observation: unchanged",
@@ -332,6 +367,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
   }
   return [
     `Source sync: ${result.alias}`,
+    ...referenceRelationLine(result.reference),
     `Path: ${result.path}`,
     `Change: ${result.changeClass}`,
     `Observation: ${result.observationFile ?? result.observation.observation_id}`,
@@ -345,6 +381,7 @@ export function formatSourceSyncResult(result: SourceSyncResult): string {
 export function formatSourceDiffResult(result: SourceDiffResult): string {
   return [
     `Source diff: ${result.alias}`,
+    ...referenceRelationLine(result.reference),
     `From: ${result.from ?? "none"}`,
     `To: ${result.to ?? "none"}`,
     `Added: ${result.added.length}`,
@@ -353,6 +390,57 @@ export function formatSourceDiffResult(result: SourceDiffResult): string {
     ...result.removed.map((file) => `  - ${file}`),
     `Changed: ${result.changed.length}`,
     ...result.changed.map((file) => `  * ${file}`),
+  ].join("\n");
+}
+
+/**
+ * Where the home's `brief.md` is, or that it keeps none.
+ *
+ * A reference mounts nothing of the home's own thinking, so this line is the
+ * whole discovery path: it names the one file the home maintains for readers.
+ */
+function briefLine(homeWorkspace: string, brief: string | null): string {
+  return brief === null
+    ? "Brief: none in the home workspace"
+    : `Brief: ${path.join(homeWorkspace, brief)}`;
+}
+
+export function formatSourceLinkResult(result: SourceLinkResult): string {
+  const brief = briefLine(result.home.workspace, result.brief);
+  return [
+    result.created ? `Linked source: ${result.path}` : `Source already linked: ${result.path}`,
+    `Reference: ${result.alias} ref -> ${result.home.workspaceRecorded}#${result.home.alias}`,
+    `Home workspace: ${result.home.workspace}`,
+    `Home path: ${result.home.path}`,
+    brief,
+    ...(result.eventFile === null ? [] : [`Event: ${result.eventFile}`]),
+    ...result.notices.map((notice) => `Notice: ${notice}`),
+  ].join("\n");
+}
+
+export function formatSourceHomeResult(result: SourceHomeResult): string {
+  const lines = [
+    `Source home: ${result.alias}`,
+    `Relation: ${result.relation}`,
+    `Home workspace: ${result.homeWorkspace}`,
+    `Home alias: ${result.homeAlias}`,
+    `Home path: ${result.homePath}`,
+  ];
+  if (result.display !== null) {
+    lines.push(`Recorded: ${result.display}`);
+  }
+  lines.push(briefLine(result.homeWorkspace, result.brief));
+  return lines.join("\n");
+}
+
+export function formatSourceUnlinkResult(result: SourceUnlinkResult): string {
+  return [
+    `Unlinked source: ${result.path}`,
+    `Forgot reference: ${result.display}`,
+    result.homeReachable
+      ? `Home workspace: ${result.homeWorkspace} (untouched)`
+      : `Home workspace: ${result.homeWorkspace} (not reachable from here; nothing was touched there either way)`,
+    `Event: ${result.eventFile}`,
   ].join("\n");
 }
 

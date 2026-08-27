@@ -115,7 +115,7 @@ export async function collectUpstreamStatus(
 
   const adoptionMappings = await listSourceAdoptionSourceMappings(root);
   const states = await Promise.all(
-    sources.map((source) => inspectSource(root, source, adoptionMappings, fetch)),
+    sources.map((source) => inspectSource(source, adoptionMappings, fetch)),
   );
 
   const changedSources = states.filter((state) => isChanged(state)).length;
@@ -139,7 +139,6 @@ function isChanged(state: UpstreamSourceState): boolean {
 }
 
 async function inspectSource(
-  root: string,
   source: SourceStatusEntry,
   adoptionMappings: readonly SourceAdoptionSourceMapping[],
   fetch: boolean,
@@ -152,7 +151,10 @@ async function inspectSource(
       recordedCommit,
     });
   }
-  const checkout = path.join(root, source.path, "checkout");
+  // The checkout is wherever the Source lives, which for a referenced Source is
+  // another workspace; the entry carries the resolved path so this stays one
+  // lookup rather than a second resolution.
+  const checkout = path.join(source.absolutePath, "checkout");
   const signals = await readCheckoutLocalSignals(checkout);
 
   if (!signals) {

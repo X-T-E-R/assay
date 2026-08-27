@@ -138,6 +138,10 @@ export interface FrameworkStatusSources {
   /** Copied content, with no upstream to follow. */
   readonly copies: number;
   readonly majorChanges: number;
+  /** Aliases resolved through a `source.ref.yaml` into another workspace. */
+  readonly references: number;
+  /** References whose home could not be reached this run. */
+  readonly brokenReferences: number;
 }
 
 export interface FrameworkStatusSourceAdoptions {
@@ -1415,6 +1419,8 @@ export async function getFrameworkStatus(
       checkouts: sources.filter((source) => source.contentMode === "checkout").length,
       copies: sources.filter((source) => source.contentMode === "copy").length,
       majorChanges: sources.filter((source) => source.latestChangeClass === "major").length,
+      references: sources.filter((source) => source.relation === "ref").length,
+      brokenReferences: status.broken.length,
     };
   } catch {
     // sources may not exist or may be mid-migration; status omits the summary
@@ -1523,6 +1529,15 @@ export async function createAnalysis(
     sourceName = source.alias;
     sourceBlock = [
       `- Source alias: ${source.alias}`,
+      // A referenced Source's paths are in its home, and the analysis has to say
+      // which workspace that is: the local alias is a navigation name, and the
+      // observation plus the home is what makes this readable a year from now.
+      ...(source.reference
+        ? [
+            `- Source relation: ref -> ${source.reference.display}`,
+            `- Source home workspace: ${source.reference.homeRoot}`,
+          ]
+        : []),
       `- Source path: ${source.sourcePath}`,
       `- Source observation: ${source.observation.observation_id}`,
       `- Source observation path: ${source.observationFile}`,

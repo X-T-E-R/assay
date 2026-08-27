@@ -33,6 +33,7 @@ import {
   getSourceStatus,
   importSourceContent,
   initFramework,
+  linkSource,
   listAvailableTemplates,
   listExternalPlugins,
   listSourceAdoptions,
@@ -46,11 +47,13 @@ import {
   removeExternalPlugin,
   removeSourceAdoption,
   requireSystemsRegistry,
+  resolveSourceHome,
   setExternalPluginEnabled,
   switchSource,
   syncSource,
   takeSourceAdoptionMaterial,
   trackWorkspace,
+  unlinkSource,
   updateSystem,
 } from "assay-core";
 
@@ -67,9 +70,12 @@ import {
   formatSourceAdoptionList,
   formatSourceAdoptionTake,
   formatSourceDiffResult,
+  formatSourceHomeResult,
+  formatSourceLinkResult,
   formatSourceLogResult,
   formatSourceStatusResult,
   formatSourceSyncResult,
+  formatSourceUnlinkResult,
   formatStatusResult,
   formatSystemList,
   formatSystemRecord,
@@ -124,6 +130,21 @@ async function discoveredRoot(root: string): Promise<string> {
 
 function writeJson(output: { readonly stdout: CliOutput["stdout"] }, value: unknown): void {
   output.stdout(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * Announce a write that will land in another workspace, before it happens.
+ *
+ * The result already names the home, but a sync can take a while, and the
+ * moment to learn that this command writes elsewhere is before it does. JSON
+ * callers get the same fact from the result's `reference` block instead.
+ */
+function writeThroughNotice(
+  output: Pick<CliOutput, "stdout" | "stderr">,
+  json: boolean | undefined,
+): { readonly onNotice?: (notice: string) => void } {
+  if (json) return {};
+  return { onNotice: (notice) => writeLine(output, "stdout", notice) };
 }
 
 async function readStdinText(): Promise<string> {
@@ -613,6 +634,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         source: repoOrDir,
         ...(alias === undefined ? {} : { alias }),
         ...(commandOptions.branch === undefined ? {} : { branch: commandOptions.branch }),
+        // Printed as it happens: an advisory about material that already has a
+        // home is only useful before the clone, not in the summary after it.
+        ...writeThroughNotice(output, commandOptions.json),
       });
       if (commandOptions.json) {
         writeJson(output, hintedResult(result, "source add"));
@@ -642,6 +666,75 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     });
 
   source
+    .command("link")
+    .description("Reference a Source that another workspace already owns")
+    .argument(
+      "<target-workspace-or-source>",
+      "target workspace root, or the target source alias when the clone registry knows its home",
+    )
+    .argument("[target-source]", "source alias in the target workspace")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--alias <local-alias>", "local alias for the reference; defaults to the target alias")
+    .option("--json", "emit JSON")
+    .action(async (workspaceOrSource, targetSource, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      // One argument means "find its home for me": the registry resolves it, or
+      // says which candidates it has and asks for one of them by name.
+      const target =
+        targetSource === undefined
+          ? { source: workspaceOrSource }
+          : { workspace: workspaceOrSource, source: targetSource };
+      const result = await linkSource({
+        root,
+        ...target,
+        ...(commandOptions.alias === undefined ? {} : { alias: commandOptions.alias }),
+      });
+      if (commandOptions.json) {
+        writeJson(output, hintedResult(result, "source link"));
+        return;
+      }
+      writeLine(output, "stdout", formatSourceLinkResult(result));
+      for (const hint of hintLines("source link")) {
+        writeLine(output, "stdout", hint);
+      }
+    });
+
+  source
+    .command("home")
+    .description("Show the workspace that owns a local source alias")
+    .argument("<alias>", "local source alias")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await resolveSourceHome({ root, alias });
+      if (commandOptions.json) {
+        writeJson(output, result);
+        return;
+      }
+      writeLine(output, "stdout", formatSourceHomeResult(result));
+    });
+
+  source
+    .command("unlink")
+    .description("Remove a local source reference, leaving the Source in its home workspace")
+    .argument("<alias>", "local source alias")
+    .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
+    .action(async (alias, commandOptions) => {
+      const root = await discoveredRoot(commandOptions.root);
+      const result = await unlinkSource({ root, alias });
+      if (commandOptions.json) {
+        writeJson(output, hintedResult(result, "source unlink"));
+        return;
+      }
+      writeLine(output, "stdout", formatSourceUnlinkResult(result));
+      for (const hint of hintLines("source unlink")) {
+        writeLine(output, "stdout", hint);
+      }
+    });
+
+  source
     .command("capture")
     .description("Preserve a source's current bytes with an integrity hash")
     .argument("<alias>", "source alias")
@@ -654,10 +747,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         root,
         alias,
         ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
+        ...writeThroughNotice(output, commandOptions.json),
       });
       if (commandOptions.json) {
         writeJson(output, hintedResult(result, "source capture"));
         return;
+      }
+      if (result.reference) {
+        writeLine(output, "stdout", `Home workspace: ${result.reference.homeRoot}`);
       }
       writeLine(output, "stdout", `Captured source: ${result.path}`);
       writeLine(output, "stdout", `Capture: ${result.capturePath}`);
@@ -689,10 +786,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         alias,
         from,
         ...(commandOptions.note === undefined ? {} : { note: commandOptions.note }),
+        ...writeThroughNotice(output, commandOptions.json),
       });
       if (commandOptions.json) {
         writeJson(output, result);
         return;
+      }
+      if (result.reference) {
+        writeLine(output, "stdout", `Home workspace: ${result.reference.homeRoot}`);
       }
       writeLine(output, "stdout", `Imported content: ${result.contentPath}`);
       writeLine(output, "stdout", `Change class: ${result.changeClass}`);
@@ -725,6 +826,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.class === undefined
           ? {}
           : { changeClass: commandOptions.class as SourceChangeClass }),
+        ...writeThroughNotice(output, false),
       });
       writeLine(output, "stdout", formatSourceSyncResult(result));
     });
@@ -743,7 +845,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         alias,
         target,
         sync: commandOptions.sync ?? false,
+        ...writeThroughNotice(output, false),
       });
+      if (result.reference) {
+        writeLine(output, "stdout", `Home workspace: ${result.reference.homeRoot}`);
+      }
       writeLine(output, "stdout", `Switched source: ${result.path}`);
       writeLine(output, "stdout", `Ref: ${result.vcs.ref}`);
       writeLine(output, "stdout", `Commit: ${result.vcs.commit}`);
