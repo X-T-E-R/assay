@@ -1434,7 +1434,7 @@ export async function collectSourceHealthRows(
       rows.push({
         path: `${source.relativePath}/${source.lineage.latest_observation}`,
         status: "error",
-        message: `source observation '${latest.observation_id}' has no fingerprint`,
+        message: `source observation '${latest.observation_id}' recorded no content identity, so nothing can be compared against it`,
       });
     }
     const manifestFile = path.join(source.absolutePath, latest.manifest);
@@ -1442,7 +1442,7 @@ export async function collectSourceHealthRows(
       rows.push({
         path: `${source.relativePath}/${latest.manifest}`,
         status: "error",
-        message: `source observation '${latest.observation_id}' has no capture manifest`,
+        message: `source observation '${latest.observation_id}' names a capture manifest that is missing from disk`,
       });
     }
   }

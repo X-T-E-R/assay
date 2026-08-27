@@ -265,7 +265,7 @@ describe("source sync repairs an observation that records no fingerprint", () =>
     expect(before.ok).toBe(false);
     expect(
       before.rows.some(
-        (row) => row.status === "error" && row.message?.includes("has no fingerprint"),
+        (row) => row.status === "error" && row.message?.includes("recorded no content identity"),
       ),
     ).toBe(true);
 

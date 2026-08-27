@@ -694,7 +694,8 @@ async function buildSourceAdoptionInspection(input: {
     diagnostics.push({
       code: "source-adoption.target.working_tree_dirty",
       severity: "info",
-      message: "target Git working tree is dirty; mapped artifact fingerprints remain inspectable",
+      message:
+        "target Git working tree has uncommitted changes; the mapped artifacts are still readable for this decision",
     });
   }
 

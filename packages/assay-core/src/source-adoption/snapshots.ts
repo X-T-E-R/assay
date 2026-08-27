@@ -160,7 +160,7 @@ export async function snapshotSourceAdoptionSource(
     manifest.fingerprint.byte_count !== recomputed.byteCount
   ) {
     throw new FrameworkError(
-      `source observation and manifest fingerprints do not agree: ${resolved.observation.observation_id}`,
+      `source observation and its capture manifest describe different content: ${resolved.observation.observation_id}`,
       { code: "INVALID_SOURCE_ADOPTION" },
     );
   }

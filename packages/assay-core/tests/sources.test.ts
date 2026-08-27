@@ -339,7 +339,7 @@ describe("source observations", () => {
         (row) =>
           row.status === "error" &&
           row.path === added.manifestFile &&
-          row.message?.includes("no capture manifest"),
+          row.message?.includes("names a capture manifest that is missing from disk"),
       ),
     ).toBe(true);
   });
