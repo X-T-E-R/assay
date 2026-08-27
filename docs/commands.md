@@ -62,7 +62,7 @@ Task, Roadmap, Spec, and System authority remain independent. Systems registry s
 
 ```text
 assay source add|capture|import|sync|switch|status|log|diff ...
-assay source adoption register|take|list|show|status|inspect|evidence|verify|decide|history|rollback|update ...
+assay source adoption take|list|show|remove ...
 ```
 
 A source's shape follows what the material is, not a flag. A Git repository or
@@ -77,10 +77,13 @@ advisory on the observation; an upstream that cannot fast-forward is recorded th
 same way and left where it is. Git itself remains the thing that refuses to
 overwrite uncommitted bytes.
 
-Source adoption definitions and receipts use the `assay.source-adoption-*/v1`
-schema family and lazy `.assay/source-adoptions/` storage. The command namespace
-remains `assay source adoption ...`; there is no separate product object or
-compatibility reader for earlier unpublished record names.
+A Source adoption record is one mapping: this material, from that source, landed
+here. `take` records it, `remove` forgets it, and the `Upstream` section of
+`assay status` names the mappings an upstream change reaches. Records use the
+`assay.source-adoption/v1` schema, one file each under
+`.assay/source-adoptions/`. There is no inspection, evidence, or decision
+workflow: a decision belongs in `analysis close --exit` and in the adoption's
+note.
 
 ## Analysis and Knowledge
 

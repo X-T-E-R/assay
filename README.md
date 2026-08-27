@@ -40,7 +40,7 @@ Assay keeps that loop under your version control. The discipline is small but st
 
 Assay is a general workbench, but three scenarios get the most out of it:
 
-- **Evaluating and adopting external frameworks.** Add a repo as a Source, review it in an Analysis, and record an `adopt` / `reject` / `experiment` exit. Source-adoption receipts then tie the material you carried into your systems to evidence and accept/reject/defer decisions — so next year's you knows exactly what came from where, and why.
+- **Evaluating and adopting external frameworks.** Add a repo as a Source, review it in an Analysis, and record an `adopt` / `reject` / `experiment` exit. Source adoption then maps each piece of material you carried into a system back to the source path and commit it came from — so next year's you knows exactly what came from where, and why.
 - **Long-running projects with AI assistants.** Tasks keep stable ids, reader-owned PRDs, and handoff checkpoints; Roadmaps and Specs hold direction and acceptance. All of it survives sessions, agent switches, and context compaction.
 - **Evidence-driven exploration of any kind.** One-shot Templates scaffold the loop for different work: `study` (evaluate external systems), `solve` (objectives, attempts, benchmarks), `explore` (parallel approaches and trials). Custom Templates are plain YAML.
 
@@ -90,7 +90,7 @@ assay task create --title "Port pattern X" --description "Bounded outcome with a
 | **Roadmap** | Project outcomes with separate state (`candidate` → `committed` → `realized`) and horizon (`now` / `next` / `later`), linked to Tasks without lifecycle coupling. |
 | **Spec** | A closed machine envelope plus reader-owned prose; explicit promotion from an Analysis or Task with recorded provenance. |
 | **Source** | External material — a tracked Git checkout or copied content — with an append-only observation ledger, drift reporting, and byte captures when a decision needs them. |
-| **Source adoption** | Traceable carry-over of upstream material into your systems, with evidence records and accept / reject / defer decisions. |
+| **Source adoption** | One record per mapping — source path to system path — with an identity pin, an `adapt` / `copy` mode, and the reason in a note. |
 | **Analysis / Knowledge** | Interpretation with explicit decision exits, and promoted conclusions kept out of the inbox. |
 | **System** | A registry of independently versioned systems (own Git repos welcome) with primary/superseded lineage. |
 
@@ -115,7 +115,7 @@ Assay 0.13 accepts exactly the `0.13.0+s4+l8+r3` envelope and fails closed on ol
 - [Commands](docs/commands.md) — full CLI surface and authority boundaries
 - [Workspace layout](docs/workspace-layout.md) · [Layout modes](docs/layout-modes.md)
 - [Task](docs/task.md) · [Roadmap](docs/roadmap.md) · [Spec](docs/spec.md)
-- [Source adoption](docs/source-adoption.md) — relationships, evidence, decisions
+- [Source adoption](docs/source-adoption.md) — mappings, identity pins, record storage
 - [Design principles](docs/background/design-principles.md) — why Assay works this way
 - [examples/framework-template](examples/README.md) — a sanitized generated workspace
 

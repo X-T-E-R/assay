@@ -47,6 +47,32 @@ migrates a 0.13.0 workspace in place; there are no compatibility shims behind it
   `Content:` depending on the content mode.
 - The `frozen` source alias is no longer reserved, since there is no `sources/frozen`
   namespace to protect.
+- The Source adoption command surface is `take`, `list`, `show`, `remove`. The
+  `register`, `update`, `status`, `inspect`, `evidence add`, `verify`, `decide`,
+  `history`, and `rollback record` subcommands are gone, along with the whole
+  inspection, evidence, decision, and rollback workflow behind them: its storage,
+  its schemas, the `SOURCE_ADOPTION_POLICY_BLOCKED`, `SOURCE_ADOPTION_STALE`, and
+  `SOURCE_ADOPTION_BUSY` error codes, and its tests. A single-user workbench
+  records decisions in `analysis close --exit` and in the adoption's note; the
+  adoption record's job is traceability — where did this material land — not an
+  approval pipeline.
+- A Source adoption is now one mapping: source alias and path, target system and
+  path, an optional note, an optional tier-1 identity pin, and `mode`. An intent
+  that moved several paths is several records. The `assay.source-adoption/v1`
+  schema replaces the `assay.source-adoption-definition/v1`,
+  `-state/v1`, `-inspection/v1`, `-evidence/v1`, and `-decision/v1` family, and
+  each record is a single file at `.assay/source-adoptions/<id>.json` rather than
+  a per-adoption directory. `--mode adapt|copy` stays, as descriptive metadata for
+  upstream-drift review.
+- Per-adoption `.lock` files are gone. One record is one atomic file write, so
+  there is nothing to serialize; adoption writes still pass through the workspace
+  mutation gate that fences a conversion.
+- `assay status` reports Source adoptions as `adoptions`, `systems`, and `pinned`
+  in place of `targets`, `acceptedTargets`, and `draftTargets`. `FrameworkStatus`
+  and `--json` output change with it.
+- `assay check` reports Source adoption structure only: whether each record parses
+  and validates, whether its filename still matches its id, and whether the system
+  it names is still registered.
 
 ## Added
 
@@ -61,6 +87,14 @@ migrates a 0.13.0 workspace in place; there are no compatibility shims behind it
   (commit and origin, or a tree hash computed on demand for copied content), tier 2
   is an explicit capture. `analysis close --exit adopt|reject` suggests recording a
   tier-1 pin; it never requires one.
+- `assay source adoption remove <adoption>` forgets a mapping. It deletes the
+  record and nothing else; the material in the target system is the target
+  project's and was never Assay's to write.
+- `assay source adoption take` gained `--note <text>` for the rationale worth
+  re-reading, and records a tier-1 identity pin without being asked: the commit
+  and origin for a checkout-backed source, a `sha256-tree-v1` content hash for
+  copied material. A target path that escapes the registered system through a
+  symbolic link is refused, including one that does not exist yet.
 - `assay update` gained a one-shot record migration from the previous version. It
   runs before the template analysis, reports every record it rewrote, and stamps the
   new version last so a failed step leaves the workspace re-runnable rather than
@@ -107,6 +141,25 @@ migrates a 0.13.0 workspace in place; there are no compatibility shims behind it
   `sha256-tree` value is written into the note rather than dropped.
 - `sources/<alias>/manifests/` is left on disk untouched. No command reads it any
   more; it is safe to delete once the migrated ledger looks right.
+
+It rewrites Source adoption records as follows:
+
+- Each mapping of each adoption becomes its own record. A single-mapping adoption
+  keeps its old id; anything else is suffixed with the mapping id.
+- The last committed decision for that mapping's target survives as a sentence in
+  the note: `last 0.13.0 decision: <outcome> — <reason>`. The old title and the
+  adoption and mapping it came from are named in the note as well.
+- An accepted baseline's source identity becomes the record's tier-1 pin — the
+  commit it accepted, or the tree hash when there was no commit. 0.13 never
+  recorded which origin a commit came from, so that stays null rather than being
+  guessed. A target that was never decided migrates without a pin, which is what
+  it always was.
+- Inspections, evidence records, decision chains, and rollback records are
+  dropped. The migration line counts each kind it dropped.
+- `.assay/source-adoptions/<adoption-id>/` is left on disk untouched. No command
+  reads it any more; it is safe to delete once the migrated records look right.
+- A mapping this step cannot rewrite into a valid record is reported by name and
+  left in the old directory rather than written out half-understood.
 
 ## Fixed
 

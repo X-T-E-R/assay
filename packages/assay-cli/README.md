@@ -45,16 +45,17 @@ tree. `sync` and `switch` apply to checkout-backed sources; they record an
 `observed with local modifications` advisory rather than refusing a checkout that
 holds uncommitted work.
 
-Track selected source material after it is adopted into a registered system:
+Record where source material landed in a registered system:
 
 ```powershell
-node ..\assay\packages\assay-cli\dist\cli.js source adoption register --file source-adoption.yaml
-node ..\assay\packages\assay-cli\dist\cli.js source adoption status <adoption>
-node ..\assay\packages\assay-cli\dist\cli.js source adoption decide <adoption> --target <id> --outcome accept
+node ..\assay\packages\assay-cli\dist\cli.js source adoption take repo-name:src/hashline.ts --into product:src/anchor.ts
+node ..\assay\packages\assay-cli\dist\cli.js source adoption list
+node ..\assay\packages\assay-cli\dist\cli.js source adoption show <adoption>
+node ..\assay\packages\assay-cli\dist\cli.js source adoption remove <adoption>
 ```
 
-Source adoption inspection and evidence commands are optional tools. Evidence blocks
-acceptance only when the definition explicitly declares it `required`.
+One record is one mapping. The `Upstream` section of `assay status` names the
+mappings an upstream change reaches, which is what the records are for.
 
 To convert an existing project into a clean Assay workspace, run from that
 project root:

@@ -7,5 +7,5 @@
 - [task.md](task.md) — native Task identity, lifecycle, checkpoints, bindings, and relationships.
 - [roadmap.md](roadmap.md) — native Roadmap outcomes, graph rules, and Task links.
 - [spec.md](spec.md) — native Spec storage, promotion, lifecycle, and authority boundaries.
-- [source-adoption.md](source-adoption.md) — Source adoption relationships, evidence, decisions, and receipt storage.
+- [source-adoption.md](source-adoption.md) — Source adoption mappings, identity pins, and record storage.
 - [agent-instructions.md](agent-instructions.md) — managed AGENTS block.

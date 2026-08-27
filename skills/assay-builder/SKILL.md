@@ -81,19 +81,11 @@ assay source status [alias]
 assay source diff <alias> [--since <observation>]
 assay source log <alias>
 
-# Source adoption relationships / evidence / decisions
-assay source adoption take <alias>:<source-path> --into <system>:<target-path> [--mode adapt|copy] [--to <observation>] [--id <adoption-id>]
-assay source adoption register --file <definition.json|yaml>
-assay source adoption update <adoption> --file <definition.json|yaml>
+# Source adoption: one record is one mapping
+assay source adoption take <alias>:<source-path> --into <system>:<target-path> [--mode adapt|copy] [--note <text>] [--to <observation>] [--id <adoption-id>]
 assay source adoption list
 assay source adoption show <adoption>
-assay source adoption status [adoption] [--target <id>]
-assay source adoption inspect <adoption> --target <id> [--to <observation>]
-assay source adoption evidence add <adoption> <inspection> --file <evidence.json|yaml>
-assay source adoption verify <adoption> <inspection>
-assay source adoption decide <adoption> --target <id> --outcome accept|reject|defer [--inspection <id>] [--to <observation>] [--reason <text>]
-assay source adoption history <adoption> [--target <id>]
-assay source adoption rollback record <adoption> --to-decision <id> [--reason <text>]
+assay source adoption remove <adoption>
 
 assay analysis new "Title" [--for-source <alias>] [--observation <id>]
 assay analysis close <path> --exit adopt|reject|experiment [--note ...]
@@ -244,7 +236,7 @@ source add <source> <alias>
 4. **Pin evidence at the tier the decision needs.** Tier 0 is the default and costs nothing: the alias, the date, and the commit for a Git source. Tier 1 is identity — the commit and origin, or for copied content a tree hash computed on demand when an adoption or a decision cites it. Tier 2 is `source capture <alias>`, which copies the current bytes with an integrity hash and is the only routine command that hashes a tree. Reach for a capture when the bytes themselves have to survive, not on every look.
 5. **Read upstream drift out of `status`, not out of a maintenance command.** The `Upstream` section compares each managed checkout against the commit its latest observation recorded, with no network, and names the Source adoption mappings a change reaches. `status --fetch` adds a remote comparison; a source it cannot reach is annotated and the command still exits 0. Run `source sync` when that section reports new upstream commits — and never as a routine habit.
 6. **Sync checkout-backed Sources with `source sync [alias]`** when the external system changes. Sync never refuses because of local work: it fast-forwards what it can, records an `observed with local modifications` advisory when the checkout holds uncommitted changes, and records that the upstream could not fast-forward instead of rewriting anything. Git remains what protects the bytes. Copied content has no upstream to follow — replace it with `source import <alias> <dir>`, which captures the bytes it is about to replace first. Change classes record workflow meaning rather than imposing a universal gate: `same` writes an event only, `patch`/`normal`/`major` describe the observed delta, and `replacement` should usually become a new lineage instead of pretending it is a refresh.
-7. **Register a Source adoption** when selected source material is carried into a registered system and should remain traceable across later updates. `source adoption take` covers one mapping; `source adoption register --file` covers several mappings, targets, or required evidence. Evidence is advisory unless the definition marks it `required`.
+7. **Record a Source adoption with `source adoption take`** when selected source material is carried into a registered system and should stay traceable across later updates. One record is one mapping — an intent that moved three paths is three `take` calls. `--note` is where the reason goes, `--mode adapt|copy` says whether the material was reworked or copied verbatim, and a tier-1 pin is recorded for free (commit and origin, or a content hash for copied material). The record is traceability, not an approval pipeline: there is no inspection, evidence, or decision workflow, and a decision belongs in `analysis close --exit`.
 8. **Open a source-bound analysis** with `analysis new "Title" --for-source <alias> [--observation <id>]`. Both content modes use the same resolver. Analysis close changes only the Analysis; Source observations remain immutable. When an analysis closes on `adopt` or `reject`, consider recording a tier-1 pin for what it decided about — a suggestion, never a requirement.
 9. **Fill the analysis body when the decision needs durable rationale**: complete `## Key observations` plus the relevant decision section (`## Adopt`, `## Reject`, or `## Next step`) with real content drawn from the source. `check --advisories` can list empty drafts; `analysis close` trusts the caller's explicit exit and does not block on section-content heuristics.
 10. Convert promising findings into a candidate pattern under `analyses/patterns/`. Create a native Task only when future bounded work needs a complete Goal, Acceptance Criteria, and durable identity.
@@ -293,9 +285,9 @@ Run `assay check --advisories` separately when workflow reminders are useful.
 - `[ok]` — directory or managed file present and unchanged.
 - `[missing]` — required directory or manifest absent.
 
-Workflow/content reminders are opt-in because they describe work state, not corruption. Structure, registry and persisted-record consistency, managed-record integrity, and Source adoption receipt remain in the default check.
+Workflow/content reminders are opt-in because they describe work state, not corruption. Structure, registry and persisted-record consistency, managed-record integrity, and Source adoption record integrity remain in the default check.
 
-`status` opens with the exact manifest/layout and native Project, then `Zones`: directory entries with file counts and purposes. Read the zones before placing a file. After that it shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Sources` summary, an `Upstream` block naming each source that drifted and how many Source adoption mappings the change reaches (add `--fetch` to compare remotes as well), a compact `Source adoptions` summary when operational receipts exist, `Knowledge entries`, and `Run records (runs.jsonl)` where that file exists. Use `--json` for the same data machine-readably. Run `update --dry-run` before apply; dry-run commands must not create project files or workspace-index records.
+`status` opens with the exact manifest/layout and native Project, then `Zones`: directory entries with file counts and purposes. Read the zones before placing a file. After that it shows `Systems` (with primary marker, vcs, version, supersedes chain), a compact `Sources` summary, an `Upstream` block naming each source that drifted and how many Source adoption mappings the change reaches (add `--fetch` to compare remotes as well), a compact `Source adoptions` summary counting mappings, the systems they reach, and how many carry a pin, `Knowledge entries`, and `Run records (runs.jsonl)` where that file exists. Use `--json` for the same data machine-readably. Run `update --dry-run` before apply; dry-run commands must not create project files or workspace-index records.
 
 ## Final response checklist
 

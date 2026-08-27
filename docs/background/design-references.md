@@ -9,7 +9,7 @@
 | Native Roadmap outcomes | `<work-root>/project/roadmap/` |
 | Native Specifications | `<work-root>/project/specs/` |
 | Source observations and material | `<work-root>/sources/` |
-| Source adoption operational receipts | `.assay/source-adoptions/` with `assay.source-adoption-*/v1` records |
+| Source adoption mappings | `.assay/source-adoptions/<id>.json` schema `assay.source-adoption/v1` |
 | Systems | `.assay/systems-registry.json` schema 3 map-key authority; no Assay-owned sidecar |
 | External Plugin metadata | `.assay/external-plugins.json` schema 1; host owns execution |
 | Automatic audit events | `.assay/events/YYYY-MM.jsonl` |
