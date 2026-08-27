@@ -1,27 +1,12 @@
 {
   "__schema": 4,
-  "framework_version": "0.13.0",
+  "framework_version": "0.14.0",
   "layout": {
-    "mode": "standalone",
-    "paths": {
-      "analyses": "analyses",
-      "backups": ".assay/backups",
-      "events": ".assay/events",
-      "knowledge": "knowledge",
-      "manifest": ".assay/manifest.json",
-      "sources": "sources",
-      "systems": "systems",
-      "systems_registry": ".assay/systems-registry.json"
-    },
-    "privacy": "tracked",
-    "state_root": ".assay",
-    "version": 8,
-    "work_root": ".",
     "entries": [
       {
         "kind": "directory",
         "path": "sources",
-        "purpose": "Living and frozen external evidence"
+        "purpose": "External material, tracked or copied"
       },
       {
         "kind": "directory",
@@ -83,6 +68,21 @@
         "path": "analyses/templates/pattern-card.md",
         "purpose": ""
       }
-    ]
+    ],
+    "mode": "standalone",
+    "paths": {
+      "analyses": "analyses",
+      "backups": ".assay/backups",
+      "events": ".assay/events",
+      "knowledge": "knowledge",
+      "manifest": ".assay/manifest.json",
+      "sources": "sources",
+      "systems": "systems",
+      "systems_registry": ".assay/systems-registry.json"
+    },
+    "privacy": "tracked",
+    "state_root": ".assay",
+    "version": 8,
+    "work_root": "."
   }
 }

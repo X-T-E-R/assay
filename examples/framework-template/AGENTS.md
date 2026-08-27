@@ -26,7 +26,7 @@ This workspace is managed by Assay.
 
 | Directory | What goes here |
 | --- | --- |
-| `sources/` | Living sources and frozen external evidence (created on first use) |
+| `sources/` | External material, tracked or copied (created on first use) |
 | `analyses/references/` | Analysis cards for external systems |
 | `analyses/gaps/` | Gaps between an external system and this workspace |
 | `analyses/patterns/` | Candidate reusable patterns awaiting validation |

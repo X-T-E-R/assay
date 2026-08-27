@@ -10,4 +10,4 @@ Assay runtime metadata. Do not store external evidence or long-lived user knowle
 
 - `backups/`: compatibility storage for existing rollback copies. Ordinary `assay update` leaves existing entries untouched and does not add retained backups.
 
-Current Assay release is 0.13.0; layout release is 8.
+Current Assay release is 0.14.0; layout release is 8.

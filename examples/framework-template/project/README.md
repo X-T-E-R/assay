@@ -8,7 +8,7 @@ Native Specs under `specs/<id>/{spec.yaml,specification.md}` own current normati
 
 Authority remains separate elsewhere:
 
-- `sources/` owns living and frozen external evidence.
+- `sources/` owns external material and the record of how it changed.
 - `analyses/` owns analysis records.
 - `tasks/` owns Assay-native Task records.
 - `systems/` contains System implementations; schema-3 registry records own Project-local membership and locators.
