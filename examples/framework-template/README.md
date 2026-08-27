@@ -11,7 +11,7 @@ evidence in -> structured checks -> decisions -> knowledge growth
 
 | Path | Purpose |
 | --- | --- |
-| `.assay/` | Runtime metadata: manifest, managed receipt, events, backups |
+| `.assay/` | Runtime metadata: manifest, managed receipt, events, and compatibility backup storage |
 | `project/` | Native Project identity, charter, and Roadmap items |
 | `systems/` | Registered active systems and local implementations |
 | `knowledge/` | Accepted reusable knowledge |

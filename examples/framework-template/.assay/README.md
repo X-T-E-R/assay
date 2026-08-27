@@ -8,6 +8,6 @@ Assay runtime metadata. Do not store external evidence or long-lived user knowle
 - `systems-registry.json`: registered systems and the current primary system after `assay system register`.
 - `events/`: JSONL event ledger.
 
-- `backups/`: timestamped backups before managed updates.
+- `backups/`: compatibility storage for existing rollback copies. Ordinary `assay update` leaves existing entries untouched and does not add retained backups.
 
 Current Assay release is 0.13.0; layout release is 8.
