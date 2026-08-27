@@ -26,6 +26,50 @@ tasks/
     <stable-id>/     explicitly archived terminal Tasks
 ```
 
+## Organize the tree without changing what a Task is
+
+Any subdirectory you invent under `tasks/` is a legal navigation prefix:
+
+```text
+tasks/
+  task-0001-<slug>/                    created here, always
+  research/
+    task-0002-<slug>/
+    deep/
+      task-0003-<slug>/
+  archive/
+    task-0004-<slug>/                  reserved and flat
+```
+
+`tasks/research/deep/task-0003-<slug>/` is the same Task as
+`tasks/task-0003-<slug>/`. Resolution is recursive and the stable id stays the
+only identity. A prefix has no schema, no metadata, and no entry in `task.json`,
+so it is safe to invent, rename, and drop a filing scheme as your reading of the
+work changes.
+
+Moving a Task directory between prefixes is a supported operation. Use an
+ordinary `mv` or your file browser; nothing needs to be told. Bindings,
+relations, and Roadmap `task_refs` all reference ids, so they keep resolving.
+An emptied prefix directory is invisible rather than a finding, and a note or
+`README.md` you leave beside your Tasks is your own business.
+
+`create` always lands in the flat root. There is no flag that files a new Task
+into a prefix, because choosing where something belongs is worth doing after you
+can see it rather than while naming it.
+
+Two rules bound the freedom:
+
+- `tasks/archive/` is reserved and stays flat. A directory inside it that is not
+  an archived Task is reported with the repair, and archiving a prefixed Task
+  moves it to `tasks/archive/<id>/`. Below a prefix, `archive` is an ordinary
+  word: `tasks/research/archive/task-0005-<slug>/` is a live Task.
+- One stable id lives in one directory. The same id under two prefixes, or live
+  and archived at once, is a storage conflict reported through partial health,
+  not a choice Assay makes for you.
+
+Old flat workspaces need no migration: a flat layout is the trivial case of the
+same recursive resolution.
+
 `task.json` lets the CLI identify and validate the Task. Keep contract prose out
 of it. Write the bounded goal, scope, task-level success checks, and references
 to governing acceptance in `prd.md`; both people and models edit that file
@@ -86,6 +130,14 @@ Create a Task when all of these are true:
 - the requested result is bounded enough to describe and verify;
 - its identity must survive a session, agent, compaction, or attempt boundary;
 - a stable id will help another reader or tool resume the same result.
+
+There is a ladder below a Task, and most work belongs on a lower rung. Work you
+have a lot of — one contest problem, one book section, one dataset run — starts
+as a plain directory in a template area, where the hundredth costs no more than
+the first. Promote one of them to a Roadmap item when that outcome needs state
+the Project tracks. Create a Task only when the work needs an identity that
+survives a session, an agent, or an attempt. Three hundred Tasks standing in for
+three hundred directories buys nothing.
 
 Do not create another Task merely because implementation restarted, ownership
 changed, or a checkpoint reported partial progress. Continue the existing Task
@@ -198,10 +250,31 @@ The command group provides:
 | `relations` | Replace the Task's explicit typed relationships. |
 | `validate` | Validate Task files, relationships, and context bindings without changing them. |
 
-`list` has partial-health behavior. A damaged or duplicated storage entry does
-not suppress valid siblings: valid rows still appear in their filtered,
-paginated order. JSON output adds top-level `issues` with each `TASK_*` code,
-path, and live/archive location; human output appends `Task storage issues:`.
+## Discovery and integrity are separate views
+
+`list` and `validate` answer different questions, and the difference is what
+each one has to read.
+
+`list` is discovery plus storage health. It reads each Task's own envelope and
+nothing else, so it stays fast as the tree grows and still reports what it
+cannot help noticing on the way past: an unparseable `task.json`, an id that
+disagrees with its directory, and one id filed in more than one place.
+
+`validate` owns integrity, which means the lineage graph. Checking that a
+relation target exists and that no `contributes_to` / `continues` / `supersedes`
+chain forms a cycle means reading every reachable record, so `validate` is the
+only command that pays for it. A dangling relation target is reported there and
+nowhere else — a clean `list` is not a claim about the graph.
+
+`assay check` sits between them: it reads each Task's envelope and its own
+contract files for workspace health, without walking the graph. When you need to
+trust the relation graph, run `assay task validate`.
+
+Both `list` and `validate` have partial-health behavior. A damaged or duplicated
+storage entry does not suppress valid siblings: valid rows still appear in their
+filtered, paginated order. JSON output adds top-level `issues` with each `TASK_*`
+code, path, and live/archive location; human output appends
+`Task storage issues:`.
 
 The command exits with status 1 when issues are present even though it wrote
 valid rows to stdout. Treat the rows as usable discovery results and the issues

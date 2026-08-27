@@ -128,6 +128,15 @@ sessions, agents, context compaction, or implementation attempts. Create the
 Task at that boundary, not for every piece of work. If the intended outcome is
 unchanged, keep using the same Task when an attempt restarts or ownership moves.
 
+Climb the ladder before reaching for a native object. Work that repeats in
+quantity — one contest problem, one book section, one dataset run — belongs in
+plain directories inside a template area, where adding the hundredth costs
+nothing. Promote one of them to a Roadmap item when that specific outcome needs
+state the Project tracks, and create a Task only when the work itself needs a
+durable identity that survives a session, agent, or attempt boundary. Three
+hundred Tasks standing in for three hundred directories buys nothing and makes
+every listing worse.
+
 Standalone Tasks live under `tasks/<stable-id>/`; overlay Tasks live under
 `.assay/tasks/<stable-id>/`. Every Task requires `task.json` and `prd.md`.
 `task.json` is a machine envelope and compatibility record; never put the Task
@@ -174,11 +183,29 @@ Roadmap membership is not a Task relation or back-reference. Native Roadmap
 items own canonical `task_refs`; change them with `assay roadmap link-task` or
 `unlink-task`. Task and Roadmap lifecycle state never propagates automatically.
 
-`task list` uses partial-health output. It keeps valid rows in stdout/JSON while
-placing corrupt or duplicate storage diagnostics in top-level `issues` (or a
-human `Task storage issues:` section), and exits 1 when any issue exists. Use
-the valid rows for discovery, but do not report the storage as healthy until
-the issues are repaired.
+Any subdirectory you invent under `tasks/` is a legal navigation prefix:
+`tasks/research/deep/task-0007-<slug>/` is the same Task as
+`tasks/task-0007-<slug>/`. Resolution is recursive and the stable id remains the
+only identity, so move a Task directory between prefixes with an ordinary `mv`
+whenever the filing helps. Prefixes carry no schema, never appear in
+`task.json`, and change nothing about bindings, relations, or roadmap
+`task_refs`, which all reference ids. `create` always lands in the flat root;
+organizing is a deliberate move afterwards. `tasks/archive/` is the one reserved
+name and stays flat, so archiving a prefixed Task moves it to
+`tasks/archive/<id>/`. The same id under two prefixes is a storage conflict, not
+a choice.
+
+`task list` and `task validate` answer different questions. `list` is discovery
+plus storage health: it reads each Task envelope, so an unparseable `task.json`,
+an id that disagrees with its directory, and one id filed twice still show up.
+`validate` owns integrity, which means the lineage graph — a dangling or cyclic
+relation target is reported there and nowhere else. Run `validate` when you need
+to trust the graph; do not read a clean `list` as a sound one.
+
+Both use partial-health output: valid rows stay in stdout/JSON while diagnostics
+go to top-level `issues` (or a human `Task storage issues:` section), and the
+command exits 1 when any issue exists. Use the valid rows for discovery, but do
+not report the storage as healthy until the issues are repaired.
 
 Keep roadmaps, specifications, and acceptance in the native Project. Use
 `assay spec` for closed envelopes plus reader-owned specification prose,

@@ -58,6 +58,11 @@ assay system register|update|promote|archive|list|show ...
 
 Task, Roadmap, Spec, and System authority remain independent. Systems registry schema 3 is canonical for Project-local System membership and selectors. `system update --path` only rebinds the locator. `system archive --apply` is a logical registry transition and never moves or deletes System bytes. A file named `system.yaml` is ordinary user content, not an Assay contract.
 
+`task list` is discovery plus storage health and reads Task envelopes only;
+`task validate` is the one command that walks the relation graph. Any
+subdirectory under `tasks/` is a navigation prefix, `tasks/archive/` excepted:
+see [Task records](task.md).
+
 ## Sources and adoptions
 
 ```text

@@ -171,6 +171,46 @@ migrates a 0.13.0 workspace in place; there are no compatibility shims behind it
   files and the Assay AGENTS block, refuses occupied exact `.new` sidecars before
   mutation, reconciles stale managed receipts after crash recovery, and no longer
   recreates deleted Project guide files.
+- `assay task list` and `assay task validate` now answer separate questions, and
+  the split is what makes `list` usable on a large Task tree. `list` is discovery
+  plus storage health: it reads each Task's own envelope once, without taking a
+  Task lock and without reading any other record, so the findings it still
+  reports are the ones it cannot help noticing — an unparseable `task.json`, an
+  id that disagrees with its directory, and one id filed in more than one place.
+  `validate` owns integrity, which means the lineage graph: proving that every
+  relation target exists and that no `contributes_to` / `continues` /
+  `supersedes` chain forms a cycle requires reading every reachable record, and
+  it is now the only command that pays for it. A dangling relation target is
+  reported by `validate` and nowhere else, so a clean `list` is not a claim about
+  the graph. On a 300-Task workspace with a web of relations, `assay task list`
+  went from about 62s to about 1.0s.
+- `assay check` reads each Task's envelope and its own contract files without
+  walking the relation graph, and no longer repairs a crash-left checkpoint
+  transaction as a side effect of being asked for a health report. `assay task
+  validate` still recovers it.
+- Any subdirectory under `tasks/` (or `.assay/tasks/` in an overlay) is now a
+  legal navigation prefix: `tasks/research/deep/task-0007-<slug>/` is the same
+  Task as `tasks/task-0007-<slug>/`. Resolution is recursive and the stable id
+  remains the only identity, so moving a Task directory between prefixes by hand
+  is a supported operation that nothing needs to be told about — bindings,
+  relations, and Roadmap `task_refs` all reference ids. A prefix carries no
+  schema and no metadata and never enters `task.json`. An emptied prefix is
+  invisible rather than a finding, as is a note a reader leaves beside their
+  Tasks. Existing flat workspaces need no migration: flat is the trivial case of
+  the same resolution.
+- `tasks/archive/` stays reserved and flat. A directory inside it that is not an
+  archived Task is reported with the repair rather than silently shadowing the
+  archive, and archiving a prefixed Task moves it to `tasks/archive/<id>/`.
+  Below a prefix, `archive` is an ordinary word: `tasks/research/archive/` holds
+  live Tasks.
+- The same stable id found under two prefixes goes through the existing
+  partial-health duplicate machinery, and the conflict message now names every
+  path it found instead of assuming a live/archive pair.
+- `assay task create` still lands in the flat root. There is no flag for filing a
+  new Task into a prefix; organizing is a deliberate move afterwards.
+- Test workspace fixtures now live under one run directory named by
+  `ASSAY_TEST_FIXTURE_ROOT` instead of loose in the shared temp directory, so a
+  crashed run's leftovers are identifiable and removable in one sweep.
 
 ## Migration notes
 
@@ -215,7 +255,21 @@ It rewrites Source adoption records as follows:
 
 ## Fixed
 
-- None.
+- A Task or Roadmap mutation on Windows could report failure after it had
+  already succeeded. Tidying the shared coordination directory away runs in the
+  mutation's `finally` block, and Windows answers `rmdir` with `EPERM` — not
+  `ENOTEMPTY` — while a concurrent participant's claim directory is still in the
+  delete-pending state, so best-effort housekeeping threw over a completed
+  write. Every failure at that point means "leave it for the next caller", and
+  none of them surfaces now.
+- The Task lock protocol treated Windows delete-pending as a protocol violation.
+  A waiter reading the current lock owner got `EPERM` from `lstat` or `realpath`
+  while the holder was removing `owner.json`, where POSIX would have said
+  `ENOENT`; the protocol already knew how to retry that exact situation but
+  recognized it under only one of its two names. Removals that have to land also
+  ride Node's documented Windows retry instead of failing on a transient
+  `EPERM`. Together these were the recurring `EPERM` on
+  `coordination/workspace-mutation/owner.json` in the Windows test runs.
 
 ## Removed
 
