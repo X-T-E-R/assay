@@ -90,6 +90,8 @@ import {
   formatSystemRecord,
   formatUpdateResult,
 } from "./format.js";
+import { hintLines, hintedResult } from "./hints.js";
+import { addOrientationCommands } from "./orientation-command.js";
 import { addRoadmapCommand } from "./roadmap-command.js";
 import { addSpecCommand } from "./spec-command.js";
 import { addTaskCommand } from "./task-command.js";
@@ -605,6 +607,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       }
     });
 
+  addOrientationCommands(program, { output, resolveRoot: discoveredRoot });
   addTaskCommand(program, { output, resolveRoot: discoveredRoot });
   addRoadmapCommand(program, { output, resolveRoot: discoveredRoot });
   addSpecCommand(program, { output, resolveRoot: discoveredRoot });
@@ -627,6 +630,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...SOURCE_CAPTURE_MODES,
       ]),
     )
+    .option("--json", "emit JSON")
     .action(async (repoOrDir, alias, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await addSource({
@@ -639,6 +643,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           ? {}
           : { capture: commandOptions.capture as SourceCaptureMode }),
       });
+      if (commandOptions.json) {
+        writeJson(output, hintedResult(result, "source add"));
+        return;
+      }
       writeLine(output, "stdout", `Added source: ${result.path}`);
       writeLine(output, "stdout", `Observation: ${result.observationFile}`);
       writeLine(output, "stdout", `Manifest: ${result.manifestFile}`);
@@ -652,6 +660,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "stdout",
         "Next: `assay status` reports when this source moves upstream and which adopted mappings it reaches.",
       );
+      for (const hint of hintLines("source add")) {
+        writeLine(output, "stdout", hint);
+      }
     });
 
   source
@@ -822,7 +833,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         ...(commandOptions.title === undefined ? {} : { title: commandOptions.title }),
       });
       if (commandOptions.json) {
-        writeJson(output, result);
+        writeJson(output, hintedResult(result, "source adoption take"));
         return;
       }
       writeLine(output, "stdout", `Registered source adoption: ${result.adoptionId}`);
@@ -841,6 +852,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "stdout",
         `Next: assay status reports when ${from.name} changes under this mapping.`,
       );
+      for (const hint of hintLines("source adoption take")) {
+        writeLine(output, "stdout", hint);
+      }
     });
 
   sourceAdoption
@@ -1091,6 +1105,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--for-source <alias>", "Source alias to bind")
     .option("--observation <id-or-path>", "source observation id/path; defaults to latest")
+    .option("--json", "emit JSON")
     .action(async (title, commandOptions) => {
       const root = await discoveredRoot(commandOptions.root);
       const result = await createAnalysis({
@@ -1101,6 +1116,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           ? {}
           : { observation: commandOptions.observation }),
       });
+      if (commandOptions.json) {
+        writeJson(output, hintedResult(result, "analysis new"));
+        return;
+      }
       writeLine(output, "stdout", `Created analysis: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
       writeLine(
@@ -1108,6 +1127,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "stdout",
         `Next: fill ## Key observations, then \`assay analysis close ${result.path} --exit adopt|reject|experiment\`.`,
       );
+      for (const hint of hintLines("analysis new")) {
+        writeLine(output, "stdout", hint);
+      }
     });
 
   analysis
@@ -1323,6 +1345,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .argument("<title>", "knowledge entry title")
     .option("--from-analysis <path>", "originating analysis path")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
+    .option("--json", "emit JSON")
     .action(async (type, title, commandOptions) => {
       const validTypes = ["pattern", "guide", "troubleshooting"];
       if (!validTypes.includes(type)) {
@@ -1339,6 +1362,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           ? {}
           : { fromAnalysis: commandOptions.fromAnalysis }),
       });
+      if (commandOptions.json) {
+        writeJson(output, hintedResult(result, "knowledge add"));
+        return;
+      }
       writeLine(output, "stdout", `Added knowledge: ${result.path}`);
       writeLine(output, "stdout", `Event: ${result.eventFile}`);
       writeLine(
@@ -1346,6 +1373,9 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         "stdout",
         `Next: write the entry in ${result.path}; \`assay check\` reports the workspace's knowledge structure.`,
       );
+      for (const hint of hintLines("knowledge add")) {
+        writeLine(output, "stdout", hint);
+      }
     });
 
   return program;

@@ -25,6 +25,7 @@ import {
   type SystemsRegistry,
   systemsRegistrySchema,
 } from "./schemas/index.js";
+import { withSemanticModel } from "./semantics.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
 import { nowIso } from "./time.js";
 
@@ -636,7 +637,9 @@ export async function registerSystem(
     throw new FrameworkError(`system selector is not canonical: '${selector}'`);
   }
   if (existing && systemRecordForSelector(existing, selector)) {
-    throw new FrameworkAlreadyExistsError(`system already registered: ${selector}`);
+    throw new FrameworkAlreadyExistsError(
+      withSemanticModel(`system already registered: ${selector}`, "systemAlreadyRegistered"),
+    );
   }
 
   const record: SystemRecord = {

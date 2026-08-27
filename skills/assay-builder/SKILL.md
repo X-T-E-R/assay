@@ -32,6 +32,10 @@ node <skill-root>/scripts/assay.mjs <command>
 ```
 
 ```bash
+# Orientation — run prime once per session, explain before first use of an object
+assay prime [--json]                         # object semantics + this workspace's state, one screen
+assay explain <topic> [--json]               # workspace|project|task|roadmap|spec|source|adoption|analysis|knowledge|system
+
 # Workspace lifecycle
 assay init [target-dir] --name <project-name> [--template <name-or-yaml-path>]  # built-ins: study|solve|explore
 assay template list | show <name-or-yaml-path>
@@ -178,8 +182,8 @@ the issues are repaired.
 
 Keep roadmaps, specifications, and acceptance in the native Project. Use
 `assay spec` for closed envelopes plus reader-owned specification prose,
-and use explicit `spec promote` only with an independent clean body and an
-Analysis or Task provenance source. Activation validates structure; it is not
+and use explicit `spec promote` only with an independent clean body and the
+Analysis or Task the body came from. Activation validates structure; it is not
 approval or Project acceptance. Keep agent DAGs, dispatch, ownership, and
 permissions in the host. Relay owns fork and promotion semantics. Keep product
 learning and durable findings in analyses and knowledge.
@@ -220,7 +224,7 @@ If Assay reports a cutover error with an `assay-cutover:<observed>-><required>` 
 
 ## Workflow
 
-1. Inspect the target folder and any supplied external repository.
+1. Run `assay prime` first. It states what each native object is for, the rule most often broken for each, and the current workspace state; `assay explain <topic>` covers one object in depth. Then inspect the target folder and any supplied external repository.
 2. Use `workspace list` for the explicit index or `workspace discover <parent-dir>` to locate and track current workspaces.
 
 ### Source evidence pipeline
@@ -265,7 +269,7 @@ When adopting an existing project, `adopt --apply --analyze` opens an adoption i
 ## Positive rules (what "absorbed" actually means)
 
 - When a frozen Source is meant to inform a decision, follow it with a source-bound Analysis containing the observations needed by that decision.
-- A living Source MUST keep provenance and observation metadata. Use `source status`, `source log`, `source diff`, and `analysis new --for-source` instead of browsing `.assay/` manually. Source observations never store Analysis status; decide explicitly when a changed Source needs a new Analysis.
+- Record what this decision needs, not everything recordable. A Source's observation ledger exists so a later reader can tell what was looked at and when; read it with `source status`, `source log`, `source diff`, and `analysis new --for-source` rather than browsing `.assay/` by hand. Source observations never store Analysis status, so decide explicitly when a changed Source needs a new Analysis.
 - A file existing does not prove analysis quality. Use `## Key observations` and `## Adopt`/`## Reject` when durable rationale matters; Assay records explicit close decisions instead of pretending a mechanical text check can establish quality.
 - Closing an analysis (`analysis close --exit …`) records only the Analysis decision; it never rewrites Source observations.
 - In absorption mode, the source IS the project — do not treat official materials as external references. Land them in `problem/`.
@@ -300,6 +304,6 @@ Report:
 - Whether conversion or adoption was only previewed or applied.
 - Which Source, Analysis, Task, or Knowledge artifacts were produced.
 - Registered systems and the current `primary`.
-- **Content-completeness**: count of living Sources and whether latest observations have provenance/fingerprints/manifests; count of living and frozen Source modes; count of open draft analyses and whether their `Key observations` are non-empty; whether `.old/` still contains un-migrated stamps. This is what distinguishes "files were created" from "content was actually evaluated".
-- Any unresolved reminders reported by `check --advisories`, when that audit was requested.
+- **What was actually evaluated, not just created**: which Sources were read and what their latest observations show; how many draft analyses are still open and whether their `Key observations` say anything; whether `.old/` still holds un-migrated entries. Report the evidence the decision rested on, not an inventory of every field Assay can store.
+- Any unresolved reminders reported by `check --advisories`, when those were requested.
 - Next recommended absorption, Analysis close, Task, or Knowledge step.

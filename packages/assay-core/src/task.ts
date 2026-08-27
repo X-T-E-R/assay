@@ -10,6 +10,7 @@ import {
 } from "./layout.js";
 import { loadManifest } from "./manifest.js";
 import { allocateReadableId, isReadableId, readableIdSlug } from "./readable-id.js";
+import { withSemanticModel } from "./semantics.js";
 import { TASK_HANDOFF_HEADINGS, renderTaskPrd } from "./tasks/task-contract.js";
 import {
   TASK_ENVELOPE_KEYS,
@@ -421,9 +422,14 @@ async function locateTask(location: TaskLocation, idInput: string): Promise<Loca
   const archived = taskDirectory(location, id, true);
   const [hasLive, hasArchived] = await Promise.all([pathExists(live), pathExists(archived)]);
   if (hasLive && hasArchived) {
-    throw new TaskError("TASK_CONFLICT", `task exists in both live and archive storage: ${id}`, {
-      details: { id },
-    });
+    throw new TaskError(
+      "TASK_CONFLICT",
+      withSemanticModel(
+        `task exists in both live and archive storage: ${id}`,
+        "taskDuplicateStorage",
+      ),
+      { details: { id } },
+    );
   }
   if (!hasLive && !hasArchived) {
     throw new TaskError("TASK_NOT_FOUND", `task not found: ${id}`, {
@@ -605,15 +611,19 @@ async function rawTaskAtDirectory(
   try {
     value = JSON.parse(text) as unknown;
   } catch (error) {
-    throw new TaskError("TASK_INVALID", `task.json is not valid JSON: ${id}`, {
-      cause: error,
-    });
+    throw new TaskError(
+      "TASK_INVALID",
+      withSemanticModel(`task.json is not valid JSON: ${id}`, "taskEnvelope"),
+      { cause: error },
+    );
   }
   const raw = parseRawTask(value);
   if (raw.record.id !== id) {
-    throw new TaskError("TASK_INVALID", `task id does not match its directory: ${id}`, {
-      details: { directory_id: id, record_id: raw.record.id },
-    });
+    throw new TaskError(
+      "TASK_INVALID",
+      withSemanticModel(`task id does not match its directory: ${id}`, "taskEnvelope"),
+      { details: { directory_id: id, record_id: raw.record.id } },
+    );
   }
   return raw;
 }
@@ -754,15 +764,19 @@ async function readTaskAt(
     try {
       json = JSON.parse(taskText) as unknown;
     } catch (error) {
-      throw new TaskError("TASK_INVALID", `task.json is not valid JSON: ${expectedId}`, {
-        cause: error,
-      });
+      throw new TaskError(
+        "TASK_INVALID",
+        withSemanticModel(`task.json is not valid JSON: ${expectedId}`, "taskEnvelope"),
+        { cause: error },
+      );
     }
     const raw = parseRawTask(json);
     if (raw.record.id !== expectedId) {
-      throw new TaskError("TASK_INVALID", `task id does not match its directory: ${expectedId}`, {
-        details: { directory_id: expectedId, record_id: raw.record.id },
-      });
+      throw new TaskError(
+        "TASK_INVALID",
+        withSemanticModel(`task id does not match its directory: ${expectedId}`, "taskEnvelope"),
+        { details: { directory_id: expectedId, record_id: raw.record.id } },
+      );
     }
     if (handoff !== undefined) validateHandoff(handoff);
     return {
@@ -914,7 +928,10 @@ async function writeMutation(
     await recoverCheckpointTransaction(location, located, id);
     const raw = await rawTaskAtDirectory(location, located, id);
     if (located.archived) {
-      throw new TaskError("TASK_TERMINAL", `archived task cannot be changed: ${id}`);
+      throw new TaskError(
+        "TASK_TERMINAL",
+        withSemanticModel(`archived task cannot be changed: ${id}`, "taskArchived"),
+      );
     }
     assertRevision(raw.revision, expectedRevision);
     const output = await update(raw);
@@ -1137,9 +1154,11 @@ export async function updateTaskStatus(
   const location = await taskLocation(options.root);
   return writeMutation(location, options.id, options.expectedRevision, (raw) => {
     if (isTerminal(raw.status) && status !== raw.status) {
-      throw new TaskError("TASK_TERMINAL", `terminal task cannot change status: ${options.id}`, {
-        details: { status: raw.status },
-      });
+      throw new TaskError(
+        "TASK_TERMINAL",
+        withSemanticModel(`terminal task cannot change status: ${options.id}`, "taskTerminal"),
+        { details: { status: raw.status } },
+      );
     }
     const completedAt = isTerminal(status)
       ? (raw.record.completedAt ?? (options.now ?? new Date()).toISOString().slice(0, 10))
@@ -1157,7 +1176,10 @@ export async function checkpointTask(options: CheckpointTaskOptions): Promise<Ta
     await recoverCheckpointTransaction(location, located, id);
     const raw = await rawTaskAtDirectory(location, located, id);
     if (located.archived) {
-      throw new TaskError("TASK_TERMINAL", `archived task cannot be checkpointed: ${id}`);
+      throw new TaskError(
+        "TASK_TERMINAL",
+        withSemanticModel(`archived task cannot be checkpointed: ${id}`, "taskArchived"),
+      );
     }
     assertRevision(raw.revision, options.expectedRevision);
     const oldHandoff = await readBoundedText(
@@ -1231,7 +1253,13 @@ export async function archiveTask(options: ArchiveTaskOptions): Promise<TaskReco
       const archived = taskDirectory(location, id, true);
       const [hasLive, hasArchived] = await Promise.all([pathExists(live), pathExists(archived)]);
       if (hasLive && hasArchived) {
-        throw new TaskError("TASK_CONFLICT", `task exists in both live and archive storage: ${id}`);
+        throw new TaskError(
+          "TASK_CONFLICT",
+          withSemanticModel(
+            `task exists in both live and archive storage: ${id}`,
+            "taskDuplicateStorage",
+          ),
+        );
       }
       if (hasArchived) {
         return readTaskAt(location, { directory: archived, archived: true }, id);
@@ -1243,7 +1271,10 @@ export async function archiveTask(options: ArchiveTaskOptions): Promise<TaskReco
       const current = await readTaskAt(location, { directory: live, archived: false }, id);
       await assertTaskDirectoryShape(location, live);
       if (!isTerminal(current.task.status)) {
-        throw new TaskError("TASK_NOT_TERMINAL", `only terminal tasks can be archived: ${id}`);
+        throw new TaskError(
+          "TASK_NOT_TERMINAL",
+          withSemanticModel(`only terminal tasks can be archived: ${id}`, "taskNotTerminal"),
+        );
       }
       await archiveProbe?.(id);
       await mkdir(location.archiveDirectory, { recursive: true });
@@ -1311,7 +1342,7 @@ export async function bindTask(options: BindTaskOptions): Promise<TaskContextRes
     if (existing !== undefined && existing !== selected.task.id && !options.rebind) {
       throw new TaskError(
         "TASK_CONTEXT_CONFLICT",
-        `context is already bound to task ${existing}; explicit rebind is required`,
+        withSemanticModel(`context is already bound to task ${existing}`, "taskContextBinding"),
         { details: { context_key: contextKey, task_id: existing } },
       );
     }

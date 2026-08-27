@@ -18,6 +18,8 @@ import {
   validateSpecs,
 } from "assay-core";
 
+import { hintedResult, withHintLines } from "./hints.js";
+
 interface Output {
   readonly stdout: (text: string) => void;
   readonly setExitCode: (code: number) => void;
@@ -122,7 +124,12 @@ export function addSpecCommand(program: Command, dependencies: Dependencies): vo
         ...(options.fromTask === undefined ? {} : { fromTask: options.fromTask }),
         ...(options.taskFile === undefined ? {} : { taskFile: options.taskFile }),
       });
-      emit(output, result, options.json, formatRecord(result));
+      emit(
+        output,
+        hintedResult(result, "spec promote"),
+        options.json,
+        withHintLines(formatRecord(result), "spec promote"),
+      );
     });
 
   spec

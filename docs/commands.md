@@ -2,6 +2,17 @@
 
 Every workspace command discovers `.assay/manifest.json` and accepts only the exact `0.13.0+s4+l8` workspace envelope. System commands additionally require systems registry schema 3 (`0.13.0+s4+l8+r3`).
 
+## Orientation
+
+```text
+assay prime [--root <dir>] [--json]
+assay explain <workspace|project|task|roadmap|spec|source|adoption|analysis|knowledge|system> [--json]
+```
+
+`prime` is the session-start read: what each native object is for, the rule most often broken for each, and the current workspace state (layout, zones, active Tasks, sources, primary system, counts). It works outside a workspace too, printing the object semantics and saying no workspace was found. `explain` answers why one object exists, when not to use it, and how it is usually misused; the flag list stays in `--help`.
+
+Both read the same semantics registry that supplies the point-of-use hints on mutating commands, the correct-model sentences in high-misuse errors, and the object semantics in the `AGENTS.md` managed block, so those four channels cannot drift apart.
+
 ## Lifecycle
 
 ```text

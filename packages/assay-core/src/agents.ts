@@ -8,6 +8,7 @@ import {
 } from "./authority-file-write.js";
 import { AuthorityWriteConflictError, FrameworkError } from "./errors.js";
 import { loadManifest } from "./manifest.js";
+import { SEMANTIC_TOPICS, semanticDigest, semanticDigestSentence } from "./semantics.js";
 import { type WorkspaceZone, manifestZones, zoneTable } from "./zones.js";
 
 export const ASSAY_AGENTS_FILE = "AGENTS.md";
@@ -36,10 +37,26 @@ const ASSAY_AGENTS_RULES = [
   "",
   "This workspace is managed by Assay.",
   "",
+  "- Run `assay prime` at the start of a session. It states the semantic contract below plus the current workspace state in one screen.",
+  `- Run \`assay explain <object>\` before using an object type for the first time. Topics: ${SEMANTIC_TOPICS.join(", ")}.`,
   "- Before changing workspace structure, start from the installed `assay-builder` skill if the agent environment exposes it. Otherwise use `assay --help` / `assay help <command>` and inspect the workspace with `assay status`.",
   "- Do not assume the repository root is the system being built. The root is the Assay workspace/control surface. Systems live under `systems/` and registered systems are managed with `assay system ...`.",
   "- Use Assay commands for `.assay/` state. Edits outside this block are preserved.",
 ];
+
+/**
+ * The semantic contract, as the managed block states it. Same registry the
+ * `prime`, `explain`, and point-of-use hints read, so a wording change lands in
+ * every channel at once instead of leaving this copy behind.
+ */
+function semanticContractSection(): string[] {
+  return [
+    "",
+    "## Object semantics",
+    "",
+    ...semanticDigest().map((entry) => `- ${semanticDigestSentence(entry)}`),
+  ];
+}
 
 /**
  * Build the managed block. The layout section is appended only when the
@@ -53,6 +70,7 @@ export function assayAgentsBlock(layout?: AssayAgentsLayoutSection | null): stri
     ASSAY_AGENTS_START_MARKER,
     "",
     ...ASSAY_AGENTS_RULES,
+    ...semanticContractSection(),
     ...layoutSection,
     "",
     ASSAY_AGENTS_END_MARKER,
@@ -214,8 +232,7 @@ async function buildAssayAgentsBlockPlan(
     await recoverAuthorityFile({
       root,
       file,
-      error: (message, cause) =>
-        new FrameworkError(message, cause === undefined ? {} : { cause }),
+      error: (message, cause) => new FrameworkError(message, cause === undefined ? {} : { cause }),
       ...(assayAgentsWriteProbe ? { probe: assayAgentsWriteProbe } : {}),
     });
   }

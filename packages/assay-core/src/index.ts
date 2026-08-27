@@ -12,6 +12,8 @@ export * from "./layout.js";
 export * from "./manifest.js";
 export * from "./managed-files.js";
 export * from "./paths.js";
+export * from "./prime.js";
+export * from "./semantics.js";
 export * from "./template.js";
 export * from "./plugins/index.js";
 export * from "./versioning.js";

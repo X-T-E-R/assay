@@ -26,6 +26,8 @@ import {
   validateTasks,
 } from "assay-core";
 
+import { hintedResult, withHintLines } from "./hints.js";
+
 interface TaskCommandOutput {
   readonly stdout: (text: string) => void;
   readonly setExitCode: (code: number) => void;
@@ -286,7 +288,8 @@ export function addTaskCommand(program: Command, dependencies: TaskCommandDepend
         relations: parseRelations(commandOptions.relation),
       });
       if (commandOptions.context === undefined) {
-        emit(output, created, commandOptions.json, formatTask);
+        if (commandOptions.json) writeJson(output, hintedResult(created, "task create"));
+        else writeLine(output, withHintLines(formatTask(created), "task create"));
         return;
       }
       try {
@@ -296,8 +299,12 @@ export function addTaskCommand(program: Command, dependencies: TaskCommandDepend
           id: created.task.id,
         });
         const result = { ...created, binding };
-        if (commandOptions.json) writeJson(output, result);
-        else writeLine(output, `${formatTask(created)}\n${formatBinding(binding)}`);
+        if (commandOptions.json) writeJson(output, hintedResult(result, "task create"));
+        else
+          writeLine(
+            output,
+            withHintLines(`${formatTask(created)}\n${formatBinding(binding)}`, "task create"),
+          );
       } catch (error) {
         if (error instanceof TaskError) {
           throw new TaskError(
@@ -426,7 +433,8 @@ export function addTaskCommand(program: Command, dependencies: TaskCommandDepend
               ),
             }),
       });
-      emit(output, result, commandOptions.json, formatTask);
+      if (commandOptions.json) writeJson(output, hintedResult(result, "task finish"));
+      else writeLine(output, withHintLines(formatTask(result), "task finish"));
     });
 
   task
