@@ -76,6 +76,54 @@ migrates a 0.13.0 workspace in place; there are no compatibility shims behind it
 
 ## Added
 
+- Cross-workspace Source references. `assay source link <target-workspace>
+  <target-source> [--alias <local-alias>]` writes a thin pointer at
+  `sources/<local-alias>/source.ref.yaml` — schema `assay.source-reference/v1`,
+  fields `workspace` and `source`, nothing else — so a Source that already has a
+  home is reached instead of cloned again. `assay source home <alias>` says where
+  an alias actually lives, for owned and referenced Sources alike, and
+  `assay source unlink <alias>` forgets the local name. See
+  [docs/source-reference.md](../docs/source-reference.md).
+- Read operations on a referenced alias always show the relation. `source status`
+  appends `ref -> ../shared-research#qiskit` to the row; `source log`,
+  `source diff`, and `source sync` print `Relation:` and `Home:` lines. A
+  reference is never displayed as if the workspace owned the material.
+- Write operations through a reference — `sync`, `capture`, `import`, `switch` —
+  land in the home. They print the home's path before starting the work, run
+  under the **home** workspace's mutation coordination rather than the consumer's,
+  and add no confirmation gate. `--json` callers get the same fact from the
+  result's `reference` block. `assay status` counts `references` and
+  `broken references` alongside `checkouts` and `copies`.
+- Deletion stays asymmetric. `unlink` removes the pointer file and the directory
+  it was alone in, never recursively and never through to the home; a shell that
+  somehow holds content keeps it. Aiming `unlink` at a Source this workspace owns
+  is a teaching error, not a delete. Removing an owned Source is only possible in
+  its home workspace.
+- `link` resolves a chain of references at creation time and records the workspace
+  that actually owns `source.yaml`, so runtime resolution is exactly one hop.
+  Linking a target that is already linked is a notice rather than a failure;
+  passing `--alias` explicitly creates a second local name for the same home and
+  reports the existing one.
+- A reference whose home cannot be reached fails locally. `source status` lists it
+  as `broken` with the recorded target and the reason, commands on that alias fail
+  with an error naming the repair, `assay check` reports it as a structure finding
+  without scanning for the home or repairing it, and every other object in the
+  workspace keeps working. A reference shell holding its own `checkout/`,
+  `content/`, `observations/`, or `captures/` is refused the same way, because a
+  pointer plus material is two answers to where the Source lives.
+- A rebuildable clone registry at `~/.assay/clone-registry.json`
+  (`ASSAY_CLONE_REGISTRY` overrides the location): entries of normalized origin
+  URI, home workspace root, alias, and `last_seen`. `source add`, `source link`,
+  and `source sync` write to it best-effort — a write that fails never affects the
+  command. It buys three hints and no decisions: `source add` of an origin that
+  already has a home prints an advisory naming that home and suggesting
+  `source link`, then proceeds; `source link <target-source>` with the workspace
+  omitted links directly when exactly one home verifies and lists the exact paths
+  and stops when several do; a broken-reference error appends the registry's
+  current location when one verifies. Every read re-verifies the workspace and
+  alias and drops stale entries, it stores absolute machine-local paths while ref
+  shells prefer relative ones, and it records homes only — never a consumer's
+  pointer. Deleting the file loses those three hints and no facts.
 - `assay source capture <alias> [--note <text>]` preserves a source's current
   bytes at `captures/<id>/source` with a `sha256-tree-v1` integrity manifest. It
   works for either content mode and is the only routine command that hashes a tree.
@@ -141,6 +189,10 @@ migrates a 0.13.0 workspace in place; there are no compatibility shims behind it
   `sha256-tree` value is written into the note rather than dropped.
 - `sources/<alias>/manifests/` is left on disk untouched. No command reads it any
   more; it is safe to delete once the migrated ledger looks right.
+- A manifest zone purpose that 0.13 shipped verbatim is rewritten to the current
+  vocabulary, so `assay check` stops describing `sources/` as "Living and frozen
+  external evidence" after the concepts behind that sentence were removed. Only
+  exact stock strings are rewritten; a purpose someone edited stays theirs.
 
 It rewrites Source adoption records as follows:
 

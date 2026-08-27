@@ -62,6 +62,7 @@ Task, Roadmap, Spec, and System authority remain independent. Systems registry s
 
 ```text
 assay source add|capture|import|sync|switch|status|log|diff ...
+assay source link|home|unlink ...
 assay source adoption take|list|show|remove ...
 ```
 
@@ -70,6 +71,12 @@ URL is checkout-backed, and `sync`/`switch` move it; a plain directory or archiv
 is copied in once, and `import` replaces that content. Either kind can be
 captured at any time: `capture` preserves the current bytes with an integrity
 hash, which is the only routine command that hashes a tree.
+
+If another workspace already has this material, `link` is the first choice
+instead of `add`. `assay source link <target-workspace> <target-source>` writes a
+pointer under `sources/<alias>/` and every command on that alias reaches the one
+home: reads show the relation, writes land in the home, and `unlink` forgets only
+the local name. See [source-reference.md](source-reference.md).
 
 `sync` and `switch` record what they find rather than refusing it. A checkout
 holding uncommitted work is observed with an `observed with local modifications`
