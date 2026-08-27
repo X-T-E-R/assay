@@ -9,13 +9,10 @@ import type {
   FrameworkStatusResult,
   InitFrameworkResult,
   OperationReport,
-  SourceAdoptionDecisionResult,
-  SourceAdoptionHistoryResult,
-  SourceAdoptionInspection,
   SourceAdoptionListResult,
+  SourceAdoptionPin,
   SourceAdoptionResult,
-  SourceAdoptionStatusResult,
-  SourceAdoptionVerificationResult,
+  SourceAdoptionTakeResult,
   SourceDiffResult,
   SourceLogResult,
   SourceStatusResult,
@@ -246,11 +243,10 @@ export function formatStatusResult(result: FrameworkStatusResult): string {
   const sourceAdoptions = result.sourceAdoptions
     ? [
         "Source adoptions",
-        `  - adoptions: ${result.sourceAdoptions.adoptions}`,
-        `  - targets: ${result.sourceAdoptions.targets}`,
-        `  - accepted baselines: ${result.sourceAdoptions.acceptedTargets}`,
-        `  - draft targets: ${result.sourceAdoptions.draftTargets}`,
-        "  - details: assay source adoption status <adoption>",
+        `  - mappings: ${result.sourceAdoptions.adoptions}`,
+        `  - systems reached: ${result.sourceAdoptions.systems}`,
+        `  - identity pins: ${result.sourceAdoptions.pinned}`,
+        "  - details: assay source adoption list",
       ]
     : [];
 
@@ -360,133 +356,60 @@ export function formatSourceDiffResult(result: SourceDiffResult): string {
   ].join("\n");
 }
 
+/** One line naming the identity the mapping rests on, or that it rests on none. */
+function pinLine(pin: SourceAdoptionPin | undefined): string {
+  if (!pin) {
+    return "Pin: none (alias and date only)";
+  }
+  if (pin.kind === "git-commit") {
+    return `Pin: commit ${pin.commit.slice(0, 12)}${pin.origin ? ` from ${pin.origin}` : ""}`;
+  }
+  return `Pin: ${pin.algorithm}:${pin.value.slice(0, 16)}...`;
+}
+
 export function formatSourceAdoptionList(result: SourceAdoptionListResult): string {
   if (result.adoptions.length === 0) {
     return ["Source adoptions", `Root: ${result.root}`, "(none)"].join("\n");
   }
+  const idWidth = Math.max(...result.adoptions.map((record) => record.id.length), 12);
   return [
     "Source adoptions",
     `Root: ${result.root}`,
-    ...result.adoptions.map((adoption) => {
-      const accepted = adoption.targets.filter((target) => target.baselineDecision).length;
-      return `${adoption.id.padEnd(28)} source=${adoption.sourceAlias} targets=${adoption.targets.length} accepted=${accepted}`;
-    }),
+    ...result.adoptions.map(
+      (record) =>
+        `${record.id.padEnd(idWidth)}  ${record.source.alias}:${record.source.path} -> ${record.target.system}:${record.target.path}  ${record.mode}${record.source.pin ? "  pinned" : ""}`,
+    ),
   ].join("\n");
 }
 
 export function formatSourceAdoption(result: SourceAdoptionResult): string {
+  const record = result.record;
   return [
-    `Source adoption: ${result.definition.id}`,
-    `Title: ${result.definition.title ?? "-"}`,
-    `Definition: ${result.definitionDigest}`,
-    `Source: ${result.definition.source.alias}@${result.definition.source.observation}`,
-    "Targets:",
-    ...result.definition.targets.map((target) => {
-      const baseline = result.state.targets[target.id]?.baseline?.decision_id ?? "draft";
-      return `  - ${target.id}: system=${target.system}, baseline=${baseline}`;
-    }),
-    "Mappings:",
-    ...result.definition.mappings.map(
-      (mapping) =>
-        `  - ${mapping.id}: ${mapping.source.path} -> ${mapping.target.target_id}:${mapping.target.path}`,
-    ),
-    "Evidence policy:",
-    ...(result.definition.evidence.length > 0
-      ? result.definition.evidence.map(
-          (requirement) => `  - ${requirement.id}: ${requirement.policy}`,
-        )
-      : ["  - (none)"]),
+    `Source adoption: ${record.id}`,
+    `Source: ${record.source.alias}:${record.source.path} (${record.source.match})`,
+    `Observation: ${record.source.observation}`,
+    pinLine(record.source.pin),
+    `Target: ${record.target.system}:${record.target.path} (${record.target.match})`,
+    `Resolves: ${result.targetPath ?? "system is not registered"}${result.targetPath && !result.targetPresent ? " (not present)" : ""}`,
+    `Mode: ${record.mode}`,
+    `Note: ${record.note ?? "-"}`,
+    `Recorded: ${record.recorded_on}`,
+    `Record: ${result.path}`,
   ].join("\n");
 }
 
-function sourceAdoptionInspectionLines(
-  inspection: SourceAdoptionInspection,
-  indentation = "",
-): string[] {
-  const lines = [
-    `${indentation}Inspection: ${inspection.id}`,
-    `${indentation}Source: ${inspection.source.alias}@${inspection.source.observation_id}`,
-    `${indentation}Target: ${inspection.target_id} (${inspection.target.working_tree})`,
-    `${indentation}Baseline: ${inspection.baseline_decision_id ?? "draft"}`,
-    `${indentation}Mappings:`,
-    ...inspection.mappings.map((mapping) => {
-      const facts = mapping.facts.length > 0 ? ` [${mapping.facts.join(", ")}]` : "";
-      return `${indentation}  - ${mapping.id}: source=${mapping.source.change}, target=${mapping.target.change}${facts}`;
-    }),
-    `${indentation}Evidence: required=${inspection.required_evidence.length}, advisory=${inspection.advisory_evidence.length}`,
-  ];
-  if (inspection.diagnostics.length > 0) {
-    lines.push(
-      `${indentation}Diagnostics:`,
-      ...inspection.diagnostics.map(
-        (diagnostic) =>
-          `${indentation}  - [${diagnostic.severity}] ${diagnostic.code}${diagnostic.mapping_id ? ` (${diagnostic.mapping_id})` : ""}: ${diagnostic.message}`,
-      ),
-    );
-  }
-  return lines;
-}
-
-export function formatSourceAdoptionInspection(result: {
-  readonly inspection: SourceAdoptionInspection;
-  readonly path: string | null;
-}): string {
+export function formatSourceAdoptionTake(result: SourceAdoptionTakeResult): string {
+  const record = result.record;
   return [
-    ...sourceAdoptionInspectionLines(result.inspection),
-    ...(result.path ? [`Record: ${result.path}`] : []),
-  ].join("\n");
-}
-
-export function formatSourceAdoptionStatus(result: SourceAdoptionStatusResult): string {
-  return [
-    `Source adoption status: ${result.adoptionId}`,
-    `Definition: ${result.definitionDigest}`,
-    ...result.targets.flatMap((target) => [
-      "",
-      `Target: ${target.id} (system: ${target.system})`,
-      ...sourceAdoptionInspectionLines(target.inspection, "  "),
-    ]),
-  ].join("\n");
-}
-
-export function formatSourceAdoptionVerification(result: SourceAdoptionVerificationResult): string {
-  return [
-    `Source adoption verification: ${result.inspection.id}`,
-    `Current: ${result.current ? "yes" : "no"}`,
-    `Required policy: ${result.policy.required_missing.length === 0 ? "satisfied" : "missing"}`,
-    `Evidence records: ${result.evidence.length}`,
-    `Required missing: ${result.policy.required_missing.join(", ") || "-"}`,
-    `Advisory missing: ${result.policy.advisory_missing.join(", ") || "-"}`,
-    `Failed or inconclusive: ${result.policy.failed.join(", ") || "-"}`,
-    ...result.diagnostics.map(
-      (diagnostic) => `[${diagnostic.severity}] ${diagnostic.code}: ${diagnostic.message}`,
-    ),
-  ].join("\n");
-}
-
-export function formatSourceAdoptionDecision(result: SourceAdoptionDecisionResult): string {
-  return [
-    `Source adoption decision: ${result.decision.outcome}`,
-    `Decision: ${result.decision.id}`,
-    `Adoption: ${result.decision.adoption_id}`,
-    `Target: ${result.decision.target_id}`,
-    `Inspection: ${result.decision.inspection_id}`,
-    `Baseline: ${result.decision.baseline_after?.decision_id ?? "unchanged"}`,
+    `Recorded source adoption: ${result.adoptionId}`,
+    `Mapping: ${record.source.alias}:${record.source.path} -> ${record.target.system}:${record.target.path} (${record.mode}, match ${record.source.match})`,
+    `Observation: ${record.source.observation}`,
+    pinLine(record.source.pin),
+    ...(result.targetPresent
+      ? []
+      : [`Target: not present in ${record.target.system} yet; the mapping is recorded anyway`]),
     `Record: ${result.path}`,
     ...(result.eventFile ? [`Event: ${result.eventFile}`] : []),
-  ].join("\n");
-}
-
-export function formatSourceAdoptionHistory(result: SourceAdoptionHistoryResult): string {
-  if (result.decisions.length === 0) {
-    return [`Source adoption history: ${result.adoptionId}`, "(none)"].join("\n");
-  }
-  return [
-    `Source adoption history: ${result.adoptionId}`,
-    ...result.decisions.map(
-      (decision) =>
-        `${decision.decided_at} ${decision.outcome.padEnd(8)} ${decision.target_id.padEnd(20)} ${decision.id}${decision.reason ? ` - ${decision.reason}` : ""}`,
-    ),
   ].join("\n");
 }
 

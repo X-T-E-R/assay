@@ -201,19 +201,22 @@ const SEMANTICS: readonly ObjectSemantics[] = [
       "Months later the question is which of our files came from upstream and whether upstream has moved since. A mapping answers that without reading prose.",
       "`assay status` reports how many mappings an upstream change reaches, which is the signal worth acting on.",
       "Taking material pins the source identity it came from: the commit for a Git source, a computed content hash for anything else.",
+      "One record is one mapping. An intent that moved three paths is three records, and `--mode adapt|copy` says whether what landed was reworked or carried over verbatim.",
     ],
     whenNotToUse: [
       "Not for material that was only read. Record what actually landed in a system.",
       "Not as a gate on the target project's edits, tests, commits, or releases. Those stay target-side.",
     ],
     commonMisuses: [
-      "Attaching inspections, evidence, and decisions to satisfy the shape rather than because the decision needed them.",
+      "Looking for an approval step. The decision lives in `analysis close --exit` and in the adoption note; the record only says where material landed.",
       "Expecting Assay to edit, merge, or restore target files. It records the relationship; the target project acts.",
+      "Removing a mapping to undo an edit. `remove` forgets the record and leaves the target exactly as it is.",
     ],
     commands: [
       "assay source adoption take <alias>:<path> --into <system>:<path>",
       "assay source adoption list",
-      "assay source adoption status <adoption>",
+      "assay source adoption show <adoption>",
+      "assay source adoption remove <adoption>",
     ],
   },
   {
@@ -266,7 +269,7 @@ const SEMANTICS: readonly ObjectSemantics[] = [
       "which directories in this workspace are systems being built, and which one is primary",
     antiRule: "exactly one system is primary, and the workspace root is not a system",
     whyItExists: [
-      "Adoption targets, status, and checks address systems by their registered selector, so the selector has to exist first.",
+      "Source adoptions, status, and checks address systems by their registered selector, so the selector has to exist first.",
       "The registry is `.assay/systems-registry.json` and only commands write it. A `system.yaml` file is ordinary user content.",
     ],
     whenNotToUse: [

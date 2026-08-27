@@ -142,9 +142,10 @@ export interface FrameworkStatusSources {
 
 export interface FrameworkStatusSourceAdoptions {
   readonly adoptions: number;
-  readonly targets: number;
-  readonly acceptedTargets: number;
-  readonly draftTargets: number;
+  /** Distinct systems material landed in. */
+  readonly systems: number;
+  /** Records carrying a tier-1 identity pin. */
+  readonly pinned: number;
 }
 
 export interface GetFrameworkStatusOptions {

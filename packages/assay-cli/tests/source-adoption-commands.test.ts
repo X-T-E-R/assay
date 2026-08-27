@@ -23,7 +23,7 @@ afterEach(async () => {
   await tempDirs.cleanup();
 });
 
-async function createFixture(name: string, requiredEvidence = false) {
+async function createFixture(name: string) {
   const root = await createInitializedCliWorkspace({
     tempDirs,
     runner: cliRunner,
@@ -32,6 +32,7 @@ async function createFixture(name: string, requiredEvidence = false) {
   const source = path.join(await tempDirs.createTempDir(), "upstream");
   await mkdir(path.join(source, "src"), { recursive: true });
   await writeFile(path.join(source, "src", "alpha.txt"), "alpha-v1\n", "utf8");
+  await writeFile(path.join(source, "src", "beta.txt"), "beta-v1\n", "utf8");
   const added = await cliRunner.runCli(["source", "add", source, "upstream", "--root", root]);
   expect(added.exitCode).toBe(0);
   const observation = added.stdout.match(/observations\/([^/\s]+)\.yaml/)?.[1];
@@ -54,200 +55,14 @@ async function createFixture(name: string, requiredEvidence = false) {
   ]);
   expect(registeredSystem.exitCode).toBe(0);
 
-  const definition = path.join(await tempDirs.createTempDir(), "source-adoption.json");
-  await writeFile(
-    definition,
-    `${JSON.stringify(
-      {
-        schema: "assay.source-adoption-definition/v1",
-        id: "upstream-product",
-        source: { alias: "upstream", observation },
-        targets: [{ id: "product", system: "product" }],
-        mappings: [
-          {
-            id: "alpha",
-            source: { path: "src/alpha.txt" },
-            target: { target_id: "product", path: "integrations/alpha.txt" },
-            evidence: requiredEvidence ? ["focused-test"] : [],
-          },
-        ],
-        evidence: requiredEvidence ? [{ id: "focused-test", policy: "required" }] : [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return { root, definition };
+  return { root, observation: observation as string };
 }
 
 describe("assay source adoption CLI", () => {
   it(
-    "registers, inspects, decides, reports status, and keeps history",
+    "takes, lists, shows, and removes a mapping",
     async () => {
       const fixture = await createFixture("SourceAdoptionCli");
-      const registered = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "register",
-        "--file",
-        fixture.definition,
-        "--root",
-        fixture.root,
-        "--json",
-      ]);
-      expect(registered.exitCode).toBe(0);
-      expect(JSON.parse(registered.stdout).adoptionId).toBe("upstream-product");
-
-      const inspected = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "inspect",
-        "upstream-product",
-        "--target",
-        "product",
-        "--root",
-        fixture.root,
-        "--json",
-      ]);
-      expect(inspected.exitCode).toBe(0);
-      const inspectionId = JSON.parse(inspected.stdout).inspection.id as string;
-      expect(inspectionId).toMatch(/^inspection-/);
-
-      const decision = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "decide",
-        "upstream-product",
-        "--target",
-        "product",
-        "--outcome",
-        "accept",
-        "--inspection",
-        inspectionId,
-        "--root",
-        fixture.root,
-        "--json",
-      ]);
-      expect(decision.exitCode).toBe(0);
-      expect(JSON.parse(decision.stdout).decision.outcome).toBe("accept");
-
-      const status = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "status",
-        "upstream-product",
-        "--root",
-        fixture.root,
-      ]);
-      expect(status.exitCode).toBe(0);
-      expect(status.stdout).toContain("source=no-direct-change");
-      expect(status.stdout).toContain("target=unchanged");
-
-      const history = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "history",
-        "upstream-product",
-        "--root",
-        fixture.root,
-      ]);
-      expect(history.exitCode).toBe(0);
-      expect(history.stdout).toContain("accept");
-    },
-    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
-  );
-
-  it(
-    "blocks only explicitly required evidence and accepts a bound receipt",
-    async () => {
-      const fixture = await createFixture("SourceAdoptionCliEvidence", true);
-      await cliRunner.runCli([
-        "source",
-        "adoption",
-        "register",
-        "--file",
-        fixture.definition,
-        "--root",
-        fixture.root,
-      ]);
-      const inspected = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "inspect",
-        "upstream-product",
-        "--target",
-        "product",
-        "--root",
-        fixture.root,
-        "--json",
-      ]);
-      const inspectionId = JSON.parse(inspected.stdout).inspection.id as string;
-
-      const blocked = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "decide",
-        "upstream-product",
-        "--target",
-        "product",
-        "--outcome",
-        "accept",
-        "--inspection",
-        inspectionId,
-        "--root",
-        fixture.root,
-      ]);
-      expect(blocked.exitCode).toBe(1);
-      expect(blocked.stderr).toContain("required Source adoption evidence has not passed");
-
-      const evidenceFile = path.join(await tempDirs.createTempDir(), "evidence.yaml");
-      await writeFile(
-        evidenceFile,
-        [
-          "schema: assay.source-adoption-evidence-input/v1",
-          "check_id: focused-test",
-          "result: passed",
-          "producer:",
-          "  id: fixture",
-          "",
-        ].join("\n"),
-        "utf8",
-      );
-      const evidence = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "evidence",
-        "add",
-        "upstream-product",
-        inspectionId,
-        "--file",
-        evidenceFile,
-        "--root",
-        fixture.root,
-      ]);
-      expect(evidence.exitCode).toBe(0);
-      expect(evidence.stdout).toContain("Result: passed");
-
-      const verified = await cliRunner.runCli([
-        "source",
-        "adoption",
-        "verify",
-        "upstream-product",
-        inspectionId,
-        "--root",
-        fixture.root,
-      ]);
-      expect(verified.exitCode).toBe(0);
-      expect(verified.stdout).toContain("Required policy: satisfied");
-    },
-    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
-  );
-
-  it(
-    "takes a single mapping without a definition file and parses colons safely",
-    async () => {
-      const fixture = await createFixture("SourceAdoptionTakeCli");
 
       const taken = await cliRunner.runCli([
         "source",
@@ -258,6 +73,8 @@ describe("assay source adoption CLI", () => {
         "product:integrations/alpha.txt",
         "--mode",
         "adapt",
+        "--note",
+        "Kept the parser shape.",
         "--root",
         fixture.root,
         "--json",
@@ -265,13 +82,37 @@ describe("assay source adoption CLI", () => {
       expect(taken.exitCode).toBe(0);
       const payload = JSON.parse(taken.stdout);
       expect(payload.adoptionId).toBe("upstream-product-src-alpha-txt");
-      expect(payload.definition.mappings[0]).toMatchObject({
+      expect(payload.record).toMatchObject({
         mode: "adapt",
-        source: { path: "src/alpha.txt", match: "exact" },
-        target: { target_id: "product", path: "integrations/alpha.txt", match: "exact" },
+        note: "Kept the parser shape.",
+        source: { alias: "upstream", path: "src/alpha.txt", match: "exact" },
+        target: { system: "product", path: "integrations/alpha.txt", match: "exact" },
       });
+      expect(payload.record.source.pin.kind).toBe("content-hash");
 
-      // The adoption is a first-class one: the ordinary verbs read it.
+      const second = await cliRunner.runCli([
+        "source",
+        "adoption",
+        "take",
+        "upstream:src/beta.txt",
+        "--into",
+        "product:integrations/beta.txt",
+        "--root",
+        fixture.root,
+      ]);
+      expect(second.exitCode).toBe(0);
+      // The default mode is descriptive metadata, not ceremony: it is recorded
+      // without being asked for.
+      expect(second.stdout).toContain("(adapt, match exact)");
+      // The target file does not exist, and the mapping is recorded anyway.
+      expect(second.stdout).toContain("not present in product yet");
+
+      const listed = await cliRunner.runCli(["source", "adoption", "list", "--root", fixture.root]);
+      expect(listed.exitCode).toBe(0);
+      expect(listed.stdout).toContain("upstream:src/alpha.txt -> product:integrations/alpha.txt");
+      expect(listed.stdout).toContain("upstream:src/beta.txt -> product:integrations/beta.txt");
+      expect(listed.stdout).toContain("pinned");
+
       const shown = await cliRunner.runCli([
         "source",
         "adoption",
@@ -281,10 +122,56 @@ describe("assay source adoption CLI", () => {
         fixture.root,
       ]);
       expect(shown.exitCode).toBe(0);
-      expect(shown.stdout).toContain("src/alpha.txt -> product:integrations/alpha.txt");
+      expect(shown.stdout).toContain("Source: upstream:src/alpha.txt (exact)");
+      expect(shown.stdout).toContain("Target: product:integrations/alpha.txt (exact)");
+      expect(shown.stdout).toContain("Resolves: systems/product/integrations/alpha.txt");
+      expect(shown.stdout).toContain("Note: Kept the parser shape.");
+
+      const removed = await cliRunner.runCli([
+        "source",
+        "adoption",
+        "remove",
+        payload.adoptionId,
+        "--root",
+        fixture.root,
+      ]);
+      expect(removed.exitCode).toBe(0);
+      expect(removed.stdout).toContain(`Removed source adoption: ${payload.adoptionId}`);
+      expect(removed.stdout).toContain(
+        "Was: upstream:src/alpha.txt -> product:integrations/alpha.txt",
+      );
+
+      const afterRemove = await cliRunner.runCli([
+        "source",
+        "adoption",
+        "list",
+        "--root",
+        fixture.root,
+        "--json",
+      ]);
+      expect(JSON.parse(afterRemove.stdout).adoptions).toHaveLength(1);
+
+      const missing = await cliRunner.runCli([
+        "source",
+        "adoption",
+        "show",
+        payload.adoptionId,
+        "--root",
+        fixture.root,
+      ]);
+      expect(missing.exitCode).not.toBe(0);
+      expect(missing.stderr).toContain("not found");
+    },
+    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
+  );
+
+  it(
+    "parses colons safely in both locators",
+    async () => {
+      const fixture = await createFixture("SourceAdoptionTakeCli");
 
       // A Windows-style absolute path is refused by name, never split at its
-      // drive colon into a different alias and path.
+      // drive colon into a different system and path.
       const windowsTarget = await cliRunner.runCli([
         "source",
         "adoption",
@@ -329,25 +216,76 @@ describe("assay source adoption CLI", () => {
   );
 
   it(
-    "exposes Source adoption commands in help",
+    "offers --id when the derived id is already taken",
     async () => {
-      const root = await createInitializedCliWorkspace({
-        tempDirs,
-        runner: cliRunner,
-        directoryName: "SourceAdoptionHelp",
-      });
+      const fixture = await createFixture("SourceAdoptionIdCli");
+      const first = await cliRunner.runCli([
+        "source",
+        "adoption",
+        "take",
+        "upstream:src/alpha.txt",
+        "--into",
+        "product:integrations/alpha.txt",
+        "--root",
+        fixture.root,
+      ]);
+      expect(first.exitCode).toBe(0);
+
+      const collision = await cliRunner.runCli([
+        "source",
+        "adoption",
+        "take",
+        "upstream:src/alpha.txt",
+        "--into",
+        "product:integrations/alpha-copy.txt",
+        "--root",
+        fixture.root,
+      ]);
+      expect(collision.exitCode).not.toBe(0);
+      expect(collision.stderr).toContain("--id <adoption-id>");
+
+      const resolved = await cliRunner.runCli([
+        "source",
+        "adoption",
+        "take",
+        "upstream:src/alpha.txt",
+        "--into",
+        "product:integrations/alpha-copy.txt",
+        "--id",
+        "upstream-product-alpha-copy",
+        "--root",
+        fixture.root,
+      ]);
+      expect(resolved.exitCode).toBe(0);
+      expect(resolved.stdout).toContain("upstream-product-alpha-copy");
+    },
+    SOURCE_ADOPTION_CLI_TIMEOUT_MS,
+  );
+
+  it(
+    "exposes exactly the four adoption commands in help",
+    async () => {
       const rootHelp = await cliRunner.runCli(["--help"]);
       expect(rootHelp.exitCode).toBe(0);
       expect(rootHelp.stdout).not.toContain("donor");
       expect(rootHelp.stdout).toContain("source");
 
-      expect(root).toBeTruthy();
       const adoptionHelp = await cliRunner.runCli(["source", "adoption", "--help"]);
       expect(adoptionHelp.exitCode).toBe(0);
-      expect(adoptionHelp.stdout).toContain("take");
-      expect(adoptionHelp.stdout).toContain("inspect");
-      expect(adoptionHelp.stdout).toContain("decide");
-      expect(adoptionHelp.stdout).toContain("evidence");
+      // Read the command names out of the Commands: block rather than searching
+      // the whole help text, which legitimately says "registered system".
+      const commands = adoptionHelp.stdout
+        .split(/^Commands:\r?\n/m)[1]
+        ?.split(/\r?\n/)
+        // A command entry starts at column 2; a wrapped description is indented
+        // to the description column.
+        .filter((line) => /^ {2}\S/.test(line))
+        .map((line) => line.trim().split(/\s+/)[0])
+        .filter((name): name is string => Boolean(name) && name !== "help");
+      // The inspection/evidence/decision workflow is gone, not hidden: a
+      // single-user workbench records decisions in `analysis close --exit` and
+      // in the adoption note.
+      expect(commands, adoptionHelp.stdout).toEqual(["take", "list", "show", "remove"]);
     },
     SOURCE_ADOPTION_CLI_TIMEOUT_MS,
   );

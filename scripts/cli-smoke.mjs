@@ -107,8 +107,7 @@ async function main() {
       ["source", "add", adoptionSource, "adoption-source"],
       smokeOptions,
     );
-    const observation = sourceAdd.match(/observations\/([^/\s]+)\.yaml/)?.[1];
-    if (!observation) {
+    if (!sourceAdd.match(/observations\/([^/\s]+)\.yaml/)?.[1]) {
       fail("CLI source adoption source add did not report an observation id.");
     }
     mkdirSync(path.join(demo, "systems", "product", "adopted"), { recursive: true });
@@ -122,56 +121,42 @@ async function main() {
       ["system", "register", "systems/product", "--name", "product", "--vcs", "none", "--primary"],
       smokeOptions,
     );
-    const adoptionDefinition = path.join(tempRoot, "source-adoption.json");
-    writeFileSync(
-      adoptionDefinition,
-      `${JSON.stringify(
-        {
-          schema: "assay.source-adoption-definition/v1",
-          id: "smoke-adoption",
-          source: { alias: "adoption-source", observation },
-          targets: [{ id: "product", system: "product" }],
-          mappings: [
-            {
-              id: "feature",
-              source: { path: "src/feature.txt" },
-              target: { target_id: "product", path: "adopted/feature.txt" },
-            },
-          ],
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    run(
-      "CLI source adoption register",
-      ["source", "adoption", "register", "--file", adoptionDefinition],
-      smokeOptions,
-    );
-    run(
-      "CLI source adoption decide",
+    const adoptionTake = run(
+      "CLI source adoption take",
       [
         "source",
         "adoption",
-        "decide",
-        "smoke-adoption",
-        "--target",
-        "product",
-        "--outcome",
-        "accept",
+        "take",
+        "adoption-source:src/feature.txt",
+        "--into",
+        "product:adopted/feature.txt",
+        "--note",
+        "Smoke adoption.",
       ],
       smokeOptions,
     );
-    const adoptionStatus = run(
-      "CLI source adoption status",
-      ["source", "adoption", "status", "smoke-adoption"],
+    const adoptionId = adoptionTake.match(/Recorded source adoption: (\S+)/)?.[1];
+    if (!adoptionId) {
+      fail("CLI source adoption take did not report the recorded adoption id.");
+    }
+    const adoptionList = run(
+      "CLI source adoption list",
+      ["source", "adoption", "list"],
       smokeOptions,
     );
-    if (!adoptionStatus.includes("source=no-direct-change")) {
-      fail("CLI source adoption status did not report the accepted source baseline.");
+    if (!adoptionList.includes("adoption-source:src/feature.txt -> product:adopted/feature.txt")) {
+      fail("CLI source adoption list did not report the recorded mapping.");
     }
-    run("CLI check with Source adoption state", ["check"], smokeOptions);
+    const adoptionShow = run(
+      "CLI source adoption show",
+      ["source", "adoption", "show", adoptionId],
+      smokeOptions,
+    );
+    if (!adoptionShow.includes("Resolves: systems/product/adopted/feature.txt")) {
+      fail("CLI source adoption show did not resolve the target path.");
+    }
+    run("CLI check with Source adoption record", ["check"], smokeOptions);
+    run("CLI source adoption remove", ["source", "adoption", "remove", adoptionId], smokeOptions);
 
     const beforeTrack = run(
       "CLI workspace list before track",

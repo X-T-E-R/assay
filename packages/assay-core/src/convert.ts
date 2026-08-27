@@ -36,7 +36,7 @@ import type {
   WorkspaceLayout,
 } from "./schemas/index.js";
 import { stringifySortedJson, toPosixPath } from "./serialization.js";
-import { getSourceAdoption, listSourceAdoptions } from "./source-adoptions.js";
+import { listSourceAdoptions } from "./source-adoptions.js";
 import { resolveSourceObservation } from "./sources.js";
 import { withSpecGlobalCoordination } from "./spec.js";
 import {
@@ -77,44 +77,38 @@ async function preflightConversionSemantics(
   const targetRegistry: SystemsRegistry = { ...input.sourceRegistry, systems };
 
   const adoptions = await listSourceAdoptions({ root: input.sourceRoot });
-  for (const entry of adoptions.adoptions) {
-    const { definition } = await getSourceAdoption({
-      root: input.sourceRoot,
-      adoptionId: entry.id,
-    });
+  for (const record of adoptions.adoptions) {
     await resolveSourceObservation({
       root: input.sourceRoot,
-      alias: definition.source.alias,
-      observation: definition.source.observation,
+      alias: record.source.alias,
+      observation: record.source.observation,
     });
-    for (const target of definition.targets) {
-      const sourceSystem = systemRecordForSelector(input.sourceRegistry, target.system);
-      const targetSystem = systemRecordForSelector(targetRegistry, target.system);
-      if (!sourceSystem || !targetSystem) {
-        throw new FrameworkError(
-          `source adoption '${definition.id}' targets unknown system '${target.system}'`,
-        );
-      }
-      const current = resolveRegistryPath(input.sourceRoot, sourceSystem.path);
-      let info: Stats;
-      try {
-        info = await lstat(current);
-      } catch {
-        throw new FrameworkError(
-          `source adoption '${definition.id}' target system '${target.system}' does not resolve before conversion: ${sourceSystem.path}`,
-        );
-      }
-      if (!info.isDirectory() || info.isSymbolicLink()) {
-        throw new FrameworkError(
-          `source adoption '${definition.id}' target system '${target.system}' is not a real directory: ${sourceSystem.path}`,
-        );
-      }
-      const predicted = predictedConvertedSystemAbsolutePath(sourceSystem, targetSystem, input);
-      if (!predicted) {
-        throw new FrameworkError(
-          `source adoption '${definition.id}' target system '${target.system}' cannot preserve its semantic path during conversion`,
-        );
-      }
+    const selector = record.target.system;
+    const sourceSystem = systemRecordForSelector(input.sourceRegistry, selector);
+    const targetSystem = systemRecordForSelector(targetRegistry, selector);
+    if (!sourceSystem || !targetSystem) {
+      throw new FrameworkError(
+        `source adoption '${record.id}' targets unknown system '${selector}'`,
+      );
+    }
+    const current = resolveRegistryPath(input.sourceRoot, sourceSystem.path);
+    let info: Stats;
+    try {
+      info = await lstat(current);
+    } catch {
+      throw new FrameworkError(
+        `source adoption '${record.id}' target system '${selector}' does not resolve before conversion: ${sourceSystem.path}`,
+      );
+    }
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new FrameworkError(
+        `source adoption '${record.id}' target system '${selector}' is not a real directory: ${sourceSystem.path}`,
+      );
+    }
+    if (!predictedConvertedSystemAbsolutePath(sourceSystem, targetSystem, input)) {
+      throw new FrameworkError(
+        `source adoption '${record.id}' target system '${selector}' cannot preserve its semantic path during conversion`,
+      );
     }
   }
   return targetRegistry;

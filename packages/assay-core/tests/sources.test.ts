@@ -17,11 +17,11 @@ import {
   importSourceContent,
   initFramework,
   readSourceContentListing,
-  registerSourceAdoption,
   registerSystem,
   resolveSourceObservation,
   switchSource,
   syncSource,
+  takeSourceAdoptionMaterial,
 } from "../src/index.js";
 
 const tempRoots: string[] = [];
@@ -290,25 +290,17 @@ describe("source observations", () => {
     await mkdir(systemRoot, { recursive: true });
     await writeFile(path.join(systemRoot, "README.md"), "# Product\n", "utf8");
     await registerSystem(root, { name: "product", path: "systems/product", vcs: "none" });
-    const adoption = await registerSourceAdoption({
+    const adoption = await takeSourceAdoptionMaterial({
       root,
-      definition: {
-        schema: "assay.source-adoption-definition/v1",
-        id: "copied-product",
-        source: { alias: "copied-source", observation: added.observation.observation_id },
-        targets: [{ id: "product", system: "product" }],
-        mappings: [
-          {
-            id: "readme",
-            source: { path: "README.md" },
-            target: { target_id: "product", path: "README.md" },
-            evidence: [],
-          },
-        ],
-        evidence: [],
-      },
+      sourceAlias: "copied-source",
+      sourcePath: "README.md",
+      targetSystem: "product",
+      targetPath: "README.md",
     });
-    expect(adoption.definition.source.alias).toBe("copied-source");
+    expect(adoption.record.source.alias).toBe("copied-source");
+    expect(adoption.record.source.observation).toBe(added.observation.observation_id);
+    // Copied content still gets a tier-1 pin, from its content fingerprint.
+    expect(adoption.record.source.pin?.kind).toBe("content-hash");
   });
 
   it("rejects retired lineage and observation fields", async () => {

@@ -16,8 +16,10 @@ import {
   getSourceLog,
   getSourceStatus,
   initFramework,
+  listSourceAdoptions,
   loadManifest,
   readSourceContentListing,
+  registerSystem,
   syncSource,
 } from "../src/index.js";
 
@@ -151,6 +153,117 @@ async function legacyWorkspace(name: string): Promise<{
     frozenObservation,
     frozenFingerprint: captured.capture.value,
   };
+}
+
+/**
+ * Hand-write the 0.13 adoption store: a two-target definition with three
+ * mappings, a decided target, and the inspection/evidence/decision chain that
+ * accumulated around it.
+ *
+ * Unlike the source records above, there is no 0.14 writer to wind back — the
+ * whole shape is retired — so the fixture is written out directly. The migration
+ * proof against the real 0.13 CLI lives outside the test suite.
+ */
+async function writeLegacyAdoption(
+  root: string,
+  observation: string,
+): Promise<{ readonly digest: string; readonly decisionId: string }> {
+  const entryRoot = path.join(root, ".assay", "source-adoptions", "upstream-product");
+  const digest = "b".repeat(64);
+  const decisionId = "decision-000000000000000000000001";
+  const inspectionId = "inspection-000000000000000000000001";
+  const definition = {
+    schema: "assay.source-adoption-definition/v1",
+    id: "upstream-product",
+    title: "Upstream adoption",
+    source: { alias: "live", observation },
+    targets: [
+      { id: "product", system: "product", adapter: "local-system/v1" },
+      { id: "docs", system: "docs", adapter: "local-system/v1" },
+    ],
+    mappings: [
+      {
+        id: "readme",
+        kind: "documentation",
+        mode: "copy",
+        source: { path: "README.md", match: "exact" },
+        target: { target_id: "product", path: "README.md", match: "exact" },
+        evidence: [],
+      },
+      {
+        id: "src",
+        kind: "source-code",
+        mode: "adapt",
+        source: { path: "src", match: "prefix" },
+        target: { target_id: "product", path: "vendor", match: "prefix" },
+        evidence: [],
+      },
+      {
+        id: "docs-readme",
+        kind: "documentation",
+        mode: "adapt",
+        source: { path: "README.md", match: "exact" },
+        target: { target_id: "docs", path: "upstream.md", match: "exact" },
+        evidence: [],
+      },
+    ],
+    evidence: [],
+  };
+  const baseline = {
+    decision_id: decisionId,
+    definition_digest: digest,
+    source: {
+      alias: "live",
+      lineage_id: "live",
+      observation_id: observation,
+      manifest_fingerprint: "c".repeat(64),
+      vcs_commit: "d".repeat(40),
+      locators: {},
+    },
+    target: { system: "product", registered_path: "systems/product", locators: {} },
+    accepted_at: "2026-07-20T10:00:00.000Z",
+  };
+
+  for (const [relative, value] of [
+    [path.join("definitions", `${digest}.json`), definition],
+    [
+      "state.json",
+      {
+        schema: "assay.source-adoption-state/v1",
+        adoption_id: "upstream-product",
+        current_definition: digest,
+        generation: 2,
+        targets: { product: { baseline }, docs: { baseline: null } },
+        decisions: [decisionId],
+        updated_at: "2026-07-20T10:00:00.000Z",
+      },
+    ],
+    [
+      path.join("decisions", `${decisionId}.json`),
+      {
+        schema: "assay.source-adoption-decision/v1",
+        id: decisionId,
+        adoption_id: "upstream-product",
+        target_id: "product",
+        outcome: "accept",
+        reason: "Reviewed the parser rewrite by hand.",
+        inspection_id: inspectionId,
+      },
+    ],
+    [
+      path.join("inspections", `${inspectionId}.json`),
+      { schema: "assay.source-adoption-inspection/v1", id: inspectionId },
+    ],
+    [
+      path.join("evidence", "evidence-000000000000000000000001.json"),
+      { schema: "assay.source-adoption-evidence/v1", check_id: "focused-test", result: "passed" },
+    ],
+  ] as const) {
+    const file = path.join(entryRoot, relative);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  }
+  return { digest, decisionId };
 }
 
 /** Strip the 0.14-only fields so the record on disk looks like 0.13 wrote it. */
@@ -314,6 +427,94 @@ describe("workspace migration into 0.14", () => {
 
       // The 0.13 manifests are left on disk rather than deleted behind the user.
       expect(await exists(path.join(legacy.root, "sources", "froze", "manifests"))).toBe(true);
+    },
+    GIT_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "collapses each adoption mapping into its own record and keeps the last decision as a note",
+    async () => {
+      const legacy = await legacyWorkspace("MigrationAdoption");
+      await writeLegacyAdoption(legacy.root, legacy.checkoutObservation);
+
+      const analysis = await analyzeWorkspaceMigration(legacy.root);
+      expect(analysis.steps.map((step) => step.id)).toContain("source-adoptions-collapse");
+
+      const result = await applyWorkspaceMigration({ root: legacy.root });
+      const report = result.changes.join("\n");
+      // The report names what it rewrote and what it dropped, per adoption.
+      expect(report).toContain(
+        ".assay/source-adoptions/upstream-product: 3 mapping(s) -> upstream-product-readme, upstream-product-src, upstream-product-docs-readme",
+      );
+      expect(report).toContain("dropped 1 inspections, 1 evidence records, 1 decisions");
+      expect(report).toContain("retired directory left on disk");
+
+      const storeRoot = path.join(legacy.root, ".assay", "source-adoptions");
+      const record = async (id: string) =>
+        JSON.parse(await readFile(path.join(storeRoot, `${id}.json`), "utf8"));
+
+      const readme = await record("upstream-product-readme");
+      expect(readme).toMatchObject({
+        schema: "assay.source-adoption/v1",
+        id: "upstream-product-readme",
+        // The descriptive mode survives: it is not part of the removed ceremony.
+        mode: "copy",
+        source: { alias: "live", path: "README.md", match: "exact" },
+        target: { system: "product", path: "README.md", match: "exact" },
+        recorded_on: "2026-07-20T10:00:00.000Z",
+      });
+      // The accepted baseline knew which commit it accepted, so that becomes the
+      // tier-1 pin. 0.13 never recorded where the commit came from.
+      expect(readme.source.pin).toEqual({
+        kind: "git-commit",
+        commit: "d".repeat(40),
+        origin: null,
+      });
+      expect(readme.note).toContain("Upstream adoption");
+      expect(readme.note).toContain(
+        "last 0.13.0 decision: accept — Reviewed the parser rewrite by hand.",
+      );
+      expect(readme.note).toContain(
+        "migrated from 0.13.0 adoption upstream-product mapping readme",
+      );
+
+      // A prefix mapping stays a prefix mapping on both ends.
+      expect((await record("upstream-product-src")).source.match).toBe("prefix");
+      expect((await record("upstream-product-src")).target).toMatchObject({
+        system: "product",
+        path: "vendor",
+        match: "prefix",
+      });
+
+      // The second target was never decided, so it carries no pin and no
+      // decision sentence — it was a draft, and it migrates as one.
+      const docs = await record("upstream-product-docs-readme");
+      expect(docs.target).toMatchObject({ system: "docs", path: "upstream.md" });
+      expect(docs.source.pin).toBeUndefined();
+      expect(docs.note).not.toContain("decision:");
+
+      // The retired directory is left alone rather than deleted behind the user,
+      // and its files are not mistaken for records.
+      expect(await exists(path.join(storeRoot, "upstream-product", "state.json"))).toBe(true);
+
+      // Both systems are registrable again, and the migrated records read
+      // through the ordinary surface.
+      for (const [name, relative] of [
+        ["product", "systems/product"],
+        ["docs", "systems/docs"],
+      ] as const) {
+        await mkdir(path.join(legacy.root, relative), { recursive: true });
+        await writeFile(path.join(legacy.root, relative, "README.md"), `# ${name}\n`, "utf8");
+        await registerSystem(legacy.root, { name, path: relative, vcs: "none" });
+      }
+      expect(
+        (await listSourceAdoptions({ root: legacy.root })).adoptions.map((entry) => entry.id),
+      ).toEqual([
+        "upstream-product-docs-readme",
+        "upstream-product-readme",
+        "upstream-product-src",
+      ]);
+      expect(await checkFramework({ root: legacy.root })).toMatchObject({ ok: true });
     },
     GIT_INTEGRATION_TIMEOUT_MS,
   );

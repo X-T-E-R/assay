@@ -36,7 +36,11 @@ export type UpstreamSignal =
   | "not-checked";
 
 export interface UpstreamImpact {
-  /** Source adoption mappings whose source locator the changed paths touch. */
+  /**
+   * Source adoption records whose source locator the changed paths touch. One
+   * record is one mapping, so this is both the record count and the number of
+   * adopted places the change reaches.
+   */
   readonly mappings: number;
   readonly adoptions: readonly string[];
 }

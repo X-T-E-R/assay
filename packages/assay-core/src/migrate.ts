@@ -2,9 +2,10 @@ import { cp, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/p
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import { CURRENT_VERSION, MANIFEST_FILE, MIGRATABLE_VERSION } from "./constants.js";
+import { CURRENT_VERSION, MANAGED_DIR, MANIFEST_FILE, MIGRATABLE_VERSION } from "./constants.js";
 import { FrameworkError, WorkspaceCutoverRequiredError } from "./errors.js";
 import { stringifySortedJson } from "./serialization.js";
+import { SOURCE_ADOPTION_SCHEMA, sourceAdoptionRecordSchema } from "./source-adoption/schemas.js";
 
 /**
  * In-place migration from the previous release's on-disk shape.
@@ -442,8 +443,280 @@ const sourceContentModeStep: WorkspaceMigrationStep = {
   },
 };
 
+async function readJsonRecord(file: string): Promise<Record<string, unknown> | null> {
+  if (!(await exists(file))) return null;
+  try {
+    const parsed = JSON.parse(await readFile(file, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch (error) {
+    throw new FrameworkError(`Source adoption record is not valid JSON: ${file}`, { cause: error });
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+async function countJsonFiles(directory: string): Promise<number> {
+  if (!(await exists(directory))) return 0;
+  return (await readdir(directory, { withFileTypes: true })).filter(
+    (entry) => entry.isFile() && entry.name.endsWith(".json"),
+  ).length;
+}
+
+/** A 0.13 mapping, paired with the target definition it points at. */
+interface LegacyMapping {
+  readonly id: string;
+  readonly mode: string;
+  readonly sourcePath: string;
+  readonly sourceMatch: string;
+  readonly targetId: string;
+  readonly targetSystem: string;
+  readonly targetPath: string;
+  readonly targetMatch: string;
+}
+
+function legacyMappings(definition: Record<string, unknown>): LegacyMapping[] {
+  const targets = new Map<string, string>();
+  for (const entry of asArray(definition.targets)) {
+    const target = asRecord(entry);
+    const id = asString(target?.id);
+    const system = asString(target?.system);
+    if (id && system) targets.set(id, system);
+  }
+  const mappings: LegacyMapping[] = [];
+  for (const entry of asArray(definition.mappings)) {
+    const mapping = asRecord(entry);
+    const id = asString(mapping?.id);
+    const source = asRecord(mapping?.source);
+    const target = asRecord(mapping?.target);
+    const targetId = asString(target?.target_id);
+    const sourcePath = asString(source?.path);
+    const targetPath = asString(target?.path);
+    if (!id || !targetId || !sourcePath || !targetPath) continue;
+    const system = targets.get(targetId);
+    if (!system) continue;
+    mappings.push({
+      id,
+      mode: asString(mapping?.mode) ?? "adapt",
+      sourcePath,
+      sourceMatch: asString(source?.match) ?? "exact",
+      targetId,
+      targetSystem: system,
+      targetPath,
+      targetMatch: asString(target?.match) ?? "exact",
+    });
+  }
+  return mappings;
+}
+
+/**
+ * The tier-1 pin a 0.13 record can still vouch for.
+ *
+ * An accepted baseline snapshotted the source it was accepted against, so a
+ * decided adoption carries a real identity: the commit when there was one, and
+ * the tree hash otherwise. 0.13 never recorded the origin the commit came from,
+ * so that stays null rather than being guessed. A draft adoption has no snapshot
+ * and migrates without a pin, which is what it always was.
+ */
+function baselinePin(
+  baseline: Record<string, unknown> | null,
+): Record<string, unknown> | undefined {
+  const source = asRecord(baseline?.source);
+  if (!source) return undefined;
+  const commit = asString(source.vcs_commit);
+  if (commit) return { kind: "git-commit", commit, origin: null };
+  const fingerprint = asString(source.manifest_fingerprint);
+  if (fingerprint) {
+    return { kind: "content-hash", algorithm: "sha256-tree-v1", value: fingerprint };
+  }
+  return undefined;
+}
+
+/** The last committed decision for one target: outcome plus reason, nothing else. */
+async function lastDecisionSummary(
+  entryRoot: string,
+  decisionIds: readonly string[],
+  targetId: string,
+): Promise<string | null> {
+  for (const decisionId of [...decisionIds].reverse()) {
+    const decision = await readJsonRecord(path.join(entryRoot, "decisions", `${decisionId}.json`));
+    if (!decision || asString(decision.target_id) !== targetId) continue;
+    const outcome = asString(decision.outcome);
+    if (!outcome) continue;
+    const reason = asString(decision.reason);
+    return `last ${MIGRATABLE_VERSION} decision: ${outcome}${reason ? ` — ${reason}` : ""}`;
+  }
+  return null;
+}
+
+function adoptionSlug(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return /^[a-z0-9]/.test(slug) ? slug : `x${slug}`;
+}
+
+/**
+ * A free record id, derived from the old adoption and its mapping.
+ *
+ * A single-mapping adoption keeps its own id, which is what `take` derived in
+ * the first place, so the common case migrates to the same name it had. Anything
+ * else is disambiguated by mapping, and a collision takes a numeric suffix
+ * rather than overwriting a record that is already there.
+ */
+async function freeAdoptionRecordFile(
+  storeRoot: string,
+  preferred: string,
+): Promise<{ readonly id: string; readonly file: string }> {
+  for (let index = 0; index < 100; index += 1) {
+    const id = adoptionSlug((index === 0 ? preferred : `${preferred}-${index}`).slice(0, 128));
+    const file = path.join(storeRoot, `${id}.json`);
+    if (!(await exists(file))) return { id, file };
+  }
+  throw new FrameworkError(`could not find a free Source adoption record name for ${preferred}`);
+}
+
+/**
+ * The 12-command adoption workflow collapses into one record per mapping.
+ *
+ * A 0.13 adoption was a definition plus a target-keyed state, with inspections,
+ * evidence, decisions, and rollbacks accumulating beside it. 0.14 keeps only what
+ * the record was for: this material, from that source, landed here. Each mapping
+ * becomes its own record; the last decision survives as a sentence in the note,
+ * because that is the part someone re-reads; the workflow chain does not, because
+ * nothing reads it.
+ *
+ * The retired per-adoption directory is left exactly where it is. Nothing loads
+ * it any more, and deleting a user's records during a migration is not this
+ * step's call to make.
+ */
+const sourceAdoptionCollapseStep: WorkspaceMigrationStep = {
+  id: "source-adoptions-collapse",
+  summary: "collapse adoption records to one mapping each; drop the inspection/decision workflow",
+  run: async (context) => {
+    const storeRoot = path.join(context.root, MANAGED_DIR, "source-adoptions");
+    if (!(await exists(storeRoot))) return [];
+    const changes: string[] = [];
+    for (const entry of (await readdir(storeRoot, { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      if (!entry.isDirectory()) continue;
+      const entryRoot = path.join(storeRoot, entry.name);
+      const state = await readJsonRecord(path.join(entryRoot, "state.json"));
+      if (!state) continue;
+      const digest = asString(state.current_definition);
+      const definition = digest
+        ? await readJsonRecord(path.join(entryRoot, "definitions", `${digest}.json`))
+        : null;
+      if (!definition) {
+        changes.push(
+          `${MANAGED_DIR}/source-adoptions/${entry.name}: left in place; its current definition could not be read`,
+        );
+        continue;
+      }
+
+      const mappings = legacyMappings(definition);
+      if (mappings.length === 0) {
+        changes.push(
+          `${MANAGED_DIR}/source-adoptions/${entry.name}: left in place; it declares no readable mapping`,
+        );
+        continue;
+      }
+      const sourceRef = asRecord(definition.source);
+      const alias = asString(sourceRef?.alias);
+      const observation = asString(sourceRef?.observation);
+      if (!alias || !observation) {
+        changes.push(
+          `${MANAGED_DIR}/source-adoptions/${entry.name}: left in place; it names no source observation`,
+        );
+        continue;
+      }
+      const title = asString(definition.title);
+      const stateTargets = asRecord(state.targets) ?? {};
+      const decisionIds = asArray(state.decisions).filter(
+        (value): value is string => typeof value === "string",
+      );
+      const recordedOn = asString(state.updated_at) ?? context.now.toISOString();
+
+      const written: string[] = [];
+      const refused: string[] = [];
+      for (const mapping of mappings) {
+        const preferred =
+          mappings.length === 1 ? entry.name : `${entry.name}-${adoptionSlug(mapping.id)}`;
+        const { id, file } = await freeAdoptionRecordFile(storeRoot, preferred);
+        const baseline = asRecord(asRecord(stateTargets[mapping.targetId])?.baseline);
+        const pin = baselinePin(baseline);
+        const note = [
+          title,
+          await lastDecisionSummary(entryRoot, decisionIds, mapping.targetId),
+          `migrated from ${MIGRATABLE_VERSION} adoption ${entry.name} mapping ${mapping.id}`,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join("; ");
+        // Validate before writing: a 0.13 field this step misread must not
+        // become a record that only `assay check` finds out about.
+        const candidate = sourceAdoptionRecordSchema.safeParse({
+          schema: SOURCE_ADOPTION_SCHEMA,
+          id,
+          mode: mapping.mode === "copy" ? "copy" : "adapt",
+          source: {
+            alias,
+            observation,
+            path: mapping.sourcePath,
+            match: mapping.sourceMatch === "prefix" ? "prefix" : "exact",
+            ...(pin === undefined ? {} : { pin }),
+          },
+          target: {
+            system: mapping.targetSystem,
+            path: mapping.targetPath,
+            match: mapping.targetMatch === "prefix" ? "prefix" : "exact",
+          },
+          note,
+          recorded_on: recordedOn,
+        });
+        if (!candidate.success) {
+          refused.push(mapping.id);
+          continue;
+        }
+        await writeFile(file, stringifySortedJson(candidate.data), "utf8");
+        written.push(id);
+      }
+
+      const dropped = [
+        `${await countJsonFiles(path.join(entryRoot, "inspections"))} inspections`,
+        `${await countJsonFiles(path.join(entryRoot, "evidence"))} evidence records`,
+        `${decisionIds.length} decisions`,
+      ].join(", ");
+      changes.push(
+        `${MANAGED_DIR}/source-adoptions/${entry.name}: ${mappings.length} mapping(s) -> ${written.length > 0 ? written.join(", ") : "nothing"}; dropped ${dropped}; retired directory left on disk`,
+      );
+      if (refused.length > 0) {
+        changes.push(
+          `${MANAGED_DIR}/source-adoptions/${entry.name}: could not rewrite mapping(s) ${refused.join(", ")}; the old directory still holds them`,
+        );
+      }
+    }
+    return changes;
+  },
+};
+
 /**
  * Ordered migration steps. A later slice adds its record kind here; the update
  * command needs no change to run it.
  */
-export const MIGRATION_STEPS: readonly WorkspaceMigrationStep[] = [sourceContentModeStep];
+export const MIGRATION_STEPS: readonly WorkspaceMigrationStep[] = [
+  sourceContentModeStep,
+  sourceAdoptionCollapseStep,
+];
