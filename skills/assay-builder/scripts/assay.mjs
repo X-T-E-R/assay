@@ -10,8 +10,8 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const CLI_REL = join("packages", "assay-cli", "dist", "cli.js");
-const PKG_REL = join("packages", "assay-cli", "package.json");
+const CLI_REL = join("packages", "assay", "dist", "cli.js");
+const PKG_REL = join("packages", "assay", "package.json");
 
 // Resolve through any junction/symlink to the real path inside the repo.
 const here = dirname(realpathSync(fileURLToPath(import.meta.url)));
@@ -42,7 +42,7 @@ if (!repoRoot) {
 
 if (!builtCli) {
   process.stderr.write(
-    `assay: CLI not built at ${join(repoRoot, CLI_REL)}\ndist/ is a build artifact and is not committed. Build the repo once:\n  cd ${repoRoot}\n  pnpm install --frozen-lockfile && pnpm build\n`,
+    `assay: CLI not built at ${join(repoRoot, CLI_REL)}\ndist/ is a build artifact and is not committed. The suite depends on two\nsibling checkouts (absorb-anything, own-work) beside this repo; build them\nfirst, then this one:\n  cd ${join(dirname(repoRoot), "absorb-anything")} && pnpm install && pnpm build\n  cd ${join(dirname(repoRoot), "own-work")} && pnpm install && pnpm build\n  cd ${repoRoot} && pnpm install && pnpm build\n`,
   );
   process.exit(1);
 }

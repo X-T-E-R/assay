@@ -11,9 +11,24 @@ Build and maintain an Assay evidence workbench — a versioned project layer tha
 
 - Node.js >=22.13.0 and pnpm 11.3.0 (pinned by the repository)
 - This skill lives inside the `assay` repo and runs the repo's CLI directly — there is no bundled copy. Install by cloning the repo and running the repo-root installer from the cloned repository; it builds the workspace and links this skill into the selected skills directory so it resolves back to the repo.
-- Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs the built TypeScript CLI at `packages/assay-cli/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
-- When maintaining this repository itself, use the repo-root release scripts (`../../scripts/check.sh` on POSIX, `../../scripts/check.ps1` on Windows). They run the built CLI checks and the committed public-example gate.
+- Invoke via the skill-local launcher `scripts/assay.mjs`; it walks up to the repo and runs the built TypeScript CLI at `packages/assay/dist/cli.js`. `dist/` is a build artifact (not committed) — the repo-root installer builds it, or build manually with `pnpm install && pnpm build`.
+- When maintaining this repository itself, use the repo-root release scripts (`../../scripts/check.sh` on POSIX, `../../scripts/check.ps1` on Windows). They run typecheck, lint, tests, the CLI smoke, and the publish-shape check.
 - Read `references/cli-setup.md` for install, build, and invocation details. Use `references/cli-setup.zh.md` when Chinese setup instructions are needed.
+
+## What 0.15 changed
+
+Assay 0.15 is a stitching layer over two products: `absorb-anything` (Sources,
+Analyses, Knowledge) and `own-work` (Tasks, Roadmaps, Specs, Systems). The
+workspace format is unchanged, and the same envelope serves `assay`, `absorb`,
+and `ownwork`. Two differences matter while reading the rest of this skill:
+
+- Source commands are top-level: `assay add`, `assay capture`, `assay import`,
+  `assay sync`, `assay switch`, `assay log`, `assay diff`, `assay link`,
+  `assay home`, `assay unlink`. The `assay source ...` prefix is gone.
+- `adopt`, `attach`, `convert`, `template` (the inspection subcommands),
+  `workspace` (the machine-global index), `source adoption`, `upstream`, and
+  `plugin` are **not in 0.15**. Sections below that describe them apply to
+  0.14 workspaces only. `assay --help` is the authority on what exists.
 
 ## Evidence loop
 

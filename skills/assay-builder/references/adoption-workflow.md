@@ -1,5 +1,9 @@
 # Adoption workflow
 
+> **Not in 0.15.** `assay adopt` stayed with the 0.14 monolith, preserved by the
+> `v0.14.0` tag. To adopt an existing project with 0.15, run `assay init` in it:
+> init reuses what is there rather than archiving it.
+
 Use `assay adopt` when the current directory already contains a non-Assay project and the user wants to rebuild it as a clean Assay workspace.
 
 ## Pre-flight

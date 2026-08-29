@@ -18,9 +18,7 @@ assay-cutover:<observed>-><required>
 ```
 
 Preserve that locator and stop normal Assay mutation. Do not edit manifests or
-authority files to make the error disappear. `assay workspace list` can report
-`cutover_required`, but it only reports indexed workspace state; it does not
-repair or rewrite a workspace.
+authority files to make the error disappear.
 
 Use the external [`assay-cutover v0.1.0`](https://github.com/X-T-E-R/assay-cutover/releases/tag/v0.1.0)
 public GitHub source release for this boundary. No npm package is published;

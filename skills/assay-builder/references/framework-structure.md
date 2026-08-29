@@ -1,4 +1,4 @@
-# Assay 0.13 framework structure
+# Assay framework structure
 
 Every current workspace has a fixed core plus one-shot Template output. The Template is selected only by `init` or `attach`, expanded to actual `layout.entries`, and never persisted or reloaded.
 
@@ -13,11 +13,12 @@ Every current workspace has a fixed core plus one-shot Template output. The Temp
 ## Templates
 
 ```bash
-assay template list
-assay template show study
 assay init . --template study
 assay init . --template ./custom.yaml
 ```
+
+`template list` and `template show` are not in 0.15; `--template` on `init`
+still selects and expands one.
 
 Built-ins are study, solve, and explore. Custom descriptors use closed schema 1:
 
@@ -40,4 +41,5 @@ Status, check, AGENTS generation, placement advisories, and conversion combine `
 
 ## Workspace index
 
-Only `assay workspace track|discover|list|forget` touches `~/.assay/workspaces`. Records are path-hash named schema 1 `{project_id,path}` objects. Normal lifecycle/read/update commands do not track implicitly.
+The machine-global workspace index (`assay workspace ...` over
+`~/.assay/workspaces`) is not in 0.15. No 0.15 command reads or writes it.

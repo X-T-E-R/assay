@@ -36,18 +36,18 @@ node <skill-root>/scripts/assay.mjs <command>
 
 ## Building (required once)
 
-`dist/` is a build artifact and is **not** committed to git. `scripts/install.mjs` builds it for you; to build manually:
+`dist/` is a build artifact and is **not** committed to git. `scripts/install.mjs` builds it for you; to build manually, note that 0.15 depends on two sibling checkouts and they must be built first:
 
 ```bash
-cd <repo-root>
-pnpm install --frozen-lockfile
-pnpm build
+cd <repo-parent>/absorb-anything && pnpm install && pnpm build
+cd <repo-parent>/own-work        && pnpm install && pnpm build
+cd <repo-root>                   && pnpm install --frozen-lockfile && pnpm build
 ```
 
 The compiled entry point the launcher runs:
 
 ```text
-packages/assay-cli/dist/cli.js
+packages/assay/dist/cli.js
 ```
 
 The launcher fails clearly if the skill is not installed from inside the repo (cannot locate the repo) or if the repo is not yet built (`dist/` missing), with the build command in the message.
@@ -57,10 +57,10 @@ The launcher fails clearly if the skill is not installed from inside the repo (c
 To bypass the launcher, run the built CLI directly from the repo:
 
 ```bash
-node <repo-root>/packages/assay-cli/dist/cli.js <command>
+node <repo-root>/packages/assay/dist/cli.js <command>
 ```
 
-A global `assay` command (via `npm link` in `packages/assay-cli`) is optional and only meant for interactive human use, not agent workflows.
+A global `assay` command (via `npm link` in `packages/assay`) is optional and only meant for interactive human use, not agent workflows.
 
 ## Working directory conventions
 
@@ -69,16 +69,9 @@ Use `cd <target-dir>` before running commands, or pass `--root <path>` / `[targe
 
 ## Workspace index
 
-Workspace indexing is explicit under `~/.assay/workspaces` and never happens during lifecycle/read commands:
-
-```bash
-assay workspace track [root]          # track one workspace explicitly
-assay workspace discover <roots...>   # discover and track workspaces by manifest
-assay workspace list                  # report record state without rewriting it
-assay workspace forget <selector>     # remove an index record (never deletes project files)
-```
-
-These commands operate on registry metadata only and never modify project files.
+The machine-global workspace index (`assay workspace track|discover|list|forget`
+under `~/.assay/workspaces`) is **not part of 0.15**. It remains available in
+0.14, which the `v0.14.0` tag preserves.
 
 ## Systems registry (per-workspace)
 
@@ -109,4 +102,6 @@ When maintaining the Assay repository, validate through the release scripts rath
 .\scripts\check.ps1
 ```
 
-Those scripts build the TypeScript packages, run typecheck/lint/tests/smoke, and verify the committed `examples/framework-template` workspace with the built CLI.
+Those scripts build the package, run typecheck/lint/tests/smoke, and verify the
+publish shape. They require the two sibling checkouts to be built first — see
+[Building](#building-required-once).

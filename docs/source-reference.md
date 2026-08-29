@@ -4,15 +4,15 @@ One piece of external material, one home, reachable from every workspace that
 needs it.
 
 When a second workspace needs a Source that a first workspace already tracks,
-`assay source add` would clone it again, and from that moment there are two
+`assay add` would clone it again, and from that moment there are two
 checkouts, two observation ledgers, and two answers to "what did upstream do
 last month". A reference avoids that: the second workspace writes down where the
 Source lives instead of copying it.
 
 ```text
-assay source link <target-workspace> <target-source> [--alias <local-alias>]
-assay source home <local-alias>
-assay source unlink <local-alias>
+assay link <target-workspace> <target-source> [--alias <local-alias>]
+assay home <local-alias>
+assay unlink <local-alias>
 ```
 
 ## What a reference is on disk
@@ -38,21 +38,19 @@ refuses rather than picking one.
 
 ## Reading through a reference
 
-`source status`, `source log`, and `source diff` work on a referenced alias
-exactly as they do on an owned one, and they always say which it is:
+`status <alias>`, `log`, and `diff` work on a referenced alias exactly as they do
+on an owned one, and they always say which it is:
 
 ```text
-$ assay source status
-Sources
-Root: C:\work\product
-qiskit    checkout git    normal    20260828-519b5854d3fa 519b5854d3fa  ref -> ../shared-research#qiskit
+$ assay status qiskit
+qiskit: checkout @ 20260828-519b5854d3fa  ref -> ../shared-research#qiskit
 ```
 
-`assay source home <alias>` answers the question directly, for an owned Source
+`assay home <alias>` answers the question directly, for an owned Source
 as well as a referenced one:
 
 ```text
-$ assay source home qiskit
+$ assay home qiskit
 Source home: qiskit
 Relation: ref
 Home workspace: C:\work\shared-research
@@ -75,7 +73,7 @@ home. There is no confirmation gate, because the arrangement was the point; what
 there is instead is a line before the work starts, naming where it will go:
 
 ```text
-$ assay source sync qiskit
+$ assay sync qiskit
 qiskit is referenced from ../shared-research#qiskit; writing through to the Source home: C:\work\shared-research\sources\qiskit
 Source sync: qiskit
 Relation: ref -> ../shared-research#qiskit
@@ -92,10 +90,11 @@ Deletion is the one asymmetry. `unlink` removes the local pointer and stops
 there — it never recurses, never reads the home, and never locks it:
 
 ```text
-$ assay source unlink qiskit
+$ assay unlink qiskit
 Unlinked source: sources/qiskit
 Forgot reference: ../shared-research#qiskit
 Home workspace: C:\work\shared-research (untouched)
+Hint: Unlink removes only the local reference shell.
 ```
 
 Removing the Source itself is only possible in the workspace that owns it.
@@ -126,24 +125,22 @@ neighbourhood for the Source and nothing rebinds automatically; the failure stay
 local and stays legible.
 
 ```text
-$ assay source status
-Sources
-Root: C:\work\product
-qiskit    broken   ref -> ../shared-research#qiskit
-          ! target workspace is not there: C:\work\shared-research
+$ assay status qiskit
+qiskit: broken reference (target workspace is not there: C:\work\shared-research)
 ```
 
 Commands on that alias fail with an error that names what could not be reached
 and what to do about it. Every other object in the workspace — its Tasks, its
 Analyses, its own Sources, its adoptions — keeps working, and `assay check`
 reports the broken reference as a structure finding without repairing it. Fixing
-it is `source link` again at the new path, or `source unlink` if the material is
+it is `link` again at the new path, or `unlink` if the material is
 no longer wanted.
 
 ## The clone registry
 
-`~/.assay/clone-registry.json` is a rebuildable cache of where each origin has a
-home:
+`~/.absorb/clone-registry.json` — overridable with `ABSORB_CLONE_REGISTRY`, which
+is how tests keep it out of a real home — is a rebuildable cache of where each
+origin has a home:
 
 ```json
 {
@@ -159,13 +156,13 @@ home:
 }
 ```
 
-`source add`, `source link`, and `source sync` write to it as a side effect, and
+`add`, `link`, and `sync` write to it as a side effect, and
 a write that fails never affects the command. It buys three conveniences:
 
-- `source add` of an origin that already has a home prints an advisory naming
-  that home and suggesting `source link`, then adds anyway. It is a hint, not a
+- `add` of an origin that already has a home prints an advisory naming
+  that home and suggesting `link`, then adds anyway. It is a hint, not a
   gate; a second clone is sometimes what you want.
-- `source link <target-source>` with the workspace argument omitted consults the
+- `link <target-source>` with the workspace argument omitted consults the
   registry. Exactly one verified home links directly; several are listed with
   their exact paths and the command stops, because choosing between two homes on
   your behalf is the one thing a hint must not do.

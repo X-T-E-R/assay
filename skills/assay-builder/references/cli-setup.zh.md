@@ -35,18 +35,18 @@ node <skill-root>/scripts/assay.mjs <command>
 
 ## 构建(首次必做)
 
-`dist/` 是构建产物,**不**纳入 git。`scripts/install.mjs` 会替你构建;手动构建:
+`dist/` 是构建产物,**不**纳入 git。`scripts/install.mjs` 会替你构建;手动构建时注意 0.15 依赖两个并排 checkout,必须先构建它们:
 
 ```bash
-cd <repo-root>
-pnpm install --frozen-lockfile
-pnpm build
+cd <repo-parent>/absorb-anything && pnpm install && pnpm build
+cd <repo-parent>/own-work        && pnpm install && pnpm build
+cd <repo-root>                   && pnpm install --frozen-lockfile && pnpm build
 ```
 
 launcher 运行的编译入口:
 
 ```text
-packages/assay-cli/dist/cli.js
+packages/assay/dist/cli.js
 ```
 
 如果 skill 不是从仓库内部安装的(找不到仓库),或仓库尚未构建(`dist/` 缺失),launcher 会明确报错,并在消息里给出构建命令。
@@ -56,10 +56,10 @@ packages/assay-cli/dist/cli.js
 要绕开 launcher,从仓库直接运行已构建的 CLI:
 
 ```bash
-node <repo-root>/packages/assay-cli/dist/cli.js <command>
+node <repo-root>/packages/assay/dist/cli.js <command>
 ```
 
-全局 `assay` 命令(在 `packages/assay-cli` 里 `npm link`)是可选的,只为人类交互使用,不用于 agent 工作流。
+全局 `assay` 命令(在 `packages/assay` 里 `npm link`)是可选的,只为人类交互使用,不用于 agent 工作流。
 
 ## 工作目录约定
 
@@ -68,16 +68,8 @@ node <repo-root>/packages/assay-cli/dist/cli.js <command>
 
 ## 工作区索引
 
-工作区索引是显式操作，位于 `~/.assay/workspaces`；普通生命周期与读取命令不会写入：
-
-```bash
-assay workspace track [root]          # 显式跟踪一个工作区
-assay workspace discover <roots...>   # 按 manifest 发现并跟踪工作区
-assay workspace list                  # 报告记录状态，不改写记录
-assay workspace forget <selector>     # 移除一条索引记录（绝不删除项目文件）
-```
-
-这些命令只操作注册表元数据,绝不修改项目文件。
+全局工作区索引(`assay workspace track|discover|list|forget`,位于
+`~/.assay/workspaces`)**不在 0.15 之内**。它仍存在于 0.14,由 `v0.14.0` tag 保留。
 
 ## 系统注册表(每个工作区)
 
@@ -108,4 +100,5 @@ System selector 必须是 Project-local registry 中的精确 key，不支持前
 .\scripts\check.ps1
 ```
 
-这些脚本会构建 TypeScript 包、运行 typecheck/lint/tests/smoke,并用构建后的 CLI 验证已提交的 `examples/framework-template` 工作区。
+这些脚本会构建包、运行 typecheck/lint/tests/smoke,并校验发布形态。它们要求两个并排
+checkout 已先构建 —— 见[构建](#构建首次必做)。

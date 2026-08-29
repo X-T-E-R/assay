@@ -23,8 +23,26 @@ jobs:
           - windows-latest
 
     steps:
-      - name: Checkout
+      # The three checkouts are side by side under the workspace, which is the
+      # layout the pnpm overrides and the suite contract tests both expect.
+      - name: Checkout assay
         uses: actions/checkout@v4
+        with:
+          path: assay
+
+      # Pinned to their own owner: the two halves do not travel with this
+      # repository, which lives under a different account.
+      - name: Checkout the study half
+        uses: actions/checkout@v4
+        with:
+          repository: NB-Corp/absorb-anything
+          path: absorb-anything
+
+      - name: Checkout the build half
+        uses: actions/checkout@v4
+        with:
+          repository: NB-Corp/own-work
+          path: own-work
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -36,15 +54,35 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
+          cache-dependency-path: assay/pnpm-lock.yaml
 
-      - name: Install dependencies
+      # Build order is a dependency order: the study core and CLI, then the
+      # build half that reads the core, then the suite that stitches both. The
+      # suite's tests spawn both halves' compiled CLIs, so both must be built
+      # before the gate runs.
+      - name: Install the study half
         run: pnpm install --frozen-lockfile
+        working-directory: absorb-anything
+
+      - name: Build the study half
+        run: pnpm build
+        working-directory: absorb-anything
+
+      - name: Install the build half
+        run: pnpm install --frozen-lockfile
+        working-directory: own-work
+
+      - name: Build the build half
+        run: pnpm build
+        working-directory: own-work
 
       - name: Run release checks (Linux)
         if: runner.os != 'Windows'
         run: bash ./scripts/check.sh
+        working-directory: assay
 
       - name: Run release checks (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\scripts\check.ps1
+        working-directory: assay

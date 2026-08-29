@@ -1,5 +1,10 @@
 # Source Adoption
 
+> **Not in 0.15.** The `source adoption` command group is not mounted by the
+> thin layer; it stayed with the 0.14 monolith, preserved by the `v0.14.0` tag.
+> This page describes the records those commands wrote. See
+> [releases/NEXT.md](../releases/NEXT.md).
+
 A Source adoption records that specific material from a Source ended up in a
 specific place in a registered system. That is the whole job: months later, when
 the upstream moves, the record is what says which of your files the change

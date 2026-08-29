@@ -83,14 +83,21 @@ analysis and must not block an explicit close.
 
 ## CLI Logic Should Be Testable
 
-Repository-mutating commands are risky if they live in one large script or a process-only adapter. Assay splits reusable framework behavior from terminal concerns:
+Repository-mutating commands are risky if they live in one large script or a
+process-only adapter, so reusable behavior stays separate from terminal
+concerns. In 0.15 that separation is also a repository boundary:
 
 ```text
-packages/
-├── assay-core/
-│   └── src/        # templates, manifests, events, workspace operations, updates
-└── assay-cli/
-    └── src/        # Commander command definitions, formatting, exit-code mapping
+absorb-anything/
+├── absorb-anything-core/   # envelope, manifests, layout, events, sources, updates
+└── absorb-anything/        # the absorb CLI
+own-work/
+└── own-work/               # tasks, roadmaps, specs, systems, and the ownwork CLI
+assay/
+└── assay/                  # suite lifecycle, merged semantics, mount, exit codes
 ```
 
-This makes init, check, Source intake, update analysis, and conversion planning testable as separate behaviors.
+Each library layer is testable without a process, and the suite layer is small
+enough that its own tests are about stitching: which commands exist, which
+envelope a fresh init writes, and whether the merged check and object table
+report each half exactly once.
