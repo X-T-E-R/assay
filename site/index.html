@@ -493,22 +493,25 @@ footer{border-top:1px solid var(--line);margin-top:40px}
       <div class="qs-grid">
         <figure class="term">
           <figcaption class="bar"><span class="en">Install and init</span><span class="zh" lang="zh">安装与初始化</span></figcaption>
-<pre><span class="k">git</span> clone https://github.com/X-T-E-R/assay.git
+<pre><span class="c"><span class="en"># the three repositories sit side by side</span><span class="zh" lang="zh"># 三个仓库并排放</span></span>
+<span class="k">git</span> clone https://github.com/NB-Corp/absorb-anything
+<span class="k">git</span> clone https://github.com/NB-Corp/own-work
+<span class="k">git</span> clone https://github.com/X-T-E-R/assay
 <span class="k">cd</span> assay
 <span class="k">pnpm</span> install &amp;&amp; pnpm build
 
-<span class="c"><span class="en"># create a workbench</span><span class="zh" lang="zh"># 创建一个工作台</span></span>
-<span class="k">node</span> packages/assay-cli/dist/cli.js init ../my-study --name MyStudy --template study
-<span class="k">node</span> packages/assay-cli/dist/cli.js status --root ../my-study
-<span class="k">node</span> packages/assay-cli/dist/cli.js check  --root ../my-study</pre>
+<span class="c"><span class="en"># create a workbench (standalone by default)</span><span class="zh" lang="zh"># 创建一个工作台（默认 standalone）</span></span>
+<span class="k">node</span> packages/assay/dist/cli.js init ../my-study --name MyStudy
+<span class="k">node</span> packages/assay/dist/cli.js status --root ../my-study
+<span class="k">node</span> packages/assay/dist/cli.js check  --root ../my-study</pre>
         </figure>
         <figure class="term">
           <figcaption class="bar"><span class="en">A typical session</span><span class="zh" lang="zh">一个典型会话</span></figcaption>
-<pre><span class="k">assay</span> source add https://github.com/some/framework
+<pre><span class="k">assay</span> add https://github.com/some/framework
 <span class="k">assay</span> analysis new "Framework review" --for-source framework
 <span class="k">assay</span> analysis close analyses/&lt;file&gt;.md --exit adopt --note "Pattern X is worth reusing"
-<span class="k">assay</span> knowledge add pattern "Pattern X" --from-analysis analyses/&lt;file&gt;.md
-<span class="k">assay</span> task create --title "Port pattern X" --description "Bounded outcome with acceptance criteria"</pre>
+<span class="k">assay</span> knowledge add pattern "Pattern X"
+<span class="k">assay</span> task create --title "Port pattern X" --priority P1</pre>
         </figure>
       </div>
       <p class="note">

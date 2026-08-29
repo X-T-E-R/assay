@@ -5,7 +5,7 @@
 
   <p><em>assay /əˈseɪ/, v. — to analyze an ore and determine what it is made of.</em></p>
 
-  <h3>Study many. Build your own.</h3>
+  <h3>Absorb anything. Build your own.</h3>
 
   <p>
     <a href="https://github.com/X-T-E-R/assay/actions/workflows/ci.yml"><img src="https://github.com/X-T-E-R/assay/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -22,100 +22,91 @@
   </p>
 </div>
 
-Assay is a command-line workbench for people who build by studying:
+Assay is one command-line workbench made of two halves:
 
-- **Study many.** Capture frameworks, libraries, patterns, and ideas as observed Sources, work them through recorded Analyses, and close every evaluation with an explicit adopt / reject / defer decision plus its evidence. Months later you can still answer *what did we take, why, and does it still hold?*
-- **Build your own.** Promote what proves out into your own registered Systems and Knowledge, and keep the work moving with Tasks, Roadmaps, and Specs whose stable identities survive sessions, agent switches, and context compaction.
+- **[absorb-anything](https://github.com/NB-Corp/absorb-anything)** is the study half. Whatever you're absorbing — a codebase, a library, a paper's companion repo — gets a home where checkouts, observations, analyses, and distilled knowledge accumulate instead of evaporating.
+- **[own-work](https://github.com/NB-Corp/own-work)** is the build half. Tasks, roadmaps, specs, and registered systems with stable identities that survive sessions, agent switches, and context compaction.
+
+Each half is its own product and works alone. Assay stitches them into a single `assay` binary over one workspace, for people who want the whole loop — *study it, decide on it, build your own* — in one place.
 
 ## How it works
 
 ```text
-sources/   →   analyses/   →   systems/  +  knowledge/
- observe        interpret       build         remember
+sources/   →   analyses/   →   systems/  +  knowledge/  +  tasks/
+ observe        interpret       build         remember      keep moving
 ```
 
-Assay keeps that loop under your version control. The discipline is small but strict: every fact has exactly one authority, every adoption of outside material keeps its evidence, and every decision is recorded instead of remembered.
-
-## Where it shines
-
-Assay is a general workbench, but three scenarios get the most out of it:
-
-- **Evaluating and adopting external frameworks.** Add a repo as a Source, review it in an Analysis, and record an `adopt` / `reject` / `experiment` exit. Source adoption then maps each piece of material you carried into a system back to the source path and commit it came from — so next year's you knows exactly what came from where, and why.
-- **Long-running projects with AI assistants.** Tasks keep stable ids, reader-owned PRDs, and handoff checkpoints; Roadmaps and Specs hold direction and acceptance. All of it survives sessions, agent switches, and context compaction.
-- **Evidence-driven exploration of any kind.** One-shot Templates scaffold the loop for different work: `study` (evaluate external systems), `solve` (objectives, attempts, benchmarks), `explore` (parallel approaches and trials). Custom Templates are plain YAML.
-
-## Principles
-
-The workflow is packaged; the ideas travel anywhere:
-
-- **One fact, one authority.** Assay never guesses a "current" task from titles or counts, and never maintains two copies of the same truth.
-- **Evidence before opinion.** A copied folder is not an evaluated one; an Analysis is not closed without an explicit exit.
-- **Advisory, not a gate.** Assay records facts and decisions, then gets out of the way. It blocks only to prevent data loss or corruption — never to enforce ceremony.
-- **Assistant-agnostic core.** The artifact model stands alone; the managed `AGENTS.md` block and the bundled `assay-builder` skill are adapters, so the workbench outlives any single assistant.
-- **Files over services.** Git-friendly and inspectable with the tools you already have — nothing holds your data hostage.
+Assay keeps that loop under your version control. The discipline is small but strict: every fact has exactly one authority, every decision is recorded instead of remembered, and everything is a plain file in a `.assay/` workspace your repo owns.
 
 ## Quick start
 
-Requires Node.js >=22.13.0 and the repository-pinned pnpm 11.3.0.
+Requires Node.js >=22.13.0 and pnpm 11. Until the packages reach npm, build from source — the three repositories sit side by side:
 
 ```bash
-git clone https://github.com/X-T-E-R/assay.git
+git clone https://github.com/NB-Corp/absorb-anything
+git clone https://github.com/NB-Corp/own-work
+git clone https://github.com/X-T-E-R/assay
 cd assay
 pnpm install && pnpm build
 
-# Create a workbench
-node packages/assay-cli/dist/cli.js init ../my-study --name MyStudy --template study
-node packages/assay-cli/dist/cli.js status --root ../my-study
-node packages/assay-cli/dist/cli.js check  --root ../my-study
+# Create a workbench (standalone by default; --overlay to nest in an existing repo)
+node packages/assay/dist/cli.js init ../my-study --name MyStudy
 ```
 
-Throughout the docs, `assay` refers to this built CLI (the package exposes the `assay` bin). To drive it from an AI assistant, run `node scripts/install.mjs` — it builds the repo and links the bundled `assay-builder` skill into your skills directory.
-
-A typical session:
+Throughout the docs, `assay` refers to this built CLI (the package exposes the `assay` bin). A typical session, all in one binary:
 
 ```bash
-assay source add https://github.com/some/framework
+assay add https://github.com/some/framework                 # study half: give it a home
 assay analysis new "Framework review" --for-source framework
 assay analysis close analyses/<file>.md --exit adopt --note "Pattern X is worth reusing"
-assay knowledge add pattern "Pattern X" --from-analysis analyses/<file>.md
-assay task create --title "Port pattern X" --description "Bounded outcome with acceptance criteria"
+assay knowledge add pattern "Pattern X"
+assay task create --title "Port pattern X" --priority P1    # build half: keep the work moving
+assay status                                                # one merged view of both halves
 ```
+
+Start an AI session with `assay prime` — one screen that explains every object in the workspace, both halves included.
+
+## The workspace
+
+`assay init` creates a **standalone** workbench: state under `.assay/`, work areas at the root. `assay init --overlay` nests everything under `.assay/` inside an existing repository instead.
+
+The on-disk format is exactly the one the two halves speak. That means `absorb` and `ownwork` operate on an Assay workspace in place — and Assay operates on theirs. One workspace, three interchangeable tools, no migration between them.
 
 ## What's inside
 
-| Object | What it gives you |
-| --- | --- |
-| **Project** | A single id/name authority that owns roadmap and acceptance. |
-| **Task** | Durable bounded outcomes (`task-0001-<slug>`) with reader-owned `prd.md`, handoff checkpoints, typed lineage, and explicit host-context bindings. |
-| **Roadmap** | Project outcomes with separate state (`candidate` → `committed` → `realized`) and horizon (`now` / `next` / `later`), linked to Tasks without lifecycle coupling. |
-| **Spec** | A closed machine envelope plus reader-owned prose; explicit promotion from an Analysis or Task with recorded provenance. |
-| **Source** | External material — a tracked Git checkout or copied content — with an append-only observation ledger, drift reporting, and byte captures when a decision needs them. |
-| **Source adoption** | One record per mapping — source path to system path — with an identity pin, an `adapt` / `copy` mode, and the reason in a note. |
-| **Analysis / Knowledge** | Interpretation with explicit decision exits, and promoted conclusions kept out of the inbox. |
-| **System** | A registry of independently versioned systems (own Git repos welcome) with primary/superseded lineage. |
+| Object | What it gives you | Half |
+| --- | --- | --- |
+| **Project** | A single id/name authority for the workspace. | shared |
+| **Source** | External material with an append-only observation ledger, drift reporting, and byte captures when a decision needs them. | study |
+| **Analysis / Knowledge** | Interpretation with explicit decision exits, and promoted conclusions kept out of the inbox. | study |
+| **Task** | Durable bounded outcomes (`task-0001-<slug>`) with reader-owned `prd.md` and handoff checkpoints. | build |
+| **Roadmap** | Project outcomes with separate state and horizon, linked to Tasks without lifecycle coupling. | build |
+| **Spec** | A closed machine envelope plus reader-owned prose, promoted with recorded provenance. | build |
+| **System** | A registry of independently versioned systems with primary/superseded lineage. | build |
 
-## Two layouts, one model
+## Assay 0.15 is a rebase, not a port
 
-- **Standalone** — Assay state under `.assay/`, work areas at the workspace root.
-- **Overlay** — everything under `.assay/` inside an existing product repository; the product root stays the primary System.
+0.15 replaced the monolithic implementation with a thin layer over the two component packages. Most of the 0.14 surface came through unchanged; the notable differences:
 
-```bash
-assay attach --root ../product --name Product --template study --privacy private
-assay convert --root ../product --to standalone --target ../product-workbench --copy
-```
+- Source commands live at the top level (`assay add`, not `assay source add`).
+- `init` reuses an existing workspace instead of refusing it, and standalone is the default.
+- Source adoption, upstream reach, templates beyond init, plugins, and the workspace index (`attach` / `convert` / `workspace ...`) are **deferred** — they need those workflows re-homed onto the new core. If you rely on them today, stay on [v0.14.0](https://github.com/X-T-E-R/assay/releases/tag/v0.14.0); the 0.15 CLI reads and writes 0.14 workspaces in place either way.
 
-Assay never touches global state unless you opt in to the explicit workspace index (`assay workspace track|discover|list|forget`).
+The full ledger is in [releases/NEXT.md](releases/NEXT.md).
 
-## Workspace contract
+## Which tool should I install?
 
-Assay 0.13 accepts exactly the `0.13.0+s4+l8+r3` envelope and fails closed on older or malformed workspaces. Compatible upgrades run through the native `assay update` path, which only touches framework-owned files recorded in the managed receipt. When Assay reports an `assay-cutover:<observed>-><required>` locator, follow [Major workspace cutovers](docs/legacy-cutover.md).
+- Just studying external material, or want the lightest possible footprint in an existing repo? **absorb-anything** (`.absorb/` envelope, overlay by default).
+- Just tracking tasks, roadmaps, and specs? **own-work**.
+- Want both halves in one binary, or you already have `.assay/` workspaces? **Assay.**
+
+They share one on-disk contract, so this choice is reversible at any time.
 
 ## Documentation
 
-- [Commands](docs/commands.md) — full CLI surface and authority boundaries
+- [Commands](docs/commands.md) — the merged CLI surface and authority boundaries
 - [Workspace layout](docs/workspace-layout.md) · [Layout modes](docs/layout-modes.md)
-- [Task](docs/task.md) · [Roadmap](docs/roadmap.md) · [Spec](docs/spec.md)
-- [Source adoption](docs/source-adoption.md) — mappings, identity pins, record storage
+- [Source reference](docs/source-reference.md) — clone once, reference everywhere
 - [Design principles](docs/background/design-principles.md) — why Assay works this way
 - [examples/framework-template](examples/README.md) — a sanitized generated workspace
 
