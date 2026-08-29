@@ -1,6 +1,15 @@
 packages:
   - "packages/*"
 
+# Local dev and CI resolve the two unpublished halves from sibling checkouts;
+# the published manifest keeps its ^0.1.0 ranges (overrides never enter the
+# tarball). own-work's transitive core dependency is rewritten by the same
+# entry, so all three packages read one build of the core.
+overrides:
+  absorb-anything-core: "file:../absorb-anything/packages/absorb-anything-core"
+  absorb-anything: "file:../absorb-anything/packages/absorb-anything"
+  own-work: "file:../own-work/packages/own-work"
+
 allowBuilds:
   '@biomejs/biome': true
   esbuild: true

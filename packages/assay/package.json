@@ -1,0 +1,44 @@
+{
+  "name": "assay",
+  "version": "0.15.0",
+  "description": "One suite CLI over absorb-anything and own-work: study evidence and build objects in one .assay workspace.",
+  "keywords": [
+    "cli",
+    "workspace",
+    "evidence",
+    "tasks",
+    "roadmap",
+    "spec",
+    "local-first",
+    "ai-agent"
+  ],
+  "homepage": "https://github.com/X-T-E-R/assay#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/X-T-E-R/assay.git",
+    "directory": "packages/assay"
+  },
+  "bugs": "https://github.com/X-T-E-R/assay/issues",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "bin": { "assay": "./dist/cli.js" },
+  "exports": { ".": "./dist/index.js" },
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@commander-js/extra-typings": "^12.1.0",
+    "absorb-anything": "^0.1.0",
+    "absorb-anything-core": "^0.1.0",
+    "commander": "^12.1.0",
+    "own-work": "^0.1.0"
+  },
+  "devDependencies": {
+    "yaml": "^2.6.1"
+  }
+}
