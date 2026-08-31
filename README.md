@@ -40,20 +40,16 @@ Assay keeps that loop under your version control. The discipline is small but st
 
 ## Quick start
 
-Requires Node.js >=22.13.0 and pnpm 11. Until the packages reach npm, build from source — the three repositories sit side by side:
+Requires Node.js >=22.13.0.
 
 ```bash
-git clone https://github.com/NB-Corp/absorb-anything
-git clone https://github.com/NB-Corp/own-work
-git clone https://github.com/X-T-E-R/assay
-cd assay
-pnpm install && pnpm build
+npm install -g @nb-corp/assay    # scoped name; the binary is plain `assay`
 
 # Create a workbench (standalone by default; --overlay to nest in an existing repo)
-node packages/assay/dist/cli.js init ../my-study --name MyStudy
+assay init my-study --name MyStudy
 ```
 
-Throughout the docs, `assay` refers to this built CLI (the package exposes the `assay` bin). A typical session, all in one binary:
+To hack on it instead, clone the three repositories side by side (`NB-Corp/absorb-anything`, `NB-Corp/own-work`, `X-T-E-R/assay`), then `pnpm install && pnpm build` in `assay`. A typical session, all in one binary:
 
 ```bash
 assay add https://github.com/some/framework                 # study half: give it a home

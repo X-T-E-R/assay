@@ -1,6 +1,7 @@
 {
-  "name": "assay",
+  "name": "@nb-corp/assay",
   "version": "0.15.0",
+  "publishConfig": { "access": "public" },
   "description": "One suite CLI over absorb-anything and own-work: study evidence and build objects in one .assay workspace.",
   "keywords": [
     "cli",

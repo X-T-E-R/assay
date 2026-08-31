@@ -11,4 +11,4 @@ Assay also provides Tasks, Roadmaps, and Specs with stable identities. They are 
 It is advisory rather than a process gate. There is no server or account; the work lives in your repository under your version control. Assay is MIT-licensed and currently installed by cloning the repository and running `pnpm install && pnpm build` with Node.js >=22.13. It is not published on npm.
 
 Repo: https://github.com/X-T-E-R/assay  
-Intro site (going live): https://x-t-e-r.github.io/assay/
+Intro site: https://x-t-e-r.github.io/assay/

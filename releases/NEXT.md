@@ -14,7 +14,8 @@ workspace serves `assay`, `absorb`, and `ownwork` interchangeably.
 
 - The `assay-core` and `assay-cli` packages are gone, along with
   `assay-plugin-fixture`, `assay-plugin-ponytail`, and `assay-test-support`. The
-  distributable is a single `assay` package with the `assay` binary. Code that
+  distributable is a single package published as `@nb-corp/assay` (the bare npm
+  name `assay` is held by an unrelated 2014 package) with the `assay` binary. Code that
   imported `assay-core` should import `absorb-anything-core` (envelope, manifest,
   layout, managed receipt, Source, Analysis, Knowledge) or `own-work` (Task,
   Roadmap, Spec, System) directly; both are the same operations under their new

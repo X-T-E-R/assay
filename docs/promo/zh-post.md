@@ -21,4 +21,4 @@ Assay 是一个开源的 CLI 工作台，名字来自 assay /əˈseɪ/：化验�
 Assay 采用 MIT License，不需要服务器或账号，工作内容保存在你的仓库并由你自己做版本控制。目前尚未发布到 npm，使用方式是克隆仓库，在 Node.js >=22.13 环境下运行 `pnpm install && pnpm build`。
 
 项目仓库：https://github.com/X-T-E-R/assay  
-介绍站（即将上线）：https://x-t-e-r.github.io/assay/
+介绍站：https://x-t-e-r.github.io/assay/

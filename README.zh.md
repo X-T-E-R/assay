@@ -40,20 +40,16 @@ Assay 把这条闭环放进你的版本控制里。纪律很小，但很严格�
 
 ## 快速开始
 
-需要 Node.js >=22.13.0 与 pnpm 11。上 npm 之前从源码构建——三个仓库并排放：
+需要 Node.js >=22.13.0。
 
 ```bash
-git clone https://github.com/NB-Corp/absorb-anything
-git clone https://github.com/NB-Corp/own-work
-git clone https://github.com/X-T-E-R/assay
-cd assay
-pnpm install && pnpm build
+npm install -g @nb-corp/assay    # scoped 包名；装出来的二进制就叫 assay
 
 # 建一个工作台（默认 standalone；--overlay 叠加进现有仓库）
-node packages/assay/dist/cli.js init ../my-study --name MyStudy
+assay init my-study --name MyStudy
 ```
 
-文档里的 `assay` 都指这个构建出的 CLI（包暴露 `assay` bin）。典型的一次会话，全在一个二进制里：
+想改代码的话，把三个仓库并排 clone（`NB-Corp/absorb-anything`、`NB-Corp/own-work`、`X-T-E-R/assay`），在 `assay` 里 `pnpm install && pnpm build`。典型的一次会话，全在一个二进制里：
 
 ```bash
 assay add https://github.com/some/framework                 # 研读半边：给它安个家

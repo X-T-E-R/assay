@@ -16,10 +16,16 @@ assay task create --title "Port the scheduler"       # build: one durable outcom
 assay check                                          # both halves, one exit code
 ```
 
-> Status: 0.15.0. The two halves are not on npm yet, so build from source with
-> the steps below.
+## Install
 
-## Install from source
+```bash
+npm install -g @nb-corp/assay
+```
+
+The package is scoped because the bare npm name `assay` was taken years ago;
+the binary it installs is still plain `assay`.
+
+## Or build from source
 
 Requires Node >= 22.13 and pnpm 11. Clone the three repositories next to each
 other; the workspace resolves the halves from the sibling checkouts:

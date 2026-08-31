@@ -10,11 +10,15 @@ const repo = path.resolve(import.meta.dirname, "..");
 const destination = await mkdtemp(path.join(os.tmpdir(), "assay-pack-"));
 try {
   if (process.platform === "win32") {
-    await execAsync(`pnpm --filter assay pack --pack-destination "${destination}"`, { cwd: repo });
-  } else {
-    await execFileAsync("pnpm", ["--filter", "assay", "pack", "--pack-destination", destination], {
+    await execAsync(`pnpm --filter @nb-corp/assay pack --pack-destination "${destination}"`, {
       cwd: repo,
     });
+  } else {
+    await execFileAsync(
+      "pnpm",
+      ["--filter", "@nb-corp/assay", "pack", "--pack-destination", destination],
+      { cwd: repo },
+    );
   }
   const archives = (await readdir(destination)).filter((name) => name.endsWith(".tgz"));
   if (archives.length !== 1)

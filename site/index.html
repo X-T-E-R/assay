@@ -487,23 +487,20 @@ footer{border-top:1px solid var(--line);margin-top:40px}
     <div class="wrap">
       <h2><span class="en">Quick start</span><span class="zh" lang="zh">快速开始</span></h2>
       <p class="lead">
-        <span class="en">Requires Node.js 22.13 or later and pnpm 11.3.0.</span>
-        <span class="zh" lang="zh">要求 Node.js 22.13 或更高版本，以及 pnpm 11.3.0。</span>
+        <span class="en">Requires Node.js 22.13 or later.</span>
+        <span class="zh" lang="zh">要求 Node.js 22.13 或更高版本。</span>
       </p>
       <div class="qs-grid">
         <figure class="term">
           <figcaption class="bar"><span class="en">Install and init</span><span class="zh" lang="zh">安装与初始化</span></figcaption>
-<pre><span class="c"><span class="en"># the three repositories sit side by side</span><span class="zh" lang="zh"># 三个仓库并排放</span></span>
-<span class="k">git</span> clone https://github.com/NB-Corp/absorb-anything
-<span class="k">git</span> clone https://github.com/NB-Corp/own-work
-<span class="k">git</span> clone https://github.com/X-T-E-R/assay
-<span class="k">cd</span> assay
-<span class="k">pnpm</span> install &amp;&amp; pnpm build
+<pre><span class="c"><span class="en"># scoped name; the binary is plain `assay`</span><span class="zh" lang="zh"># scoped 包名；装出来的二进制就叫 assay</span></span>
+<span class="k">npm</span> install -g @nb-corp/assay
 
 <span class="c"><span class="en"># create a workbench (standalone by default)</span><span class="zh" lang="zh"># 创建一个工作台（默认 standalone）</span></span>
-<span class="k">node</span> packages/assay/dist/cli.js init ../my-study --name MyStudy
-<span class="k">node</span> packages/assay/dist/cli.js status --root ../my-study
-<span class="k">node</span> packages/assay/dist/cli.js check  --root ../my-study</pre>
+<span class="k">assay</span> init my-study --name MyStudy
+<span class="k">cd</span> my-study
+<span class="k">assay</span> status
+<span class="k">assay</span> check</pre>
         </figure>
         <figure class="term">
           <figcaption class="bar"><span class="en">A typical session</span><span class="zh" lang="zh">一个典型会话</span></figcaption>
